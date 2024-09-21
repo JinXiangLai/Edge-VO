@@ -169,6 +169,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
                 * | B.T*A + D.T*C + F.T*E,  B.T*B + D.T*D + F.T*F |
                 * 观察D、E矩阵块的变化规律，可以写出如下的等式
                 */
+                const double w = 1.0; // ;1.0 / p.depthCov_;
                 H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B;
                 H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A;
                 H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B;

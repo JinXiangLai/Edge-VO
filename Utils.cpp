@@ -149,9 +149,10 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
 }
 
 void Landmark::UpdateUncertainty() {
-    uncertainty_ = depthRange_[1] - depthRange_[0];
-    z_ = 0.5*(depthRange_[0] + depthRange_[1]);
+    uncertainty_ = sqrt(depthCov_);
     invZ_ = 1.0 / z_;
+    depthRange_[0] = max(kMinDepth, z_ - 3 * uncertainty_);
+    depthRange_[1] = min(kMaxDepth, z_ + 3 * uncertainty_);
 }
 
 // ======== class KeyFrame ======== //
@@ -614,7 +615,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
     // c[0]*x + c[1]*y + c[2] = 0
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
-    auto Kp2Useful = [&kf2, &d1](const Eigen::Vector2i &p2) -> bool {
+    auto Kp2Useful = [&kf2, &d1](const Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
         const int x=p2[0], y=p2[1];
 
@@ -624,7 +625,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
 
         const int descId = kf2.pointMapId_.at({x, y});
         const u_int64_t d2 = kf2.descriptor_[descId];
-        const int score = CalculateDescriptorScore(d1, d2);
+        score = CalculateDescriptorScore(d1, d2);
         return score < kMaxDescriptorDist;
 
         // return (edgeImg.at<uchar>(y, x) == 0);
@@ -641,6 +642,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
     const int maxRow = min(yRange[1], edgeImg.rows);
 
     vector<Eigen::Vector2d> kp2;
+    vector<pair<int, Eigen::Vector2i> > scoreKp2;
     auto IsZero = [](const double a) -> bool {return abs(a) < 1e-10;};
     const double roundOff = 0.5; // 0.5 四舍五入参数
 
@@ -651,8 +653,9 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         cout << "epilor line col: " << x << endl;
         for(int y = minRow; y < maxRow; ++y) {
             const Eigen::Vector2i px{x, y};
-            if(Kp2Useful(px) ) {
-                kp2.push_back(px.cast<double>() );
+            int score = INT_MAX;
+            if(Kp2Useful(px, score) ) {
+                scoreKp2.push_back(make_pair(score, px));
             }
         }
     } else if(!IsZero(c1) && IsZero(c0) ) {
@@ -660,8 +663,9 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         cout << "epilor line row: " << y << endl;
         for(int x = minCol; x < maxCol; ++x) {
             const Eigen::Vector2i px{x, y};
-            if(Kp2Useful(px) ) {
-                kp2.push_back(px.cast<double>() );
+            int score = INT_MAX;
+            if(Kp2Useful(px, score) ) {
+                scoreKp2.push_back(make_pair(score, px));
             }
         }
     } else {
@@ -670,10 +674,17 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         for(int x = minCol; x < maxCol; ++x) {
             const int y = a*x + b + roundOff;
             const Eigen::Vector2i px{x, y};
-            if(Kp2Useful(px) ) {
-                kp2.push_back(px.cast<double>() );
+            int score = INT_MAX;
+            if(Kp2Useful(px, score) ) {
+                scoreKp2.push_back(make_pair(score, px));
             }
         }
+    }
+
+    sort(scoreKp2.begin(), scoreKp2.end(), [](const pair<int, Eigen::Vector2i> &p1, 
+            const pair<int, Eigen::Vector2i> &p2) -> bool {return p1.first < p2.first;} );
+    for(int i = 0; i < 3 && i < scoreKp2.size(); ++i) {
+        kp2.emplace_back(scoreKp2[i].second.cast<double>());
     }
     return kp2;
 }
@@ -792,31 +803,47 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
     const Eigen::Vector2d kp1 = landmark.uv_;
     vector<double> depth;
-    cout << "depth change: ";
+    cout << "current triangulated depth: ";
+    double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
+    Eigen::Vector2d specialPc2;
     for(const Eigen::Vector2d &p : kp2) {
 
        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
        cout << pc1.z() << " ";
         if(SolutionInrange(pc1.z()) ) {
             depth.push_back(pc1.z());
+            if(pc1.z() < minDepth) {
+                minDepth = pc1.z();
+            }
+            if(pc1.z() > maxDepth) {
+                maxDepth = pc1.z();
+            }
+            sumDepth += pc1.z();
+            specialPc2 = p;
         }
     }
     cout << endl;
 
+    double u2 = -1, cov2 = -1;
     if(depth.size() > 1) {
-        sort(depth.begin(), depth.end());
-        landmark.depthRange_[0] = depth.front();
-        landmark.depthRange_[1] = depth.back();
+        // TODO: 这里应该如何更新呢？
+        u2 = sumDepth / depth.size();
+        cov2 = pow(0.5 * (maxDepth - minDepth), 2);
     } else if(depth.size() == 1 ) {
-        // 极线上只有一个像素点，意味着深度收敛了?
-        // 也有可能是未收敛，这时，最好的办法是要增加不确定度，
-        // 或者对边缘图的边缘进行扩展，注意，扩展边缘图的像素不会是0
-        landmark.depthRange_[0] = depth.front();
-        landmark.depthRange_[1] = landmark.depthRange_[0] + 3.0;
+        const double std = GetOnePixelUncertainty(T21.Inverse().t_wb_, 
+            cam.InverseProject(kp1.cast<int>(), depth[0]), cam.fx_);
+        u2 = depth[0], cov2 = pow(std, 2);
     } else {
         return false;
     }
+
+    const double u1 = landmark.z_, cov1 = landmark.depthCov_;
+    cout << "maxDepth, minDepth, depth size: " << maxDepth << " " << minDepth << " " << depth.size() << endl;
+    landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
+    landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
     landmark.UpdateUncertainty();
+    cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+        << " " << landmark.z_ << endl;
     
     static ofstream unf;
     static int num = 0;
@@ -825,7 +852,8 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
         unf.close();
     }
     unf.open("depth_uncertainty.csv", ios::app);
-    unf << num++ << "[" << landmark.depthRange_[0] << ", " << landmark.depthRange_[1] << "] " << landmark.uncertainty_ << endl;
+    unf << num++ << "[" << landmark.depthRange_[0] << ", " << landmark.depthRange_[1] << "] std: " 
+        << landmark.uncertainty_ << endl;
     unf.close();
     return true;
 }
@@ -1064,6 +1092,21 @@ void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eig
     }
 }
 
+double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f) {
+    const Eigen::Vector3d pc2 = pc1 - t12;
+    const double pc1Norm = pc1.norm(), t12Norm = t12.norm(), 
+        d1 = pc1Norm * t12Norm, d2 = pc2.norm() * t12Norm;
+    const double alpha = acos(pc1.dot(t12)/d1);
+    const double belta = acos(pc2.dot(-t12)/d2);
+    const double deltaBelta = atan2(1., f); 
+
+    const double belta2 = belta + deltaBelta;
+    const double gamma = M_PI - alpha - belta2;
+    const double newDepth = t12Norm * sin(belta2) / sin(gamma);
+
+    return abs(pc1Norm - newDepth);
+}
+
 void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {
     viz::Viz3d window("Point Cloud Viewer");
     cv::Affine3d viewPose;
@@ -1124,7 +1167,7 @@ void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {
     window.spin();
 }
 
-void ShowPointCloud(const vector<Landmark> &ps1, const vector<Landmark> &ps2) {
+void ShowPointCloud(const vector<Landmark> &ps1, const vector<Landmark> &ps2, const double zOffset) {
     viz::Viz3d window("Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
@@ -1152,10 +1195,10 @@ void ShowPointCloud(const vector<Landmark> &ps1, const vector<Landmark> &ps2) {
     Generate(ps1, points1);
     Generate(ps2, points2);
     vector<Vec3b> colors1(points1.size(), {0, 0, 255}), colors2(points2.size(), {0, 255, 0});
-
-
-    for(auto &p1 : points1) {
-        p1.z += 1.0;
+    for(auto &p : points1) {
+        //p.x += 1.0;
+        //p.y += 1.0;
+        p.z += zOffset;
     }
 
     // 创建点云对象

@@ -1,6 +1,8 @@
 #ifndef UTILS
 #define UTILS
 
+#include <chrono>
+#include <iostream>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -30,10 +32,11 @@ constexpr double kZ[kZnum] = {2.1, 2.2, 2.3, 2.4};
     constexpr double kCameraDistortion[4] = {-0.026463, -0.018112, 0.016949, -0.007098};
 #endif
 
+// TODO: 未进行缩放时，可能存在特征点过多的优化问题过于庞大导致的内存爆炸
 constexpr double kImageScale = 0.5;
 constexpr int kDescriptorPatchLen = 3; // 计算3x3邻域内的描述子
 constexpr int kDescriptorPatchSize = kDescriptorPatchLen * kDescriptorPatchLen;
-constexpr double kMinTranslation = 0.50; // m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
+constexpr double kMinTranslation = 1.0; // m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
 
 // 异常深度滤波操作
 constexpr double kMaxDepth = 100.0; // TODO: 距离越大，偏差一个像素可能就会有几十米的偏差
@@ -44,7 +47,7 @@ constexpr double kMaxGoodTriangulateAngle = 60.0; // 实践过程中发现视差
 // constexpr double kMaxDescriptorDist = 10.0; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
 constexpr int kMaxDescriptorDist = 10; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
 constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那样设定最优与次优描述子的比值，可能导致特征点稀少
-constexpr double kConvergeDiff = 3.0;
+constexpr double kConvergeDiff = 0.5;
 constexpr double kAbnormalResidual = 15; // 15 个像素距离为异常残差值
 
 class Pose {
@@ -98,16 +101,18 @@ public:
     int Size() const; // 优化变量的维度
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
-    bool Converge() const {return uncertainty_ < kConvergeDiff;}
+    bool Converge() const {return uncertainty_ < kConvergeDiff && z_ > kMinDepth && z_ < kMaxDepth;}
 
     Eigen::Vector2d uv_; // 像素坐标
     double z_ = 1.0;
+    double depthCov_ = std::pow(kMaxDepth*0.5, 2);
     double invZ_ = 1.0;
+    double invDepthCov_ = std::pow(2./kMaxDepth, 2);
     // anchor pose
     std::shared_ptr<Pose> Twc_;
     std::shared_ptr<Camera> cam_;
     double depthRange_[2] = {kMinDepth, kMaxDepth};
-    double uncertainty_ = kMaxDepth;
+    double uncertainty_ = kMaxDepth * 0.5;
     uint64_t descriptor_ = 0;
 };
 
@@ -235,5 +240,7 @@ void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eig
 
 void ShowPointCloud(const std::vector<Landmark> &ps, const cv::Mat &img);
 
-void ShowPointCloud(const std::vector<Landmark> &ps1, const std::vector<Landmark> &ps2);
+void ShowPointCloud(const std::vector<Landmark> &ps1, const std::vector<Landmark> &ps2, const double zOffset = 0.0);
+
+double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
 #endif

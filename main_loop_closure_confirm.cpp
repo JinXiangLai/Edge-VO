@@ -41,7 +41,7 @@ int main(int argc, char** argv){
     vector<Mat> imgs;
     vector<Pose> vTwc;
     WheelCameraCalib calib;
-    const int getImgNum = 20;
+    const int getImgNum = 5;
     FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum-1);
 
     vector<Mat> im3;
@@ -83,7 +83,6 @@ int main(int argc, char** argv){
 
     for(int i = 1; i < kfs.size() - 1; ++i) {
         kfs[0].UpdateDepth(kfs[i]);
-        // ShowPointCloud(kfs[0].landmark_, kfs[0].grayImg_);
     }
 
     auto it = kfs[0].landmark_.begin();
@@ -94,6 +93,7 @@ int main(int argc, char** argv){
         }
         ++it;
     }
+    cout << "kfs[0].landmark_.size: " << kfs[0].landmark_.size() << endl;
 
     vector<Landmark> noOptLandmark = kfs[0].landmark_;
 
@@ -153,5 +153,6 @@ int main(int argc, char** argv){
 
     // ShowPointCloud(kfs[0].landmark_, kfs[0].grayImg_);
     ShowPointCloud( noOptLandmark, kfs[0].landmark_);
+    ShowPointCloud( noOptLandmark, kfs[0].landmark_, 1.0);
     return 0;
 }
