@@ -606,7 +606,7 @@ void FindImageAndPose(const int idx, const vector<string> & vstrImages, const ve
     imgs.push_back(cv::imread(vstrImages[idx], IMREAD_GRAYSCALE));
     const int newW = imgs[0].cols * kImageScale, newH = imgs[0].rows * kImageScale;
     cv::resize(imgs[0], imgs[0], cv::Size(newW, newH) );
-    vTwc.push_back(InterpolatePose(vTimeStamps[idx]));
+    vTwc.push_back(InterpolatePose(vTimeStamps[idx] + kImgTimeOffset) );
 
     int id = idx;
     int curId = 1;

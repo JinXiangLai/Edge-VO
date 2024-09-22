@@ -253,7 +253,6 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << std::endl;
 
 
-
     // 求point增量
     // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
     // D*deltaX_point = b - C*deltaX_pose
