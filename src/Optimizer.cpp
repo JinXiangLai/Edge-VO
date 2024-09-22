@@ -1,6 +1,8 @@
+#include "Optimizer.h"
+
 #include <stdlib.h>
 
-#include "Optimizer.h"
+#include "Utils.h"
 
 using namespace std;
 using namespace cv;
@@ -149,14 +151,16 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
             Eigen::MatrixXd A = J_res_px2 * J_px2_Pc2 * J_Pc2_T12;
             // A.setZero();
             Eigen::MatrixXd B = J_res_px2 * J_px2_Pc2 * J_Pc2_Pc1 * J_Pc1_z1;
+
+            const double w = 1.0 / p.depthCov_;
             J.block(ai, aj, resDim, A.cols()) = A;
-            H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A;
+            H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
             /******** -J.T * b的size为[J.cols() x 1]**************
             * | A.T  C.T  E.T |       | A.T*b1 + C.T*b2 + E.T*b3|
             * | B.T  D.T  F.T | * b = | B.T*b1 + D.T*b2 + F.T*b3|
             *
             *****************************************************/
-            g.middleRows(aj, A.cols()) -= A.transpose() * b.middleRows(ai, A.rows());
+            g.middleRows(aj, A.cols()) -= A.transpose() * b.middleRows(ai, A.rows()) * w;
 
             if(!onlyPoseUpdate_) {
                 J.block(bi, bj, 1, 1) = B;
@@ -169,10 +173,9 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
                 * | B.T*A + D.T*C + F.T*E,  B.T*B + D.T*D + F.T*F |
                 * 观察D、E矩阵块的变化规律，可以写出如下的等式
                 */
-                const double w = 1.0; // ;1.0 / p.depthCov_;
-                H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B;
-                H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A;
-                H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B;
+                H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B * w;
+                H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A * w;
+                H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B * w;
                 g.middleRows(bj, B.cols()) -= B.transpose() * b.middleRows(bi, B.rows());
             }
         }

@@ -1,7 +1,12 @@
 #ifndef OPTIMIZER
 #define OPTIMIZER
 
-#include "Utils.h"
+#include <vector>
+
+#include "Config.h"
+#include "Landmark.h"
+#include "Pose.h"
+#include "KeyFrame.h"
 
 class Optimizer {
 public:

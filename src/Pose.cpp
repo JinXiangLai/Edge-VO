@@ -1,0 +1,29 @@
+#include "Pose.h"
+
+using namespace std;
+
+Pose::Pose(const Eigen::Quaterniond &q_wb, const Eigen::Vector3d &t_wb)
+    : q_wb_(q_wb)
+    , t_wb_(t_wb) {}
+
+Pose Pose::Inverse() const {
+    const Eigen::Quaterniond q_bw = q_wb_.inverse();
+    const Eigen::Vector3d t_bw = -(q_bw * t_wb_);
+    return Pose(q_bw, t_bw);
+}
+
+Pose Pose::operator*(const Pose& T) const {
+    return Pose(q_wb_ * T.q_wb_, q_wb_*T.t_wb_+t_wb_);
+}
+
+Eigen::Vector3d Pose::operator*(const Eigen::Vector3d &p) const {
+    return q_wb_ * p + t_wb_;
+}
+
+int Pose::Size() const {return 6;}
+
+void Pose::Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t) {
+    const Eigen::Matrix3d deltaR = Eigen::AngleAxisd(delta_q.norm(), delta_q.normalized()).toRotationMatrix();
+    q_wb_ *= Eigen::Quaterniond(deltaR);
+    t_wb_ += delta_t;
+}

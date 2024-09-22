@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 # ROS 的g2o会污染现版本，需要把 source ros关闭
-project(edge_register)
+project(edge_slam)
 
 if (NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 14)
@@ -26,30 +26,35 @@ add_compile_options(-Werror=return-type)
 
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4.6 REQUIRED)
+find_package(OpenCV 4 REQUIRED)
 
 
 include_directories(
-    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIR}
     ${OpenCV_INCLUDE_DIRS}
 )
 
-add_library(edge_register SHARED
-    Utils.cpp
-    Optimizer.cpp
+add_library(edge_slam SHARED
+    src/Camera.cpp
+    src/WheelCameraCalib.cpp
+    src/Pose.cpp
+    src/Utils.cpp
+    src/Landmark.cpp
+    src/KeyFrame.cpp
+    src/Optimizer.cpp
 )
-target_link_libraries(edge_register 
+target_link_libraries(edge_slam
     ${OpenCV_LIBS}
     ${EIGEN3_LIBS}
 )
 
 add_executable(main main_loop_closure_confirm.cpp)
 target_link_libraries(main 
-    edge_register
+    edge_slam
 )
 
 add_executable(ut unit_test.cpp)
 target_link_libraries(ut 
-    edge_register
+    edge_slam
 )
