@@ -155,7 +155,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark*> &pc1, const
             // A.setZero();
             Eigen::MatrixXd B = J_res_px2 * J_px2_Pc2 * J_Pc2_Pc1 * J_Pc1_z1;
 
-            const double w = 1.0; // 1.0 / p.depthCov_;
+            const double w = 1.0 / p.depthCov_;
             J.block(ai, aj, resDim, A.cols()) = A;
             H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
             /******** -J.T * b的size为[J.cols() x 1]**************
@@ -179,7 +179,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark*> &pc1, const
                 H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B * w;
                 H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A * w;
                 H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B * w;
-                g.middleRows(bj, B.cols()) -= B.transpose() * b.middleRows(bi, B.rows());
+                g.middleRows(bj, B.cols()) -= B.transpose() * b.middleRows(bi, B.rows()) * w;
             }
         }
     }
