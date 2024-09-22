@@ -1,10 +1,8 @@
 #ifndef UTILS
 #define UTILS
 
-#include <chrono>
 #include <iostream>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 #include <opencv2/highgui.hpp>
@@ -23,13 +21,8 @@ class KeyFrame;
 class Landmark;
 
 // 距离变换是计算前景到背景的距离
-cv::Mat GenerateEdgeImage(std::vector<Eigen::Vector2d> &blackPoint);
 
 cv::Mat GetDistanceTransform(cv::Mat img);
-
-std::vector<Eigen::Vector2d> GenerateBlackPoint();
-
-std::vector<Eigen::Vector3d> GeneratePw(const std::vector<Eigen::Vector2d> &blackPoint, const std::shared_ptr<Camera> &cam);
 
 std::vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, std::vector<Eigen::Vector3d> &ps);
 
@@ -88,7 +81,8 @@ void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eig
 
 void ShowPointCloud(const std::vector<Landmark> &ps, const cv::Mat &img);
 
-void ShowPointCloud(const std::vector<Landmark> &ps1, const std::vector<Landmark> &ps2, const double zOffset = 0.0);
+void ShowPointCloud(const std::vector<Landmark*> &ps1, 
+    const std::vector<Landmark*> &ps2, const double zOffset = 0.0);
 
 double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
 #endif

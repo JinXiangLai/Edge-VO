@@ -30,10 +30,10 @@ public:
         dy_.resize(level);
         unPx_.resize(level);
     }
+    ~KeyFrame() {std::cout << "delete keyframe: " << this << std::endl;}
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
     void GenerateDTandDerivative();
-    std::vector<Eigen::Vector2d> FindMatches(const Eigen::Vector2d &kp1, const Pose &Twc1);
     size_t GenerateLandmark(KeyFrame &kf1, std::vector<std::vector<Eigen::Vector2d> > &debugGoodKp1, 
         std::vector<std::vector<Eigen::Vector2d> >&debugGoodKp2, const int equalparts);
     void UpdateDepth(const KeyFrame &kf2);
@@ -41,7 +41,8 @@ public:
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;
     std::shared_ptr<Camera> cam_;
-    std::vector<Landmark> landmark_;
+    //std::vector<Landmark> landmark_;
+    std::vector<Landmark* > landmark_;
     Pose Twc_;
     int level_ = 1;
     std::vector<std::vector<Eigen::Vector2d> > unPx_; // 像素平面上的去畸变点

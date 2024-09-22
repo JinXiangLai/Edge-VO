@@ -6,19 +6,6 @@
 using namespace cv;
 using namespace std;
 
-// 距离变换是计算前景到背景的距离
-Mat GenerateEdgeImage(vector<Eigen::Vector2d> &blackPoint) {
-    Mat img(kImageHeight, kImageWidth, CV_8UC1, 255);
-    for(Eigen::Vector2d &p : blackPoint) {
-        // at(row, col)
-        if(InRange(img, p.cast<int>()) ) {
-            img.at<uchar>(int(p.y()), int(p.x())) = 0;
-        }
-    }
-    cv::erode(img, img, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3)));
-    return img;
-}
-
 Mat GetDistanceTransform(Mat img) {
     Mat res;
     // https://blog.csdn.net/kakiebu/article/details/82967085
@@ -27,33 +14,6 @@ Mat GetDistanceTransform(Mat img) {
     // TODO: 是否需要归一化呢
     // cv::normalize(res, res, 0, 1);
     return res;
-}
-
-vector<Eigen::Vector2d> GenerateBlackPoint() {
-    // 生成一个矩形边框
-    const int row1 = kImageHeight * 0.25, row2 = kImageHeight * 0.75,
-              col1 = kImageWidth * 0.25, col2 = kImageWidth * 0.75;
-
-    vector<Eigen::Vector2d> res;
-    for(int i = 0; i < (col2 - col1); ++i) {
-        res.push_back({col1 + i, row1});
-        res.push_back({col1 + i, row2});
-    }
-    for(int i = 0; i < (row2 - row1); ++i) {
-        res.push_back({col1, row1 + i});
-        res.push_back({col2, row1 + i});
-    }
-    return res;
-}
-
-vector<Eigen::Vector3d> GeneratePw(const vector<Eigen::Vector2d> &blackPoint, const shared_ptr<Camera> &cam) {
-    vector<Eigen::Vector3d> Pw;
-    int id = 0;
-    for(const Eigen::Vector2d &p : blackPoint) {
-        // cout << "id++%4: " << id++%4 << endl; --id;
-        Pw.push_back({cam->InverseProject(p.cast<int>(), kZ[(id++)%kZnum])});
-    }
-    return Pw;
 }
 
 vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, vector<Eigen::Vector3d> &ps) {
@@ -496,6 +456,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
     const double u1 = landmark.z_, cov1 = landmark.depthCov_;
     cout << "maxDepth, minDepth, depth size: " << maxDepth << " " << minDepth << " " << depth.size() << endl;
+    // 信息融合，标准差一直减小
     landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
     landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
     landmark.UpdateUncertainty();
@@ -824,19 +785,20 @@ void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {
     window.spin();
 }
 
-void ShowPointCloud(const vector<Landmark> &ps1, const vector<Landmark> &ps2, const double zOffset) {
+void ShowPointCloud(const vector<Landmark* > &ps1, 
+    const vector<Landmark* > &ps2, const double zOffset) {
     viz::Viz3d window("Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points1, points2;
 
-    auto Generate = [](const vector<Landmark> &ps, vector<Point3d> &points) {
-        for(const Landmark &p : ps) {
-            if(!p.Converge()) {
+    auto Generate = [](const vector<Landmark*> &ps, vector<Point3d> &points) {
+        for(const Landmark* p : ps) {
+            if(p==nullptr || !p->Converge()) {
                 continue;
             }
-            const double depth = p.z_;
-            const Eigen::Vector3d &pc = p.cam_->InverseProject(p.uv_.cast<int>(), depth);
+            const double depth = p->z_;
+            const Eigen::Vector3d &pc = p->cam_->InverseProject(p->uv_.cast<int>(), depth);
             points.push_back({pc.x(), pc.y(), pc.z()});
         }
 

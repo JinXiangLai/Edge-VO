@@ -1,6 +1,8 @@
+#include <memory>
 #include <unistd.h>
 
 
+#include "Landmark.h"
 #include "Utils.h"
 #include "Optimizer.h"
 
@@ -76,26 +78,30 @@ int main(int argc, char** argv){
     const size_t landmarkNum = kfs[0].GenerateLandmark(kfs[1], debugGoodKp1, debugGoodKp2, equalparts);
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
     cout << "landmarkNum : " << landmarkNum << endl;
-    // for(int i = 0; i < equalparts; ++i) {
-    //     DrawMatch(kfs[0].edgeImg_[0], kfs[1].edgeImg_[0], debugGoodKp1[i], debugGoodKp2[i], 
-    //         "Epipolar constraint matches "+to_string(i), 1, 20);
-    // }
 
-    for(int i = 1; i < kfs.size() - 1; ++i) {
+    const int maxUpdateId = kfs.size() - 1;
+    for(int i = 1; i < maxUpdateId; ++i) {
         kfs[0].UpdateDepth(kfs[i]);
     }
 
     auto it = kfs[0].landmark_.begin();
-    while(it!=kfs[0].landmark_.end()) {
-        if(!it->Converge()) {
-            it = kfs[0].landmark_.erase(it);
-            continue;
+    while(it != kfs[0].landmark_.end()) {
+        if(!(*it)->Converge()) {
+            delete (*it); // 删除对应的Landmark内存
+            *it = nullptr; // 为了保证关键帧内的landmark与unPx数量一致
+            //it = kfs[0].landmark_.erase(it); // 所以不进行删除操作
+            //continue;
         }
         ++it;
     }
     cout << "kfs[0].landmark_.size: " << kfs[0].landmark_.size() << endl;
 
-    vector<Landmark> noOptLandmark = kfs[0].landmark_;
+    vector<Landmark*> noOptLandmark(kfs[0].landmark_.size() );
+    for(int i = 0; i < noOptLandmark.size(); ++i) {
+        if(kfs[0].landmark_[i] != nullptr) {
+            noOptLandmark[i] = new Landmark(*kfs[0].landmark_[i]);
+        }
+    }
 
     // 调用非线性优化进行BA
     KeyFrame &kf = kfs.back();
@@ -115,7 +121,7 @@ int main(int argc, char** argv){
         edgeImg_true.push_back(kfs[i].edgeImg_[0]);
     }
 
-    Optimizer optimizer(vDist, vDx, vDy, 1, 100, useInvZ, false);
+    Optimizer optimizer(vDist, vDx, vDy, cam.get(), 1, 100, useInvZ, false);
 
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     const double cost = optimizer.Optimize(kfs[0].landmark_, T12);
@@ -132,13 +138,16 @@ int main(int argc, char** argv){
 
     vector<vector<Eigen::Vector2d> > projPx1(equalparts);
     vector<vector<vector<Eigen::Vector2d> > > reprojPx3(T12.size(), vector<vector<Eigen::Vector2d> >(equalparts));
-    for(const Landmark &p : kfs[0].landmark_) {
-        projPx1[p.uv_.x()/binWidth].push_back(p.uv_);
+    for(const Landmark* p : kfs[0].landmark_) {
+        if(p == nullptr) {
+            continue;
+        }
+        projPx1[p->uv_.x()/binWidth].push_back(p->uv_);
 
         for(int i = 0; i < T12.size(); ++i) {
             const Pose Tc2c1 = T12[i].Inverse();
-            Eigen::Vector3d pc2 = Tc2c1 * p.GetPw();
-            reprojPx3[i][p.uv_.x()/binWidth].push_back(cam->Project2PixelPlane(pc2));
+            Eigen::Vector3d pc2 = Tc2c1 * p->GetPw();
+            reprojPx3[i][p->uv_.x()/binWidth].push_back(cam->Project2PixelPlane(pc2));
         }
         // DrawMatch(kfs[0].edgeImg_[0], kf.edgeImg_[0], {projPx1.back()}, {reprojPx3.back()}, "one edge matche after optimization", 1, 1);
     }
@@ -151,8 +160,13 @@ int main(int argc, char** argv){
         }
     }
 
-    // ShowPointCloud(kfs[0].landmark_, kfs[0].grayImg_);
     ShowPointCloud( noOptLandmark, kfs[0].landmark_);
     ShowPointCloud( noOptLandmark, kfs[0].landmark_, 1.0);
+
+    // 释放内存
+    for(Landmark* p : noOptLandmark) {
+        delete p;
+        p = nullptr;
+    }
     return 0;
 }

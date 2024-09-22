@@ -4,14 +4,10 @@
 #include <iostream>
 #include <math.h>
 
-#define CAR_NUM 18
-constexpr int kImageWidth = 192;
-constexpr int kImageHeight = 108;
 constexpr double kRad2Deg = 180/M_PI;
 constexpr double kDeg2Rad = M_PI/180;
-constexpr int kZnum = 4;
-constexpr double kZ[kZnum] = {2.1, 2.2, 2.3, 2.4};
 
+#define CAR_NUM 18
 #if CAR_NUM == 15
     // fx cx fy cy
     constexpr double kCameraIntrinsic[4] = {951.728065, 955.374577, 951.7022555, 556.6750875};

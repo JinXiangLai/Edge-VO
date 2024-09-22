@@ -9,6 +9,7 @@ public:
 
     Pose(const Eigen::Quaterniond& q_wb, const Eigen::Vector3d& t_wb);
     Pose() {}
+    Pose(const Pose& T);
     Pose Inverse() const;
     Eigen::Vector3d operator*(const Eigen::Vector3d &p) const;
     Pose operator*(const Pose& T) const;

@@ -2,6 +2,11 @@
 
 using namespace std;
 
+Pose::Pose(const Pose& T) {
+    q_wb_ = T.q_wb_;
+    t_wb_ = T.t_wb_;
+}
+
 Pose::Pose(const Eigen::Quaterniond &q_wb, const Eigen::Vector3d &t_wb)
     : q_wb_(q_wb)
     , t_wb_(t_wb) {}

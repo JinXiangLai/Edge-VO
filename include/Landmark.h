@@ -1,6 +1,9 @@
 #ifndef CLASS_LANDMARK
 #define CLASS_LANDMARK
 
+#include <map>
+#include <memory>
+
 #include "Pose.h"
 #include "Camera.h"
 #include "KeyFrame.h"
@@ -11,7 +14,7 @@ class Landmark {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Landmark(const Eigen::Vector2d &px, std::shared_ptr<Pose> Twc, const std::shared_ptr<Camera> cam, 
+    Landmark(const Eigen::Vector2d &px, KeyFrame *host, const std::shared_ptr<Camera> cam, 
         const double z = 1.0);
     Landmark() {}
     Eigen::Vector3d GetPcNorm() const;
@@ -21,21 +24,24 @@ public:
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
     bool Converge() const {return uncertainty_ < kConvergeDiff && z_ > kMinDepth && z_ < kMaxDepth;}
+    std::vector<Eigen::Vector2d> FindMatches(const KeyFrame &kf2);
 
-    Eigen::Vector2d uv_; // 像素坐标
     double z_ = 1.0;
-    double depthCov_ = std::pow(kMaxDepth*0.5, 2);
+    double depthCov_ = std::pow(kMaxDepth, 2);
     double invZ_ = 1.0;
-    double invDepthCov_ = std::pow(2./kMaxDepth, 2);
-    // anchor pose
-    std::shared_ptr<Pose> Twc_;
-    std::shared_ptr<Camera> cam_;
+    double invDepthCov_ = std::pow(1./kMaxDepth, 2);
+
+
     double depthRange_[2] = {kMinDepth, kMaxDepth};
-    double uncertainty_ = kMaxDepth * 0.5;
+    double uncertainty_ = kMaxDepth;
     uint64_t descriptor_ = 0;
 
-	std::shared_ptr<KeyFrame> host_;
-	std::vector<std::shared_ptr<KeyFrame> > target_;
+	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
+    KeyFrame *host_; // cnchor frame
+    Eigen::Vector2d uv_; // host帧下的像素坐标
+
+	std::map<KeyFrame*, Eigen::Vector2d> target_;
+    std::shared_ptr<Camera> cam_;
 };
 
 #endif

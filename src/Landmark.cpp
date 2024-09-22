@@ -1,16 +1,18 @@
 #include "Landmark.h"
 
+#include "Utils.h"
+
 using namespace std;
 using namespace cv;
 
 class KeyFrame;
 
-Landmark::Landmark(const Eigen::Vector2d &px, shared_ptr<Pose> Twc, const shared_ptr<Camera> cam, 
+Landmark::Landmark(const Eigen::Vector2d &px, KeyFrame *host, const shared_ptr<Camera> cam, 
     const double z)
     : z_(z)
     , invZ_(1.0/z)
+    , host_(host)
     , uv_(px)
-    , Twc_(Twc)
     , cam_(cam) {}
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
@@ -22,7 +24,7 @@ Eigen::Vector3d Landmark::GetPc() const {
 }
 
 Eigen::Vector3d Landmark::GetPw() const {
-    return (*Twc_) * GetPc();
+    return host_->Twc_ * GetPc();
 }
 
 int Landmark::Size() const {return 1;}
@@ -35,6 +37,10 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
         z_ += delta_z; 
         invZ_ = 1/z_;
     }
+
+    // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
+    depthRange_[0] = max(kMinDepth, z_ - 2*uncertainty_);
+    depthRange_[1] = min(kMaxDepth, z_ + 2*uncertainty_);
 }
 
 void Landmark::UpdateUncertainty() {
@@ -43,3 +49,11 @@ void Landmark::UpdateUncertainty() {
     depthRange_[0] = max(kMinDepth, z_ - 3 * uncertainty_);
     depthRange_[1] = min(kMaxDepth, z_ + 3 * uncertainty_);
 }
+
+vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
+    const Pose T21 = kf2.Twc_.Inverse() * host_->Twc_;
+    // 需要全局函数作用符"::"以实现类外全局函数的调用
+    vector<Eigen::Vector2d> kp2 = ::FindMatches(*this, kf2, T21, *cam_);
+    return kp2;
+}
+

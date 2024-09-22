@@ -73,16 +73,6 @@ void KeyFrame::GenerateDTandDerivative() {
     CaculateDerivative(dist_[0], dx_[0], dy_[0]);
 }
 
-
-vector<Eigen::Vector2d> KeyFrame::FindMatches(const Eigen::Vector2d &kp1, const Pose &Twc1) {
-    const Pose T21 = Twc_.Inverse() * Twc1;
-    // 需要全局函数作用符"::"以实现类外全局函数的调用
-    Landmark pc1(kp1, make_shared<Pose>(Twc1), cam_, 1.0);
-    const KeyFrame &kf2 = *this;
-    vector<Eigen::Vector2d> kp2 = ::FindMatches(pc1, kf2, T21, *cam_);
-    return kp2;
-}
-
 size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> > &debugGoodKp1, vector<vector<Eigen::Vector2d> >&debugGoodKp2,
     const int equalparts) {
     
@@ -92,93 +82,18 @@ size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> 
     cout << "T12: " << T12 << endl;
     debugGoodKp1.resize(equalparts);
     debugGoodKp2.resize(equalparts);
-    const int binWidth = grayImg_.cols/equalparts;
     for(int i = 0; i < unPx_[0].size(); ++i) {
         const Eigen::Vector2d &upx = unPx_[0][i];
-        landmark_.push_back({upx, make_shared<Pose>(), cam_, 1.0});
+        // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
+        landmark_.push_back(new Landmark(upx, this, cam_, 1.0) );
+        // 使用make_shared无法直接创建指向同一个this的智能指针对象，所以最终还是得像ORBSLAM那样直接使用原始指针?
+        // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
+        //landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) );
         // 给地图点赋值描述子
-        landmark_.back().descriptor_ = descriptor_[i];
-        landmark_.back().UpdateUncertainty();
+        landmark_.back()->descriptor_ = descriptor_[i];
+        // landmark_.back()->UpdateUncertainty();
     }
 
-/*
-    // 三角化及校验步骤
-    // 遍历每一个kp1，以期生成地图点
-    for(int i = 0; i < unPx_[0].size(); ++i) {
-        vector<Eigen::Vector2d> debugPositiveDepthKp2;
-        vector<double> debugAng;
-
-        double minZ = DBL_MAX;
-        double maxZ = -1;
-        const Eigen::Vector2d &upx = unPx_[0][i];
-        // const Eigen::Matrix<float, kDescriptorPatchSize, 1> d1 = descriptor_[i];
-        const int d1 = descriptor_[i];
-        const vector<Eigen::Vector2d> kp2 = kf2.FindMatches(upx, Twc_);
-
-        // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {upx}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
-
-        for(int j = 0; j < kp2.size(); ++j) {
-            const Eigen::Vector2d &p2 = kp2[j];
-            const int descId = pointMapId_[{p2.x(), p2.y()}];
-            // const Eigen::Matrix<float, kDescriptorPatchSize, 1> d2 = descriptor_[descId];
-            const int d2 = descriptor_[descId];
-            // const double score = CalculateScore(d1, d2);
-            const int score = CalculateDescriptorScore(d1, d2);
-            if(score > kMaxDescriptorDist) {
-                continue;
-            }
-            Eigen::Vector3d pc1 = ::Triangulate(upx, p2, T21, *cam_);
-            
-            // 检验pc1深度值
-            if(pc1.z() > kMinDepth && pc1.z() < kMaxDepth) {
-                // pc2深度值也要经过校验
-                const Eigen::Vector3d pc2 = T21 * pc1;
-                if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
-                    continue;
-                }
-
-                const Eigen::Vector3d po1 = pc1 - Eigen::Vector3d::Zero();
-                const Eigen::Vector3d po2 = pc1 - T12.t_wb_;
-                // a*b = |a|*|b|*cos(θ)
-                const double theta = acos(po1.dot(po2)/po1.norm()/po2.norm() );
-                const double ang = abs(theta) * kRad2Deg;
-                // 检验视差角，必须保证一定的基线，对于不同方位的地图点而言，基线是不一样的
-                cout << j << "score | pc1.z | ang: " << score << " " << pc1.z() << " " << ang << endl;
-
-                if(ang < kMinGoodTriangulateAngle || ang > kMaxGoodTriangulateAngle) {
-                    continue;
-                }
-
-                // 深度滤波器使用
-                if(minZ > pc1.z() ) {
-                    minZ = pc1.z();
-                }
-                if(maxZ < pc1.z() ) {
-                    maxZ = pc1.z();
-                }
-                debugPositiveDepthKp2.push_back(p2.cast<double>());
-            }
-        }
-
-        // 查看当前p1是否可以三角化出正确点
-        if(maxZ < 0 || minZ > kMaxDepth) {
-            cerr << "current px1 triangulation error, continue!" << endl;
-            continue;
-        } else {
-            // 这里我们认为首帧是世界帧，所以landmark的anchor帧pose设置为单位矩阵
-            landmark_.push_back({upx, make_shared<Pose>(), cam_, 1.0});
-            landmark_.back().depthRange_[0] = minZ;
-            landmark_.back().depthRange_[1] = maxZ;
-            landmark_.back().UpdateUncertainty();
-
-            debugGoodKp1[upx.x() / binWidth].push_back(upx);
-            debugGoodKp2[upx.x() / binWidth].push_back(debugPositiveDepthKp2.back());
-            // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {upx}, debugPositiveDepthKp2, "Positive depth Epipolar constraint matches", 1, 1);
-            // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {upx}, {kp2[bestPId2]}, "best match Epipolar constraint matches", 1, 1);
-            cout << "\n\n";
-        }
-    }
-*/
     return landmark_.size();
 }
 
@@ -186,8 +101,11 @@ void KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     const Pose T21 = kf2.Twc_.Inverse() * Twc_;
     cout << "T12: " << T21.Inverse() << endl;
     for(int i = 0; i < landmark_.size(); ++i) {
-        Landmark &pc1 = landmark_[i];
-        const vector<Eigen::Vector2d> kp2 = ::FindMatches(pc1, kf2, T21, *cam_);
+        if(landmark_[i] == nullptr) {
+            continue;
+        }
+        Landmark &pc1 = *landmark_[i];
+        const vector<Eigen::Vector2d> kp2 = pc1.FindMatches(kf2);
         
         if(UpdateLandmarkDepth(kp2, T21, *cam_, pc1) ) {
             cout << "[" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ << endl;

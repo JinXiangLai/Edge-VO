@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 
+#include "Landmark.h"
 #include "Utils.h"
 
 using namespace std;
@@ -9,33 +10,34 @@ using namespace cv;
 
 constexpr double kPriorDepthWeight = 1e8;
 
-Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, const double lambda, 
-    const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate) 
+Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, Camera *cam,
+    const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate) 
     : lambda_(lambda)
     , dist_(dist)
     , dx_(dx)
     , dy_(dy)
     , maxIte_(maxIte)
     , useInvDepth_(useInvDepth)
-    , onlyPoseUpdate_(onlyPoseUpdate) {}
+    , onlyPoseUpdate_(onlyPoseUpdate)
+    , cam_(cam) {}
 
-Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark> &pc1, const vector<Pose> &T12){
+Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const vector<Pose> &T12){
     
     constexpr int resDim = 1;
     Eigen::VectorXd res(pc1.size() * T12.size() * resDim + pc1.size());
     // Eigen::VectorXd res(pc1.size() * T12.size() * resDim);
     res.setZero();
 
-    const shared_ptr<Camera> cam = pc1[0].cam_;
+    const Camera &cam = *cam_;
     int noInrangeNum = 0;
     for(int i = 0; i < T12.size(); ++i) {
         const Pose T21 = T12[i].Inverse();
         const Mat dist = dist_[i];
 
         for(int j = 0; j < pc1.size(); ++j) {
-            const Eigen::Vector3d pc = T21 * pc1[j].GetPc();
-            const Eigen::Vector2d px = cam->Project2PixelPlane(pc);
-            if(InRange(dist, px.cast<int>()) && pc1[j].z_ > 0) {
+            const Eigen::Vector3d pc = T21 * pc1[j]->GetPc();
+            const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
+            if(InRange(dist, px.cast<int>()) && pc1[j]->z_ > 0) {
                 // res[i*pc1.size()*resDim + j] = dist_.at<float>(px.y(), px.x());
                 const double r = BilinearInterpolate(dist, px);
                 // TODO: 增加异常值鲁棒核函数
@@ -56,10 +58,10 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark> &pc1, const 
         const int startRow = pc1.size() * T12.size() * resDim;
         for(int i = 0; i < pc1.size(); ++i) {
             if(useInvDepth_) {
-                res[startRow+i] = exp(-kPriorDepthWeight / pc1[i].invZ_);
+                res[startRow+i] = exp(-kPriorDepthWeight / pc1[i]->invZ_);
                 continue;
             }
-            res[startRow+i] = exp(-kPriorDepthWeight * pc1[i].z_);
+            res[startRow+i] = exp(-kPriorDepthWeight * pc1[i]->z_);
         }
     }
 
@@ -67,11 +69,12 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark> &pc1, const 
     return res;
 }
 
-Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const vector<Pose> &T12, 
+Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark*> &pc1, const vector<Pose> &T12, 
     Eigen::MatrixXd &H, Eigen::VectorXd &b, Eigen::VectorXd &g) {
     
     constexpr int resDim = 1;
-    Eigen::MatrixXd J(pc1.size()*T12.size()*resDim + pc1.size(), T12.size()*T12[0].Size() + pc1.size()*pc1[0].Size());
+    Eigen::MatrixXd J(pc1.size()*T12.size()*resDim + pc1.size(), T12.size()*T12[0].Size() 
+        + pc1.size()*pc1[0]->Size());
     // Eigen::MatrixXd J(pc1.size()*T12.size()*resDim, T12.size()*T12[0].Size() + pc1.size()*pc1[0].Size());
 
     if(onlyPoseUpdate_) {
@@ -102,7 +105,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
         const Mat dyMat = dy_[i];
 
         for(int j = 0; j < pc1.size(); ++j) {
-            const Landmark &p = pc1[j];
+            const Landmark &p = *pc1[j];
             const Eigen::Vector3d Pc1 = p.GetPc();
             const Eigen::Vector3d Pc2 = T21 * Pc1;
             const Eigen::Vector2d px2 = p.cam_->Project2PixelPlane(Pc2);
@@ -152,7 +155,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
             // A.setZero();
             Eigen::MatrixXd B = J_res_px2 * J_px2_Pc2 * J_Pc2_Pc1 * J_Pc1_z1;
 
-            const double w = 1.0 / p.depthCov_;
+            const double w = 1.0; // 1.0 / p.depthCov_;
             J.block(ai, aj, resDim, A.cols()) = A;
             H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
             /******** -J.T * b的size为[J.cols() x 1]**************
@@ -189,9 +192,9 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark>&pc1, const v
             const int bi = startRow+i, bj = pointStartCol+i;
             Eigen::MatrixXd B(1, 1);
             if(useInvDepth_) {
-                B << kPriorDepthWeight / pow(pc1[i].invZ_, 2) * exp(-kPriorDepthWeight / pc1[i].invZ_);
+                B << kPriorDepthWeight / pow(pc1[i]->invZ_, 2) * exp(-kPriorDepthWeight / pc1[i]->invZ_);
             } else {
-                B << -kPriorDepthWeight * exp(-kPriorDepthWeight * pc1[i].z_);
+                B << -kPriorDepthWeight * exp(-kPriorDepthWeight * pc1[i]->z_);
             }
             J.block(bi, bj, 1, 1) = B;
             H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B;
@@ -264,7 +267,14 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     return deltaX;
 }
 
-bool Optimizer::Optimize(vector<Landmark> &pc1, vector<Pose> &T12) {
+bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
+    vector<Landmark*> pc1;
+    pc1.reserve(_pc1.size());
+    for(Landmark *p : _pc1) {
+        if(p!=nullptr) {
+            pc1.push_back(p);
+        }
+    }
     double lastCost = -1;
     double firstCost = -1;
     bool status = false;
@@ -291,7 +301,7 @@ bool Optimizer::Optimize(vector<Landmark> &pc1, vector<Pose> &T12) {
         H.diagonal() += _lambda;
         Eigen::VectorXd delta_x;
         if(!onlyPoseUpdate_) {
-            delta_x = SchurCompleteSolve(H, g, T12.size(), pc1.size(), T12[0].Size(), pc1[0].Size());
+            delta_x = SchurCompleteSolve(H, g, T12.size(), pc1.size(), T12[0].Size(), pc1[0]->Size());
         } else {
             delta_x = H.colPivHouseholderQr().solve(g);
         }
@@ -302,7 +312,11 @@ bool Optimizer::Optimize(vector<Landmark> &pc1, vector<Pose> &T12) {
             lastCost = b.norm();
             firstCost = lastCost;
         }
-        const vector<Landmark> pcBackup = pc1;
+        
+        vector<Landmark> pcBackup(pc1.size());
+        for(int i = 0; i < pc1.size(); ++i) {
+            pcBackup[i] = *pc1[i];
+        }
         const vector<Pose> poseBackup = T12;
         
         // 状态更新
@@ -314,7 +328,7 @@ bool Optimizer::Optimize(vector<Landmark> &pc1, vector<Pose> &T12) {
         if(!onlyPoseUpdate_) {
                 updateId += T12.size() * T12[0].Size();
             for(int i = 0; i < pc1.size(); ++i) {
-                pc1[i].Update(delta_x.middleRows(updateId, pc1[0].Size())[0], useInvDepth_);
+                pc1[i]->Update(delta_x.middleRows(updateId, pc1[0]->Size())[0], useInvDepth_);
                 ++updateId;
             }
         }
@@ -325,7 +339,9 @@ bool Optimizer::Optimize(vector<Landmark> &pc1, vector<Pose> &T12) {
 
         if(lastCost <= cost) {
             lambda_ *= 1.8;
-            pc1 = pcBackup;
+            for(int i = 0; i < pcBackup.size(); ++i) {
+                *pc1[i] = pcBackup[i];
+            }
             T12 = poseBackup;
         } else {
             lambda_ *= 0.3;
