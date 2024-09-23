@@ -1,6 +1,7 @@
 #ifndef UTILS
 #define UTILS
 
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -66,15 +67,19 @@ size_t LoadImages(const std::string& strDirectory, std::vector<std::string>& vst
 
 size_t LoadPriorOdom(const std::string &strDirectory, std::vector<Eigen::Matrix<double, 8, 1>> &vPriorPose);
 
-void FindImageAndPose(const int idx, const std::vector<std::string> & vstrImages, const std::vector<double> vTimeStamps, 
+void FindImageAndPose(const int idx, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, 
     const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, std::vector<cv::Mat> &imgs, 
     std::vector<Pose> &vTwc, const int needNum = 2);
 
+void GetImageAndPose(const int idx, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, 
+    const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, 
+    Pose &Twc);
+
 double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
 
-unsigned long CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2i &px);
+uint64_t CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2i &px);
 
-int CalculateDescriptorScore(const int v1, const int v2);
+int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2);
 
 void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eigen::Vector2i &xRange, 
     Eigen::Vector2i &yRange);
@@ -85,4 +90,6 @@ void ShowPointCloud(const std::vector<Landmark*> &ps1,
     const std::vector<Landmark*> &ps2, const double zOffset = 0.0);
 
 double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
+
+bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
 #endif

@@ -1,6 +1,7 @@
 #ifndef CLASS_LANDMARK
 #define CLASS_LANDMARK
 
+#include <cstdint>
 #include <map>
 #include <memory>
 
@@ -15,7 +16,7 @@ public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     Landmark(const Eigen::Vector2d &px, KeyFrame *host, const std::shared_ptr<Camera> cam, 
-        const double z = 1.0);
+        const uint64_t desc, const double z);
     Landmark() {}
     Eigen::Vector3d GetPcNorm() const;
     Eigen::Vector3d GetPc() const;
@@ -24,6 +25,7 @@ public:
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
     bool Converge() const {return uncertainty_ < kConvergeDiff && z_ > kMinDepth && z_ < kMaxDepth;}
+    bool Lost() {return host_ == nullptr && target_.empty();} // 地图点不再被更新
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame &kf2);
 
     double z_ = 1.0;

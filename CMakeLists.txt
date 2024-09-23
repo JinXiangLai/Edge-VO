@@ -54,6 +54,11 @@ target_link_libraries(main
     edge_slam
 )
 
+add_executable(edge_slam_main main_edge_slam.cpp)
+target_link_libraries(edge_slam_main
+    edge_slam
+)
+
 add_executable(ut unit_test.cpp)
 target_link_libraries(ut 
     edge_slam

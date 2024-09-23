@@ -1,5 +1,6 @@
 #include "Utils.h"
 
+#include <cstdint>
 #include <fstream>
 #include <algorithm>
 
@@ -627,6 +628,40 @@ void FindImageAndPose(const int idx, const vector<string> & vstrImages, const ve
     Assert(imgs.size() == needNum && vTwc.size() == needNum, "Find imgs and Twc size Error !!!");
 }
 
+
+void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vector<double> vTimeStamps, 
+    const vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, Pose &Twc){
+    Assert(!vstrImages.empty() && !vTimeStamps.empty() && !vPriorPose.empty(), "Dataset is empty!!!");
+
+    // 插值pose
+    auto InterpolatePose = [&vPriorPose, &calib] (const double &t) -> Pose {
+        if(t < vPriorPose.front()[0] || t > vPriorPose.back()[0]) {
+            cerr << "Can't find match pose!!!" << endl;
+            exit(-1);
+        }
+        Eigen::Matrix<double, 8, 1> Twv1, Twv2;
+        for(int i = 1; i < vPriorPose.size(); ++i) {
+            if(vPriorPose[i][0] > t) {
+                Twv1 = vPriorPose[i-1];
+                Twv2 = vPriorPose[i];
+                break;
+            }
+        }
+        const double ratio = (t-Twv1[0])/(Twv2[0]-Twv1[0]);
+        const Eigen::Vector3d p = (1-ratio)*Twv1.middleRows(1, 3) + ratio*Twv2.middleRows(1, 3);
+        const Eigen::Quaterniond q1(Twv1[7], Twv1[4], Twv1[5], Twv1[6]);
+        const Eigen::Quaterniond q2(Twv2[7], Twv2[4], Twv2[5], Twv2[6]);
+        const Eigen::Quaterniond q = q1.slerp(ratio, q2);
+        Pose Twv(q, p);
+        return calib.Tcv_ * Twv * calib.Tvc_;
+    };
+
+    img = cv::imread(vstrImages[idx], IMREAD_GRAYSCALE);
+    const int newW = img.cols * kImageScale, newH = img.rows * kImageScale;
+    cv::resize(img, img, cv::Size(newW, newH) );
+    Twc = InterpolatePose(vTimeStamps[idx] + kImgTimeOffset);
+}
+
 double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
     /****************
     * +---+---+---+
@@ -646,9 +681,9 @@ double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, c
     return cost * ratio;
 }
 
-unsigned long CalculateDescriptor(const Mat &grayImg, const Eigen::Vector2i &px) {
-    // 返回32维描述子, [8x8]的范围内对角线位置的像素值比值
-    unsigned long des = 0;
+uint64_t CalculateDescriptor(const Mat &grayImg, const Eigen::Vector2i &px) {
+    // 返回descDim维描述子, [8x8]的范围内对角线位置的像素值比值
+    uint64_t des = 0;
     const int ox = px.x(),   oy = px.y(),
                 sx = -4, ex = 4,
                 sy = -4, ey = 3;
@@ -674,7 +709,7 @@ unsigned long CalculateDescriptor(const Mat &grayImg, const Eigen::Vector2i &px)
     return des;
 }
 
-int CalculateDescriptorScore(const int v1, const int v2) {
+int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2) {
     // 异或，相同值0，不同值为1,意味着score越小越匹配
     uint64_t d = v1^v2;
     int sum = 0;
@@ -723,6 +758,11 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
     const double newDepth = t12Norm * sin(belta2) / sin(gamma);
 
     return abs(pc1Norm - newDepth);
+}
+
+bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
+    const Pose T12 = kf->Twc_.Inverse() * f->Twc_;
+    return T12.t_wb_.norm() > kNewKFtrans || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > kNewKFrot;
 }
 
 void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {

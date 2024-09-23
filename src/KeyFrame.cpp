@@ -1,6 +1,12 @@
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 #include "KeyFrame.h"
+#include "Camera.h"
+#include "Config.h"
+#include "Eigen/src/Core/Matrix.h"
 #include "Utils.h"
 
 using namespace std;
@@ -60,7 +66,7 @@ void KeyFrame::CannyEdgeDetect() {
             // descriptor_.emplace_back(d);
 
             descriptor_.push_back(CalculateDescriptor(grayImg_, {x, y}) );
-            pointMapId_.insert({tuple<int, int>(p.x(), p.y()), descriptor_.size()-1});
+            pointMapId_.insert({ {p.x(), p.y()}, descriptor_.size()-1});
             ++it;
         } else {
             it = unPx_[0].erase(it);
@@ -84,12 +90,7 @@ size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> 
     debugGoodKp2.resize(equalparts);
     for(int i = 0; i < unPx_[0].size(); ++i) {
         const Eigen::Vector2d &upx = unPx_[0][i];
-        // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
-        landmark_.push_back(new Landmark(upx, this, cam_, 1.0) );
-        // 使用make_shared无法直接创建指向同一个this的智能指针对象，所以最终还是得像ORBSLAM那样直接使用原始指针?
-        // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
-        //landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) );
-        // 给地图点赋值描述子
+        landmark_.push_back(new Landmark(upx, this, cam_, descriptor_[i], 1.0) );
         landmark_.back()->descriptor_ = descriptor_[i];
         // landmark_.back()->UpdateUncertainty();
     }
@@ -97,9 +98,33 @@ size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> 
     return landmark_.size();
 }
 
-void KeyFrame::UpdateDepth(const KeyFrame &kf2) {
+size_t KeyFrame::InitializeLandmark() {
+    if(landmark_.empty() ){
+        // initialKF会有该种情况
+        landmark_.resize(unPx_[0].size(), nullptr);
+    }
+    
+    for(int i = 0; i < unPx_[0].size(); ++i) {
+        if(landmark_[i] != nullptr) {
+            continue;
+        }
+        const Eigen::Vector2d &upx = unPx_[0][i];
+        // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
+        landmark_[i] = new Landmark(upx, this, cam_, descriptor_[i], 1.0);
+        // 使用make_shared无法直接创建指向同一个this的智能指针对象，所以最终还是得像ORBSLAM那样直接使用原始指针?
+        // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
+        //landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) );
+        // 给地图点赋值描述子
+        // landmark_.back()->UpdateUncertainty();
+    }
+
+    return landmark_.size();
+}
+
+int KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     const Pose T21 = kf2.Twc_.Inverse() * Twc_;
     cout << "T12: " << T21.Inverse() << endl;
+    int matchEdgeNum = 0;
     for(int i = 0; i < landmark_.size(); ++i) {
         if(landmark_[i] == nullptr) {
             continue;
@@ -110,6 +135,44 @@ void KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(UpdateLandmarkDepth(kp2, T21, *cam_, pc1) ) {
             cout << "[" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ << endl;
             // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {pc1.uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+            ++matchEdgeNum;
         }   
     }
+    return matchEdgeNum;
+}
+
+int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
+    const Pose T21 = Twc_.Inverse() * kf1->Twc_;
+    cout << "GenerateLandmark T12: " << T21.Inverse() << endl;
+    // 给新的KF2预分配内存
+    landmark_ = vector<Landmark*>(unPx_[0].size(), nullptr);
+    
+    int reuseLandmarkNum = 0;
+    const vector<Landmark*> &landmark = kf1->landmark_;
+    for(size_t i = 0; i < landmark.size(); ++i) {
+        if(landmark[i] == nullptr) {
+            continue;
+        }
+        Landmark &pc1 = *landmark[i];
+
+        const Eigen::Vector3d pc2 = T21 * pc1.GetPc();
+        const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
+        if(pointMapId_.count(px2) ) {
+            const int vecId = pointMapId_[px2];
+            if(landmark_[vecId] != nullptr) {
+                // TODO: 选一个更好的，或者按照先来后到
+                continue;
+            }
+            const uint64_t d2 = descriptor_[vecId];
+            const uint64_t d1 = pc1.descriptor_;
+            uint64_t score = CalculateDescriptorScore(d1, d2);
+            if(score < kGoodDescriptorDist) {
+                // 增加相互观测
+                landmark_[vecId] = &pc1;
+                pc1.target_.insert({this, px2.cast<double>()});
+                ++reuseLandmarkNum;
+            }
+        }
+    }
+    return reuseLandmarkNum;
 }

@@ -351,14 +351,66 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
             cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
             status = true;
         }
+        if(lambda_ > 1e10) {
+            cout << fixed << "lambad too large: " << lambda_ << endl;
+        }
     }
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(t2 -t1).count();
     if(!status) {
-        cerr << "Reach max iteration time." << endl;
+        cerr << "Reach max iteration time or lambda too large" << endl;
     }
     cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
     cout << "Total Optimize spend " << spendTime << "s" << endl;
 
     return status;
+}
+
+// TODO： 先不考虑边缘化，而是直接丢弃首帧
+void Optimizer::MarginalizeFirstKeyFrame() {
+    /*********************************************************
+    * 注意：VINS-MONO论文中的r_p, Hp分别代表先验残差、先验雅可比，
+    * 即 先验约束项 |r_p - Hp * X|^2 <==> |r_p - Jp * X|^2
+    * 注意：VINS-MONO论文中，多处出现H矩阵，其均不代表J’*J!!!
+    * 参考为：https://github.com/StevenCui/VIO-Doc/tree/master
+    ***********************************************************
+    * |A B|   |dx1|   |g1|
+    * |C D| * |dx2| = |g2| ==>
+    * 将A边缘化掉，得：
+    * |E F|   |dx1|   |h1|
+    * |0 G| * |dx2| = |h2| ==>
+    * G*dx2 = h2, 并且，dx2满足：
+    * {我们知道，对于一个线性化的量测方程而言，有：
+    * J'*J * dx = -J' * b，
+    ******************************************************
+    * 令G = J' * J, h2 = -J' * b, 
+    * 那么构建先验约束： r = |b - J*X|^2，该式在求解极小值点dx的过程中，
+    * 恰好能满足出现： G*dx = h2这一先验约束
+    *********************************************************
+    * 所以，只被margTwc观测到的地图点，我们不再用它构建方程，直接丢弃
+    * 既被margTwc又被其他Twc观测到的地图点，不将其边缘化，而是继续更新
+    *******************************************************/
+}
+
+void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
+    if(window_.size() == kMaxKFnumInWindow) {
+        margTwc_ = &window_.front()->Twc_;
+        MarginalizeFirstKeyFrame();
+    }
+}
+
+void Optimizer::ResetOptVariables() {
+    // 优化结束后，重置这些标志量
+    optLandmark_.clear();
+    oldest_ = nullptr;
+    newest_ = nullptr;
+}
+
+bool Optimizer::ConstructJ_H_b_g() {
+    if(window_.size() < 2) {
+        cerr << "Window size: " << endl;
+        return false;
+    }
+
+    return true;
 }

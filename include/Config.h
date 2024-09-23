@@ -34,6 +34,7 @@ constexpr double kMaxGoodTriangulateAngle = 60.0; // 实践过程中发现视差
 
 // constexpr double kMaxDescriptorDist = 10.0; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
 constexpr int kMaxDescriptorDist = 10; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
+constexpr int kGoodDescriptorDist = kMaxDescriptorDist * 0.6;
 constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那样设定最优与次优描述子的比值，可能导致特征点稀少
 constexpr double kConvergeDiff = 0.5;
 constexpr double kAbnormalResidual = 15; // 15 个像素距离为异常残差值
@@ -41,5 +42,9 @@ constexpr double kAbnormalResidual = 15; // 15 个像素距离为异常残差值
 constexpr int kMaxKFnumInWindow = 5;
 
 constexpr double kImgTimeOffset = 0.06; // sec
+
+constexpr double kNewKFtrans = 2.5; // m
+constexpr double kNewKFrot = 10; // degree
+constexpr double kNewKFMinMatchEdgeRatio = 0.5;
 
 #endif

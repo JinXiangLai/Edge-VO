@@ -1,6 +1,7 @@
 #include "Landmark.h"
 
 #include "Utils.h"
+#include <cstdint>
 
 using namespace std;
 using namespace cv;
@@ -8,9 +9,10 @@ using namespace cv;
 class KeyFrame;
 
 Landmark::Landmark(const Eigen::Vector2d &px, KeyFrame *host, const shared_ptr<Camera> cam, 
-    const double z)
+    const uint64_t desc, const double z)
     : z_(z)
     , invZ_(1.0/z)
+    , descriptor_(desc)
     , host_(host)
     , uv_(px)
     , cam_(cam) {}
