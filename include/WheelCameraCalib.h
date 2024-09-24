@@ -6,6 +6,8 @@
 
 class WheelCameraCalib { 
 public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     WheelCameraCalib();
     Pose Tcv_, Tvc_;
 private:

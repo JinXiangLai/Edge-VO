@@ -17,7 +17,7 @@ using namespace cv;
 int main(int argc, char** argv){
 
     // 读取程序参数
-    string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+    string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
     if (argc < 5){
         cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
         exit(-1);
@@ -121,7 +121,7 @@ int main(int argc, char** argv){
         edgeImg_true.push_back(kfs[i].edgeImg_[0]);
     }
 
-    Optimizer optimizer(vDist, vDx, vDy, cam.get(), 1, 100, useInvZ, false);
+    Optimizer optimizer(vDist, vDx, vDy, cam, 1, 100, useInvZ, false);
 
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     const double cost = optimizer.Optimize(kfs[0].landmark_, T12);

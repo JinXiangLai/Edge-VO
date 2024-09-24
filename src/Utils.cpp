@@ -1,4 +1,5 @@
 #include "Utils.h"
+#include "Landmark.h"
 
 #include <cstdint>
 #include <fstream>
@@ -421,13 +422,13 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
     const Eigen::Vector2d kp1 = landmark.uv_;
     vector<double> depth;
-    cout << "current triangulated depth: ";
+    // cout << "current triangulated depth: ";
     double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
     Eigen::Vector2d specialPc2;
     for(const Eigen::Vector2d &p : kp2) {
 
        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
-       cout << pc1.z() << " ";
+    //    cout << pc1.z() << " ";
         if(SolutionInrange(pc1.z()) ) {
             depth.push_back(pc1.z());
             if(pc1.z() < minDepth) {
@@ -440,7 +441,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
             specialPc2 = p;
         }
     }
-    cout << endl;
+    // cout << endl;
 
     double u2 = -1, cov2 = -1;
     if(depth.size() > 1) {
@@ -456,13 +457,13 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     }
 
     const double u1 = landmark.z_, cov1 = landmark.depthCov_;
-    cout << "maxDepth, minDepth, depth size: " << maxDepth << " " << minDepth << " " << depth.size() << endl;
+    // cout << "maxDepth, minDepth, depth size: " << maxDepth << " " << minDepth << " " << depth.size() << endl;
     // 信息融合，标准差一直减小
     landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
     landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
     landmark.UpdateUncertainty();
-    cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
-        << " " << landmark.z_ << endl;
+    // cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+    //     << " " << landmark.z_ << endl;
     
     static ofstream unf;
     static int num = 0;
@@ -471,8 +472,8 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
         unf.close();
     }
     unf.open("depth_uncertainty.csv", ios::app);
-    unf << num++ << "[" << landmark.depthRange_[0] << ", " << landmark.depthRange_[1] << "] std: " 
-        << landmark.uncertainty_ << endl;
+    unf << fixed << &landmark << " [" << landmark.depthRange_[0] << ", " << landmark.depthRange_[1] << "] std, depth: " 
+        << landmark.uncertainty_ << " " << landmark.z_ << endl;
     unf.close();
     return true;
 }
@@ -751,7 +752,7 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
         d1 = pc1Norm * t12Norm, d2 = pc2.norm() * t12Norm;
     const double alpha = acos(pc1.dot(t12)/d1);
     const double belta = acos(pc2.dot(-t12)/d2);
-    const double deltaBelta = atan2(1., f); 
+    const double deltaBelta = atan2(kPixelError, f);
 
     const double belta2 = belta + deltaBelta;
     const double gamma = M_PI - alpha - belta2;
@@ -837,9 +838,8 @@ void ShowPointCloud(const vector<Landmark* > &ps1,
             if(p==nullptr || !p->Converge()) {
                 continue;
             }
-            const double depth = p->z_;
-            const Eigen::Vector3d &pc = p->cam_->InverseProject(p->uv_.cast<int>(), depth);
-            points.push_back({pc.x(), pc.y(), pc.z()});
+            const Eigen::Vector3d &pw = p->GetPw();
+            points.push_back({pw.x(), pw.y(), pw.z()});
         }
 
         if(points.empty()) {
@@ -871,4 +871,33 @@ void ShowPointCloud(const vector<Landmark* > &ps1,
 
     // 运行事件循环，使窗口响应用户输入
     window.spin();
+}
+
+void ShowPointCloud(const set<Landmark* > &ps) {
+    if(ps.empty()) {
+        return;
+    }
+    viz::Viz3d window("LocalMap Viewer");
+    cv::Affine3d viewPose;
+    window.setViewerPose(viewPose);
+    vector<Point3d> points;
+
+    for(Landmark *p : ps) {
+        if(p == nullptr || !p->Converge()) {
+            continue;
+        }
+        const Eigen::Vector3d pw = p->GetPw();
+        points.push_back({pw.x(), pw.y(), pw.z()});
+    }
+    vector<Vec3b> colors(points.size(), {0, 255, 0});
+
+    // 创建点云对象
+    viz::WCloud cloud(points, colors);
+
+    // 显示点云
+    window.showWidget("LocalMap", cloud);
+
+    // 运行事件循环，使窗口响应用户输入
+    window.spinOnce(1000);
+    // window.spin();
 }

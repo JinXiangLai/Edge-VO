@@ -20,7 +20,7 @@ using namespace cv;
 int main(int argc, char** argv){
 
     // 读取程序参数
-    string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+    string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
     if (argc < 5){
         cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
         exit(-1);
@@ -45,6 +45,7 @@ int main(int argc, char** argv){
 
     WheelCameraCalib calib;
     shared_ptr<Camera> cam = make_shared<Camera>(kImageScale);
+    Optimizer optimizer(cam);
     
     vector<KeyFrame*> kfs;
     KeyFrame *initFrame = nullptr;
@@ -59,25 +60,34 @@ int main(int argc, char** argv){
         curKF->GenerateDTandDerivative();
         if(!initFrame) {
             initFrame = curKF;
-            initFrame->Twc_ = Pose();
             kfs.push_back(initFrame);
             initFrame->InitializeLandmark();
+            continue; // 认为初始化完毕
         }
-        // TODO: 删除这个步骤
-        curKF->Twc_ = initFrame->Twc_.Inverse() * curKF->Twc_;
         ShowImage(curKF->edgeImg_[0], "edgeImg"+to_string(i), showImg);
         
-        // 增加投影匹配边缘点数量过小逻辑来选取关键帧
-        const double matchEdgeNum = kfs.back()->UpdateDepth(*curKF);
-        const double recoverRatio = matchEdgeNum / kfs.back()->landmark_.size();
         
-        if(recoverRatio < kNewKFMinMatchEdgeRatio || NeedNewKF(kfs.back(), curKF)) {
-            
-            //  重叠度低，需要将当前帧选为KF，更新它的Landmark
+        // Step: 利用当前帧更新landmark depth，depth与host frame绑定
+        const double recoverRatio = kfs.back()->UpdateDepth(*curKF);
+        cout << "recoverRatio: " << recoverRatio << endl;
+        
+        // Step: 当前帧选为新关键帧，
+        // step1：追踪landmark，能够产生2D-2D的数据关联
+        // step2：为剩余的edge point产生的landmark
+        if(recoverRatio < kNewKFMinMatchEdgeRatio || NeedNewKF(kfs.back(), curKF)) {   
+            // 重叠度低，需要将当前帧选为KF，更新它的Landmark
             const int reuseLandmarkNum = curKF->ReuseLandmark(kfs.back());
             cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
+            // 同时未跟踪上landmark的边缘点生成新的landmark
             curKF->InitializeLandmark();
             kfs.push_back(curKF);
+
+            optimizer.AddOneKeyFeame(curKF);
+
+            // 可视化步骤
+            optimizer.ShowLocalMap();
+        } else {
+            delete curKF; // 释放非KF内存
         }
     }
 

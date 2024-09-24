@@ -53,6 +53,7 @@ void Landmark::UpdateUncertainty() {
 }
 
 vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
+    // TODO: 考虑不是host帧而是其他观测帧投影呢？
     const Pose T21 = kf2.Twc_.Inverse() * host_->Twc_;
     // 需要全局函数作用符"::"以实现类外全局函数的调用
     vector<Eigen::Vector2d> kp2 = ::FindMatches(*this, kf2, T21, *cam_);

@@ -17,5 +17,12 @@ int main(int argc, char** argv) {
     varifyTriangulate();
 
     cout << "All unit test passed!" << endl;
+
+    int *a = new int(5);
+    cout << "a: " << a << endl;
+    int *b = a; 
+    delete a; // 释放a指向地址的内容
+    a = nullptr; // a指向0，但b仍然指向a之前指向的地址
+    cout << "null a, b: " << a << " " << b << endl;
     return 0;
 }

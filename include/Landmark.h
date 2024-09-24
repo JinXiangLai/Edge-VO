@@ -25,7 +25,8 @@ public:
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
     bool Converge() const {return uncertainty_ < kConvergeDiff && z_ > kMinDepth && z_ < kMaxDepth;}
-    bool Lost() {return host_ == nullptr && target_.empty();} // 地图点不再被更新
+    void SetOutOfRange() {outOfRange_ = true;}
+    bool IsOutOfRange() const {return outOfRange_;}
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame &kf2);
 
     double z_ = 1.0;
@@ -44,6 +45,8 @@ public:
 
 	std::map<KeyFrame*, Eigen::Vector2d> target_;
     std::shared_ptr<Camera> cam_;
+
+    bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
 };
 
 #endif

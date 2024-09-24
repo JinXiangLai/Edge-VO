@@ -1,12 +1,15 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <opencv2/highgui.hpp>
+#include <string>
 #include <vector>
 
 #include "KeyFrame.h"
 #include "Camera.h"
 #include "Config.h"
 #include "Eigen/src/Core/Matrix.h"
+#include "Pose.h"
 #include "Utils.h"
 
 using namespace std;
@@ -18,7 +21,7 @@ void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     cv::Mat blurred;
     // 应用高斯滤波来平滑边缘
-    cv::GaussianBlur(grayImg_, blurred, cv::Size(3, 3), 1);
+    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     double lowerThreshold = max(40.0, 60 * kImageScale); // 下限阈值
@@ -108,54 +111,74 @@ size_t KeyFrame::InitializeLandmark() {
         if(landmark_[i] != nullptr) {
             continue;
         }
-        const Eigen::Vector2d &upx = unPx_[0][i];
         // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
-        landmark_[i] = new Landmark(upx, this, cam_, descriptor_[i], 1.0);
-        // 使用make_shared无法直接创建指向同一个this的智能指针对象，所以最终还是得像ORBSLAM那样直接使用原始指针?
         // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
-        //landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) );
-        // 给地图点赋值描述子
-        // landmark_.back()->UpdateUncertainty();
+        // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
+        landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor_[i], 1.0);
+        // host帧也要增加与landmark的相互观测
+        landmark_[i]->target_.insert({this, unPx_[0][i]});
     }
 
     return landmark_.size();
 }
 
-int KeyFrame::UpdateDepth(const KeyFrame &kf2) {
-    const Pose T21 = kf2.Twc_.Inverse() * Twc_;
-    cout << "T12: " << T21.Inverse() << endl;
-    int matchEdgeNum = 0;
+double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
+    double matchEdgeNum = 0;
+    double convergeEdgeNum = 0; // 有效边缘点才参与统计重叠度
+
     for(int i = 0; i < landmark_.size(); ++i) {
-        if(landmark_[i] == nullptr) {
+        if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
             continue;
         }
-        Landmark &pc1 = *landmark_[i];
-        const vector<Eigen::Vector2d> kp2 = pc1.FindMatches(kf2);
+        Landmark *pc1 = landmark_[i];
+        if(pc1->Converge()) {
+            convergeEdgeNum += 1.0;
+        }
+        // TODO: landmark会被其他帧观测到，所以不能一直使用host帧的像素进行深度更新?
+        const vector<Eigen::Vector2d> kp2 = pc1->FindMatches(kf2);
         
-        if(UpdateLandmarkDepth(kp2, T21, *cam_, pc1) ) {
-            cout << "[" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ << endl;
+        // 更新的是host帧下的深度
+        const Pose T21 = kf2.Twc_.Inverse() * pc1->host_->Twc_;
+        // cout << "T12: " << T21.Inverse() << endl;
+        if(UpdateLandmarkDepth(kp2, T21, *cam_, *pc1) ) {
+            // cout << "depth range, depth, std: [" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ 
+            //     << " " << pc1.uncertainty_ << endl;
             // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {pc1.uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
-            ++matchEdgeNum;
+            if(pc1->Converge() ) {
+                matchEdgeNum += 1.0;
+            }
         }   
     }
-    return matchEdgeNum;
+    
+    if(convergeEdgeNum < landmark_.size() * 0.2) {
+        // 有效路标点数量过低，需要继续进行深度滤波
+        return 1.;
+    }
+    return matchEdgeNum / convergeEdgeNum;
 }
 
 int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
-    const Pose T21 = Twc_.Inverse() * kf1->Twc_;
-    cout << "GenerateLandmark T12: " << T21.Inverse() << endl;
     // 给新的KF2预分配内存
     landmark_ = vector<Landmark*>(unPx_[0].size(), nullptr);
     
+    const int debugBin = 5;
+    vector<vector<Eigen::Vector2d> > debugProj1(5), debugProj2(5);
+    const int debugPart = edgeImg_[0].cols / 5; // 显示分区 
+
     int reuseLandmarkNum = 0;
     const vector<Landmark*> &landmark = kf1->landmark_;
-    for(size_t i = 0; i < landmark.size(); ++i) {
-        if(landmark[i] == nullptr) {
+    for(int i = 0; i < landmark.size(); ++i) {
+        if(landmark[i] == nullptr || landmark[i]->IsOutOfRange()) {
             continue;
         }
-        Landmark &pc1 = *landmark[i];
+        Landmark *pc1 = landmark[i];
 
-        const Eigen::Vector3d pc2 = T21 * pc1.GetPc();
+        // 更新的是host帧下的depth
+        const Eigen::Vector3d pc2 = Twc_.Inverse() * pc1->GetPw();
+        if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+            continue;
+        }
+
         const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
         if(pointMapId_.count(px2) ) {
             const int vecId = pointMapId_[px2];
@@ -164,15 +187,28 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
                 continue;
             }
             const uint64_t d2 = descriptor_[vecId];
-            const uint64_t d1 = pc1.descriptor_;
+            const uint64_t d1 = pc1->descriptor_;
             uint64_t score = CalculateDescriptorScore(d1, d2);
             if(score < kGoodDescriptorDist) {
                 // 增加相互观测
-                landmark_[vecId] = &pc1;
-                pc1.target_.insert({this, px2.cast<double>()});
+                landmark_[vecId] = pc1;
+                pc1->target_.insert({this, px2.cast<double>()});
+
+                const int debugId = pc1->uv_.x()/debugPart;
+                debugProj1[debugId].push_back(pc1->uv_);
+                debugProj2[debugId].push_back(unPx_[0][vecId]);
+
                 ++reuseLandmarkNum;
             }
         }
+
     }
+    for(int i = 0; i < debugBin; ++i) {
+        const string name("reuse landmark match part"); // +to_string(i));
+        cv::namedWindow(name);
+        // DrawMatch(kf1->edgeImg_[0], edgeImg_[0], debugProj1[i], debugProj2[i], 
+        //     name, 1, 1);
+    }
+    // cv::destroyAllWindows();
     return reuseLandmarkNum;
 }

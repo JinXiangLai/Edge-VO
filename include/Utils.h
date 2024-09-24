@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <vector>
 
 #include <opencv2/highgui.hpp>
@@ -92,4 +93,6 @@ void ShowPointCloud(const std::vector<Landmark*> &ps1,
 double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
+
+void ShowPointCloud(const std::set<Landmark* > &ps);
 #endif

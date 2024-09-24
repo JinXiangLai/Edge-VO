@@ -39,12 +39,13 @@ constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那�
 constexpr double kConvergeDiff = 0.5;
 constexpr double kAbnormalResidual = 15; // 15 个像素距离为异常残差值
 
-constexpr int kMaxKFnumInWindow = 5;
+constexpr int kMaxKFnumInWindow = 3;
 
 constexpr double kImgTimeOffset = 0.06; // sec
 
 constexpr double kNewKFtrans = 2.5; // m
 constexpr double kNewKFrot = 10; // degree
-constexpr double kNewKFMinMatchEdgeRatio = 0.5;
+constexpr double kNewKFMinMatchEdgeRatio = 0.5; // 重投影重复边缘点
+constexpr double kPixelError = 1; // 1, 默认按1个像素误差推导
 
 #endif

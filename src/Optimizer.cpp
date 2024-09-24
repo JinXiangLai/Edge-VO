@@ -1,7 +1,10 @@
 #include "Optimizer.h"
 
+#include <cstddef>
 #include <stdlib.h>
 
+#include "Config.h"
+#include "Eigen/src/Core/Matrix.h"
 #include "Landmark.h"
 #include "Utils.h"
 
@@ -10,12 +13,19 @@ using namespace cv;
 
 constexpr double kPriorDepthWeight = 1e8;
 
-Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, Camera *cam,
+Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, std::shared_ptr<Camera> cam,
     const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate) 
     : lambda_(lambda)
     , dist_(dist)
     , dx_(dx)
     , dy_(dy)
+    , maxIte_(maxIte)
+    , useInvDepth_(useInvDepth)
+    , onlyPoseUpdate_(onlyPoseUpdate)
+    , cam_(cam) {}
+
+Optimizer::Optimizer(std::shared_ptr<Camera> cam, const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate)
+    : lambda_(lambda)
     , maxIte_(maxIte)
     , useInvDepth_(useInvDepth)
     , onlyPoseUpdate_(onlyPoseUpdate)
@@ -367,7 +377,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
 }
 
 // TODO： 先不考虑边缘化，而是直接丢弃首帧
-void Optimizer::MarginalizeFirstKeyFrame() {
+void Optimizer::MarginalizeOldestKeyFrame() {
     /*********************************************************
     * 注意：VINS-MONO论文中的r_p, Hp分别代表先验残差、先验雅可比，
     * 即 先验约束项 |r_p - Hp * X|^2 <==> |r_p - Jp * X|^2
@@ -393,11 +403,80 @@ void Optimizer::MarginalizeFirstKeyFrame() {
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
-    if(window_.size() == kMaxKFnumInWindow) {
-        margTwc_ = &window_.front()->Twc_;
-        MarginalizeFirstKeyFrame();
+    window_.push_back(kf);
+    if(window_.size() > kMaxKFnumInWindow) {
+        // margTwc_ = &window_.front()->Twc_;
+        // MarginalizeOldestKeyFrame();
+        RemoveOldestKeyFrame();
     }
 }
+
+void Optimizer::RemoveOldestKeyFrame() {
+    cout << "window size: " << window_.size() << " begin remove oldest" << endl;
+    KeyFrame *oldest = window_[0];
+    cout << "oldest: " << oldest << endl;
+    window_.erase(window_.begin());
+    cout << "window[0]: " << window_[0] << endl;
+
+    for(int i = 0; i < oldest->landmark_.size(); ++i) {
+        Landmark* p = oldest->landmark_[i];
+        if(p == nullptr || p->IsOutOfRange()) {
+            continue;
+        }
+        // 删除landmark关于oldest的观测
+        p->target_.erase(oldest);
+
+        if(p->target_.empty()) {
+            // host帧观测也存在map容器中，若容器为空，则landmark可以删除
+            p->SetOutOfRange();
+        } else if(p->host_ == oldest) {
+            const Eigen::Vector3d pw = p->GetPw();
+            // p->host_ = nullptr; // 不允许，landmark超过视野不代表其pw是失效的
+            // 选一个最新的关键帧，以转移控制权
+            for(int j = window_.size()-1; j >=0; --j) {
+                KeyFrame *kf = window_[j];
+                if(p->target_.count(kf)) {
+                    const Eigen::Vector3d pc2 = kf->Twc_.Inverse() * pw;
+                    if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+                        continue;
+                    }
+                    Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+                    const double pxError = (px2 - p->target_[kf]).norm();
+                    // 像素误差过大，无法转移控制权
+                    if(pxError > 1) {
+                        continue;
+                    }
+                    
+                    // 可以转移landmark控制权，更新量测、深度及不确定度
+                    p->host_ = kf;
+                    p->uv_ = p->target_[kf];
+                    p->z_ = pc2.z();
+                    p->UpdateUncertainty();
+                    break; // 需要及时撤出哦
+                }
+            }
+
+            if(p->host_ == oldest) {
+                // 未能找到合适的host，删除
+                p->SetOutOfRange();
+            }
+
+        } else {
+            // 控制权在其他帧
+            continue;
+        }
+    }
+
+    // 释放KF，其对应的landmark已经释放
+    cout << "[WARNING] kf: " << oldest << " Set out of range flag" << endl;
+    // delete oldest; // 不能直接释放，因为其余指向该位置的指针并不会变成nullptr
+    oldest->SetOutOfRange();
+    cout << "oldest: " << oldest << endl;
+    historicalKF_.push_back(oldest);
+    cout << "historicalKF_.size: " << historicalKF_.size() << endl;
+    return;
+}
+
 
 void Optimizer::ResetOptVariables() {
     // 优化结束后，重置这些标志量
@@ -413,4 +492,18 @@ bool Optimizer::ConstructJ_H_b_g() {
     }
 
     return true;
+}
+
+void Optimizer::ShowLocalMap() {
+    set<Landmark*> ps;
+    for(int i = 0; i < window_.size() - 1; ++i) {
+        // 新插入的最后一个KF未成熟
+        KeyFrame *kf = window_[i];
+        for(Landmark *p : kf->landmark_) {
+            if(p!=nullptr && !ps.count(p) && p->Converge()) {
+                ps.insert(p);
+            }
+        }
+    }
+    ShowPointCloud(ps);
 }
