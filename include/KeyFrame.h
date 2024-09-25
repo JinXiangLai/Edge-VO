@@ -24,8 +24,10 @@ public:
     : grayImg_(img)
     , cam_(cam)
     , Twc_ {Twc}
+    , Tcw_(Twc.Inverse())
     , priorTwc_(Twc)
-    , level_(level) {
+    , level_(level)
+     {
         edgeImg_.resize(level);
         dist_.resize(level);
         dx_.resize(level);
@@ -43,11 +45,15 @@ public:
     double UpdateDepth(const KeyFrame &kf2);
     void SetOutOfRange() {outOfRange_ = true;}
     bool IsOutOfRange() const {return outOfRange_;}
+    void Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t);
+    void SetTwc(const Pose &Twc);
     cv::Mat grayImg_;
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;
     std::shared_ptr<Camera> cam_;
     Pose Twc_;
+    // TODO： 增加该字段，减小Inverse()次数
+    Pose Tcw_;
     const Pose priorTwc_;
     int level_ = 1;
     std::vector<std::vector<Eigen::Vector2d> > unPx_; // 像素平面上的去畸变点
@@ -57,6 +63,7 @@ public:
     static constexpr int descDim = 63;
     std::unordered_map<Eigen::Vector2i, int, TupleHash> pointMapId_; // 像素坐标与vector索引的映射
     bool outOfRange_ = false;
+    int convergeEdgeNum_ = 0;
 };
 
 #endif

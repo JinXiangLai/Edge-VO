@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <thread>
 
+#include "Pose.h"
 #include "Utils.h"
 #include "Optimizer.h"
 
@@ -62,10 +63,18 @@ int main(int argc, char** argv) {
     a = nullptr; // a指向0，但b仍然指向a之前指向的地址
     cout << "null a, b: " << a << " " << b << endl;
 
+    Eigen::Vector3d t_c1c2{0.0, 0.0, -3.5}; 
+    const Pose Tc1c2 = ConvertRPYandPostion2Pose({0, 2, 3}, t_c1c2, kDeg2Rad);
+    const Pose Tidentity = Tc1c2 * Tc1c2.Inverse();
+    cout << "Tidentity: " << Tidentity << endl;
+    Assert(Tidentity.t_wb_.isApprox(Eigen::Vector3d::Zero()) && 
+        Tidentity.q_wb_.isApprox(Eigen::Quaterniond::Identity()), "Inverse operate Error!");
+    cout << "Tidentity: " << Tidentity << endl;
+
     // ShowPointCloud();
-    thread th(Run);
-    th.join();
-    th.detach();
+    // thread th(Run);
+    // th.join();
+    // th.detach();
     
     cout << "All unit test passed!" << endl;
 

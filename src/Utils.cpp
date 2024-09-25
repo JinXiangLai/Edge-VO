@@ -762,7 +762,7 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
 }
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
-    const Pose T12 = kf->Twc_.Inverse() * f->Twc_;
+    const Pose T12 = kf->Tcw_ * f->Twc_;
     return T12.t_wb_.norm() > kNewKFtrans || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > kNewKFrot;
 }
 

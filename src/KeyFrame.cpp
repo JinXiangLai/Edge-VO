@@ -85,7 +85,7 @@ void KeyFrame::GenerateDTandDerivative() {
 size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> > &debugGoodKp1, vector<vector<Eigen::Vector2d> >&debugGoodKp2,
     const int equalparts) {
     
-    const Pose T21 = kf2.Twc_.Inverse() * Twc_;
+    const Pose T21 = kf2.Tcw_ * Twc_;
     const Pose T12 = T21.Inverse();
     cout << "T21: " << T21 << endl;
     cout << "T12: " << T12 << endl;
@@ -124,7 +124,7 @@ size_t KeyFrame::InitializeLandmark() {
 
 double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     double matchEdgeNum = 0;
-    double convergeEdgeNum = 0; // 有效边缘点才参与统计重叠度
+    convergeEdgeNum_ = 0; // 重新统计当前KF的收敛边缘点集
 
     for(int i = 0; i < landmark_.size(); ++i) {
         if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
@@ -132,14 +132,13 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }
         Landmark *pc1 = landmark_[i];
         if(pc1->Converge()) {
-            convergeEdgeNum += 1.0;
+            convergeEdgeNum_ += 1;
         }
         // TODO: landmark会被其他帧观测到，所以不能一直使用host帧的像素进行深度更新?
         const vector<Eigen::Vector2d> kp2 = pc1->FindMatches(kf2);
         
         // 更新的是host帧下的深度
-        const Pose T21 = kf2.Twc_.Inverse() * pc1->host_->Twc_;
-        // cout << "T12: " << T21.Inverse() << endl;
+        const Pose T21 = kf2.Tcw_ * pc1->host_->Twc_;
         if(UpdateLandmarkDepth(kp2, T21, *cam_, *pc1) ) {
             // cout << "depth range, depth, std: [" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ 
             //     << " " << pc1.uncertainty_ << endl;
@@ -150,11 +149,12 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }   
     }
     
-    if(convergeEdgeNum < landmark_.size() * 0.2) {
+    cout << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum << " " << convergeEdgeNum_ << endl;
+    if(convergeEdgeNum_ < landmark_.size() * 0.2) {
         // 有效路标点数量过低，需要继续进行深度滤波
         return 1.;
     }
-    return matchEdgeNum / convergeEdgeNum;
+    return matchEdgeNum / convergeEdgeNum_;
 }
 
 int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
@@ -169,12 +169,13 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
     const vector<Landmark*> &landmark = kf1->landmark_;
     for(int i = 0; i < landmark.size(); ++i) {
         if(landmark[i] == nullptr || landmark[i]->IsOutOfRange()) {
+            // 未收敛的landmark也当作可追踪的，因其在未来可能收敛
             continue;
         }
         Landmark *pc1 = landmark[i];
 
         // 更新的是host帧下的depth
-        const Eigen::Vector3d pc2 = Twc_.Inverse() * pc1->GetPw();
+        const Eigen::Vector3d pc2 = Tcw_ * pc1->GetPw();
         if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
             continue;
         }
@@ -212,3 +213,14 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
     // cv::destroyAllWindows();
     return reuseLandmarkNum;
 }
+
+void KeyFrame::Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t) {
+    Twc_.Update(delta_q, delta_t);
+    Tcw_ = Twc_.Inverse();
+}
+
+void KeyFrame::SetTwc(const Pose &Twc) {
+    Twc_ = Twc;
+    Tcw_ = Twc.Inverse();
+}
+

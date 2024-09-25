@@ -34,7 +34,6 @@ public:
     double invZ_ = 1.0;
     double invDepthCov_ = std::pow(1./kMaxDepth, 2);
 
-
     double depthRange_[2] = {kMinDepth, kMaxDepth};
     double uncertainty_ = kMaxDepth;
     uint64_t descriptor_ = 0;

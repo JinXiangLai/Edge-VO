@@ -43,7 +43,7 @@ int main(int argc, char** argv){
     vector<Mat> imgs;
     vector<Pose> vTwc;
     WheelCameraCalib calib;
-    const int getImgNum = 5;
+    const int getImgNum = 3;
     FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum-1);
 
     vector<Mat> im3;

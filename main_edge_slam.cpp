@@ -92,6 +92,8 @@ int main(int argc, char** argv){
             kfs.push_back(curKF);
 
             optimizer.AddOneKeyFeame(curKF);
+            optimizer.SlidingWindowOptimize();
+            optimizer.RemoveOldestKeyFrame();
 
             // 可视化步骤
             // optimizer.ShowLocalMap();
@@ -154,7 +156,7 @@ void Run(vector<KeyFrame*> *historicalKF) {
             ShowLocalMap(ps);
             cout << "show " << temp.size() << " KFs map points" << endl;;
         } else {
-            cout << "wait for local map..." << endl;
+            // cout << "wait for local map..." << endl;
         }
         usleep(100 * 1000);
     }
