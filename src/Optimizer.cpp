@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "Config.h"
 #include "Eigen/src/Core/Matrix.h"
@@ -496,14 +497,18 @@ bool Optimizer::ConstructJ_H_b_g() {
 
 void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
-    for(int i = 0; i < window_.size() - 1; ++i) {
+    for(int i = 0; i < historicalKF_.size(); ++i) {
         // 新插入的最后一个KF未成熟
-        KeyFrame *kf = window_[i];
+        KeyFrame *kf = historicalKF_[i];
         for(Landmark *p : kf->landmark_) {
             if(p!=nullptr && !ps.count(p) && p->Converge()) {
                 ps.insert(p);
             }
         }
     }
-    ShowPointCloud(ps);
+    if(ps.empty()) {
+        usleep(100 * 1000);
+    } else {
+        ShowPointCloud(ps);
+    }
 }

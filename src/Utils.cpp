@@ -898,6 +898,6 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     window.showWidget("LocalMap", cloud);
 
     // 运行事件循环，使窗口响应用户输入
-    window.spinOnce(1000);
+    window.spinOnce(3000);
     // window.spin();
 }

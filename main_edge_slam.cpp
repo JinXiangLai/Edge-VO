@@ -1,4 +1,5 @@
 #include <memory>
+#include <thread>
 #include <unistd.h>
 
 
@@ -16,6 +17,12 @@ using namespace cv;
 // 得到一个较为准确的深度初值，再与闭环帧执行BA优化
 // 结论，仅靠两帧生成的3D点存在很大的不确定性，而其为了剔除误匹配还是使用了描述子，
 // 描述子都难以区分误匹配点，估计光度残差更难些
+
+viz::Viz3d window("Local Map Viewer"); // 放在这里有问题
+cv::Affine3d viewPose;
+
+void ShowLocalMap(const set<Landmark* > &ps);
+void Run(vector<KeyFrame*> *historicalKF);
 
 int main(int argc, char** argv){
 
@@ -51,6 +58,7 @@ int main(int argc, char** argv){
     KeyFrame *initFrame = nullptr;
     KeyFrame *lastKF = nullptr;
     KeyFrame *curKF = nullptr;
+    thread *viewerThread;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         Mat img;
         Pose Twc;
@@ -62,6 +70,7 @@ int main(int argc, char** argv){
             initFrame = curKF;
             kfs.push_back(initFrame);
             initFrame->InitializeLandmark();
+            viewerThread = new thread(Run, &optimizer.historicalKF_);
             continue; // 认为初始化完毕
         }
         ShowImage(curKF->edgeImg_[0], "edgeImg"+to_string(i), showImg);
@@ -85,11 +94,68 @@ int main(int argc, char** argv){
             optimizer.AddOneKeyFeame(curKF);
 
             // 可视化步骤
-            optimizer.ShowLocalMap();
+            // optimizer.ShowLocalMap();
         } else {
             delete curKF; // 释放非KF内存
         }
     }
 
+    viewerThread->join();
+    delete viewerThread;
+
     return 0;
+}
+
+void ShowLocalMap(const set<Landmark* > &ps) {
+    window.setViewerPose(viewPose);
+    vector<Point3d> points;
+    
+    for(Landmark *p : ps) {
+        if(p == nullptr || !p->Converge()) {
+            continue;
+        }
+        const Eigen::Vector3d pw = p->GetPw();
+        points.push_back({pw.x(), pw.y(), pw.z()});
+    }
+    vector<Vec3b> colors(points.size(), {0, 255, 0});
+
+    viz::WCloud cloud(points, colors);
+    // cloud.setColor(cv::viz::Color::green());
+    // cloud.setSize(5);
+ 
+    // 显示点云
+    window.showWidget("PointCloud", cloud);
+
+    // 运行事件循环，使窗口响应用户输入
+    // window.spinOnce(1);
+    window.spin();
+    // window.close();
+
+    // 保留现场
+    // window.removeAllWidgets();
+    window.removeWidget("PointCloud");
+    // viewPose = window.getViewerPose();
+}
+
+void Run(vector<KeyFrame*> *historicalKF) {
+    while(1) {
+        set<Landmark*> ps;
+        vector<KeyFrame*> temp = *historicalKF;
+        for(int i = 0; i < temp.size(); ++i) {
+            // 新插入的最后一个KF未成熟
+            KeyFrame *kf = temp[i];
+            for(Landmark *p : kf->landmark_) {
+                if(p!=nullptr && !ps.count(p) && p->Converge()) {
+                    ps.insert(p);
+                }
+            }
+        }
+        if(!ps.empty()) {
+            ShowLocalMap(ps);
+            cout << "show " << temp.size() << " KFs map points" << endl;;
+        } else {
+            cout << "wait for local map..." << endl;
+        }
+        usleep(100 * 1000);
+    }
 }
