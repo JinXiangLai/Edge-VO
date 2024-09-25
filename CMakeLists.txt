@@ -58,6 +58,11 @@ target_link_libraries(main
     edge_slam
 )
 
+add_executable(ut_main ut_loop_closure_confirm.cpp)
+target_link_libraries(ut_main 
+    edge_slam
+)
+
 add_executable(edge_slam_main main_edge_slam.cpp)
 target_link_libraries(edge_slam_main
     edge_slam

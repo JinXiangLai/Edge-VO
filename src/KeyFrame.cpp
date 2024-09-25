@@ -149,7 +149,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }   
     }
     
-    cout << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum << " " << convergeEdgeNum_ << endl;
+    cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum << " " << convergeEdgeNum_ << endl;
     if(convergeEdgeNum_ < landmark_.size() * 0.2) {
         // 有效路标点数量过低，需要继续进行深度滤波
         return 1.;

@@ -11,6 +11,8 @@
 #include "Landmark.h"
 #include "Utils.h"
 
+// #define TEST // 测试优化算法是否有问题
+
 using namespace std;
 using namespace cv;
 
@@ -43,6 +45,7 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
 
     const Camera &cam = *cam_;
     int noInrangeNum = 0;
+    double cost = 0;
     for(int i = 0; i < T12.size(); ++i) {
         const Pose T21 = T12[i].Inverse();
         const Mat dist = dist_[i];
@@ -59,6 +62,7 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
                 } else {
                     res[i*pc1.size()*resDim + j] = 1;
                 }
+                cost += res[i*pc1.size()*resDim + j];
             } else {
                 ++noInrangeNum;
                 continue;
@@ -79,6 +83,7 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
     }
 
     cout << "residual noInrangeNum: " << noInrangeNum << endl;
+    cout << "true Cost: " << fixed << cost << endl;
     return res;
 }
 
@@ -282,58 +287,29 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     return deltaX;
 }
 
-double Optimizer::CalculateResidual() {
-    double cost = 0;
-
-    for(int i = 0; i < optLandmark_.size(); ++i) {
-        const Landmark *p = optLandmark_[i];
-        KeyFrame *host = p->host_;
-        const Eigen::Vector3d pc1 = p->GetPc();
-        const Eigen::Vector3d pw = host->Twc_ * pc1;
-        for(const auto &tar : p->target_) {
-            // 不能向host投影，TODO: 删除host在target中的观测
-            if(tar.first == host) {
-                continue;
-            }
-
-            const KeyFrame *target = tar.first;
-            const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-            if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
-                continue;
-            }
-            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-            if(!InRange(target->dist_[0], px2.cast<int>()) ) {
-                continue;
-            }
-
-            double r = BilinearInterpolate(target->dist_[0], px2);
-            // 使用胡伯核函数剔除异常残差值
-            if(r > kAbnormalResidual) {
-                // TODO: 检验LM计算比较残差值时是否可以这样计算
-                r = 1;
-            }
-            cost += r;
-        }
-    }
-    return cost;
-}
-
 bool Optimizer::ExecuteLMoptimize() {
     double lastCost = -1;
     double firstCost = -1;
     bool status = false;
     // reset lambda
     lambda_ = 1.0;
-    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    chrono::steady_clock::time_point T1 = chrono::steady_clock::now();
     for(int i = 0; i < maxIte_; ++i) {
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         const double cost = ConstructJ_H_b_g();
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+        cout << "ConstructJ_H_b_g spend: " << chrono::duration<double>(t2 -t1).count() << " sec." << endl;
+
         
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
         H_.diagonal() += _lambda;
         Eigen::VectorXd delta_x;
         if(!onlyPoseUpdate_) {
+            chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
             delta_x = SchurCompleteSolve(H_, g_, window_.size(), optLandmark_.size(), window_[0]->Twc_.Size(), optLandmark_[0]->Size());
+            chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+            cout << "SchurCompleteSolve spend: " << chrono::duration<double>(t4 -t3).count() << " sec." << endl;
         } else {
             delta_x = H_.colPivHouseholderQr().solve(g_);
         }
@@ -371,7 +347,7 @@ bool Optimizer::ExecuteLMoptimize() {
         // 判断当前更新是否有效
         const double newCost = CalculateResidual();
         cout << fixed << "iterate " << i << " times, last_cost, new_cost: " << lastCost << " " << newCost 
-            << " &lambda: " << lambda_ << endl << endl;
+            << " &lambda: " << lambda_ << endl;
 
         if(lastCost <= newCost) {
             lambda_ *= 1.8;
@@ -387,20 +363,24 @@ bool Optimizer::ExecuteLMoptimize() {
         }
         if(newCost < 1e-9) {
             cout << "Congratulations! LM converge!!!" << endl;
-            cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
             status = true;
+            break;
         }
         if(lambda_ > 1e10) {
             cout << fixed << "lambad too large: " << lambda_ << endl;
             break;
         }
+        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+        cout << "LM one iteration spend: " << chrono::duration<double>(t5 -t1).count() << " sec.\n" << endl;
+
     }
-    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-    const double spendTime = chrono::duration<double>(t2 -t1).count();
+    chrono::steady_clock::time_point T2 = chrono::steady_clock::now();
+    const double spendTime = chrono::duration<double>(T2 -T1).count();
     if(!status) {
         cerr << "Reach max iteration time or lambda too large" << endl;
     }
-    cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
+    cout << "First cost | final cost | decrease ratio: " << firstCost << " | " << lastCost << " | "
+         << (1. - lastCost/firstCost) * 100 << "%" << endl;
     cout << "Total Optimize spend " << spendTime << "s" << endl;
 
     return status;
@@ -447,7 +427,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
         
         // 保留状态备份
         if(lastCost < 0) {
-            lastCost = b.norm();
+            lastCost = b.cwiseAbs().sum();
             firstCost = lastCost;
         }
         
@@ -472,7 +452,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
         }
 
         // 判断当前更新是否有效
-        const double cost = CalculateResidual(pc1, T12).norm();
+        const double cost = CalculateResidual(pc1, T12).cwiseAbs().sum();
         cout << fixed << "iterate " << i << " times, cost: " << lastCost << " &lambda: " << lambda_ << endl << endl;
 
         if(lastCost <= cost) {
@@ -487,8 +467,8 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
         }
         if(cost < 1e-9) {
             cout << "Congratulations! LM converge!!!" << endl;
-            cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
             status = true;
+            break;
         }
         if(lambda_ > 1e10) {
             cout << fixed << "lambad too large: " << lambda_ << endl;
@@ -500,7 +480,8 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
     if(!status) {
         cerr << "Reach max iteration time or lambda too large" << endl;
     }
-    cout << "First cost | final cost: " << firstCost << " | " << lastCost << endl;
+    cout << "First cost | final cost | decrease ratio: " << firstCost << " | " << lastCost << " | "
+         << (1. - lastCost/firstCost) * 100 << "%" << endl;
     cout << "Total Optimize spend " << spendTime << "s" << endl;
 
     return status;
@@ -630,18 +611,62 @@ bool Optimizer::SetOptimizeVariables() {
         KeyFrame *kf = window_[i];
         vector<Landmark*> &ld = kf->landmark_;
         for(Landmark *p : ld) {
-            if(!ps.count(p) && !p->IsOutOfRange() && p->Converge()) {
+            if(p != nullptr && !ps.count(p) && !p->IsOutOfRange() && p->Converge()) {
                 ps.insert(p);
             }
         }
     }
-    cout << ps.size() << "Landmarks and " << window_.size() << " KFs will participate optimization!!!" << endl;
+    cout << ps.size() << " Landmarks and " << window_.size() << " KFs will participate optimization!!!" << endl;
     optLandmark_.clear();
     optLandmark_ = vector<Landmark*>(ps.begin(), ps.end());
     // 按地址从小到大排序
     sort(optLandmark_.begin(), optLandmark_.end(), [](Landmark *p1, Landmark*p2){return p1 < p2;});
     
     return optLandmark_.size() > 100;
+}
+
+double Optimizer::CalculateResidual() {
+    double cost = 0;
+
+    for(int i = 0; i < optLandmark_.size(); ++i) {
+        const Landmark *p = optLandmark_[i];
+        KeyFrame *host = p->host_;
+        const Eigen::Vector3d pc1 = p->GetPc();
+        const Eigen::Vector3d pw = host->Twc_ * pc1;
+#ifndef TEST
+        for(const auto &tar : p->target_) {
+            // 不能向host投影，TODO: 删除host在target中的观测
+            // 根据滑窗性质，只需投影到最后一个KF实现逐步收敛即可
+            if(tar.first == host || tar.first!=window_.back()) {
+                continue;
+            }
+            const KeyFrame *target = tar.first;
+#else
+        for(const KeyFrame* target : window_) {
+
+            if(target == host) {
+                continue;
+            }
+#endif
+            const Eigen::Vector3d pc2 = target->Tcw_ * pw;
+            if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+                continue;
+            }
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+            if(!InRange(target->dist_[0], px2.cast<int>()) ) {
+                continue;
+            }
+
+            double r = BilinearInterpolate(target->dist_[0], px2);
+            // 使用胡伯核函数剔除异常残差值
+            if(r > kAbnormalResidual) {
+                // TODO: 检验LM计算比较残差值时是否可以这样计算
+                r = 1;
+            }
+            cost += r;
+        }
+    }
+    return cost;
 }
 
 double Optimizer::ConstructJ_H_b_g() {
@@ -663,6 +688,11 @@ double Optimizer::ConstructJ_H_b_g() {
     g_.resize(variableDim);
     g_.setZero();
     double cost = 0;
+    int noInrangeNum = 0;
+    int depthErrorNum = 0;
+    int targetErrorNum = 0;
+    int usefulNum = 0;
+    int badNum = 0;
     // 计算residual & jacobian
     /*********
     *    T0 T1 ... d0 d1 ...
@@ -676,19 +706,30 @@ double Optimizer::ConstructJ_H_b_g() {
         KeyFrame *host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
+        cout << "p.tar.size: " << p->target_.size() << endl;
+#ifndef TEST
         for(const auto &tar : p->target_) {
             // 不能向host投影，TODO: 删除host在target中的观测
-            if(tar.first == host) {
+            if(tar.first == host || tar.first!=window_.back()) {
+                ++targetErrorNum;
                 continue;
             }
-
             const KeyFrame *target = tar.first;
+#else
+        for(const KeyFrame* target : window_) {
+            if(target == host) {
+                ++noInrangeNum;
+                continue;
+            }
+#endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+                ++depthErrorNum;
                 continue;
             }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
             if(!InRange(target->dist_[0], px2.cast<int>()) ) {
+                ++noInrangeNum;
                 continue;
             }
 
@@ -698,6 +739,7 @@ double Optimizer::ConstructJ_H_b_g() {
             if(r > kAbnormalResidual) {
                 r = 1;
             }
+            ++usefulNum;
             cost += r;
             debugKFMapResidualNum[target] += 1;
             resNum += resDim;
@@ -741,7 +783,7 @@ double Optimizer::ConstructJ_H_b_g() {
             // Pc2 w.r.t Pw
             const Eigen::Matrix3d J_Pc2_Pw = target->Tcw_.q_wb_.toRotationMatrix();
 
-            // Pw w.r.t Twc1 : Pw = Twc1 * Pc1
+            // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
             Eigen::Matrix<double, 3, 6> J_Pw_Twc1; // ------------------------> optimization variable
             // Pw w.r.t Rwc1
             J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * skewSymmetric(pc1);
@@ -804,10 +846,14 @@ double Optimizer::ConstructJ_H_b_g() {
 
         }
     }
+    cout << "usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: " << usefulNum << " " 
+         << depthErrorNum << " " << targetErrorNum << " " << noInrangeNum << " " 
+         << (depthErrorNum + targetErrorNum + noInrangeNum) << endl;
     return cost;
 }
 
 bool Optimizer::SlidingWindowOptimize() {
+    cout << "Begin SlidingWindowOptimize!!!" << endl;
     if(!SetOptimizeVariables() ) {
         return false;
     }

@@ -97,6 +97,19 @@ int main(int argc, char** argv){
         }
     }
 
+    Optimizer optimizer(cam);
+    optimizer.AddOneKeyFeame(new KeyFrame(kfs[0]));
+    for(int i = 1; i < getImgNum; ++i) {
+        // 重叠度低，需要将当前帧选为KF，更新它的Landmark
+        const int reuseLandmarkNum = kfs[i].ReuseLandmark(optimizer.window_.back());
+        cout << i << " th reuseLandmarkNum: " << reuseLandmarkNum << endl;
+        kfs[i].InitializeLandmark();
+        optimizer.AddOneKeyFeame(new KeyFrame(kfs[i]));
+    }
+    optimizer.SlidingWindowOptimize();
+
+
+/*
     // 调用非线性优化进行BA
     KeyFrame &kf = kfs.back();
     vector<Mat> vDist;
@@ -153,7 +166,7 @@ int main(int argc, char** argv){
             "edge matches after optimization "+to_string(i), 1, 10);
         }
     }
-
+*/
     ShowPointCloud( noOptLandmark, kfs[0].landmark_);
     ShowPointCloud( noOptLandmark, kfs[0].landmark_, 1.0);
 
