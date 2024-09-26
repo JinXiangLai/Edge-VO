@@ -87,8 +87,8 @@ void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eig
 
 void ShowPointCloud(const std::vector<Landmark> &ps, const cv::Mat &img);
 
-void ShowPointCloud(const std::vector<Landmark*> &ps1, 
-    const std::vector<Landmark*> &ps2, const double zOffset = 0.0);
+void ShowPointCloud(const std::vector<Landmark*> &ps1, const std::vector<Landmark*> &ps2, 
+    const std::string &windowName = "Point cloud", const double zOffset = 0.0);
 
 double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
 

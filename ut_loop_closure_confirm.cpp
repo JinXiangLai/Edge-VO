@@ -18,6 +18,8 @@ int main(int argc, char** argv){
 
     // 读取程序参数
     string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
+    //string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+
     if (argc < 5){
         cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
         exit(-1);
@@ -43,137 +45,46 @@ int main(int argc, char** argv){
     vector<Mat> imgs;
     vector<Pose> vTwc;
     WheelCameraCalib calib;
-    const int getImgNum = 5;
-    FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum-1);
-
-    vector<Mat> im3;
-    vector<Pose> vTwc3;
-    FindImageAndPose(loopClosureImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, im3, vTwc3, 1);
-    imgs.push_back(im3[0]);
-    vTwc.push_back(vTwc3[0]);
+    const int getImgNum = 30;
+    FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum);
 
     shared_ptr<Camera> cam = make_shared<Camera>(kImageScale);
 
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     // 初始化关键帧
-    vector<KeyFrame> kfs;
+    vector<KeyFrame*> kfs;
     for(int i = 0; i < vTwc.size(); ++i) {
-        kfs.push_back({imgs[i], vTwc[i], cam, 1});
-        kfs[i].CannyEdgeDetect();
-        kfs[i].GenerateDTandDerivative();
+        kfs.push_back(new KeyFrame(imgs[i], vTwc[i], cam, 1));
+        kfs[i]->CannyEdgeDetect();
+        kfs[i]->GenerateDTandDerivative();
         cout << "vTwc[" << i << "]: " << vTwc[i] << endl;
-        ShowImage(kfs[i].edgeImg_[0], "edgeImg"+to_string(i), showImg);
+        ShowImage(kfs[i]->edgeImg_[0], "edgeImg"+to_string(i), showImg);
     }
 
     // 头两帧进行地图点生成
-    vector<vector<Eigen::Vector2d> > debugGoodKp1, debugGoodKp2;
-    const int equalparts = 5;
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-    const size_t landmarkNum = kfs[0].GenerateLandmark(kfs[1], debugGoodKp1, debugGoodKp2, equalparts);
+    const size_t landmarkNum = kfs[0]->InitializeLandmark();
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
     cout << "landmarkNum : " << landmarkNum << endl;
-
-    const int maxUpdateId = kfs.size() - 1;
-    for(int i = 1; i < maxUpdateId; ++i) {
-        kfs[0].UpdateDepth(kfs[i]);
-    }
-
-    auto it = kfs[0].landmark_.begin();
-    while(it != kfs[0].landmark_.end()) {
-        if(!(*it)->Converge()) {
-            delete (*it); // 删除对应的Landmark内存
-            *it = nullptr; // 为了保证关键帧内的landmark与unPx数量一致
-            //it = kfs[0].landmark_.erase(it); // 所以不进行删除操作
-            //continue;
-        }
-        ++it;
-    }
-    cout << "kfs[0].landmark_.size: " << kfs[0].landmark_.size() << endl;
-
-    vector<Landmark*> noOptLandmark(kfs[0].landmark_.size() );
-    for(int i = 0; i < noOptLandmark.size(); ++i) {
-        if(kfs[0].landmark_[i] != nullptr) {
-            noOptLandmark[i] = new Landmark(*kfs[0].landmark_[i]);
-        }
-    }
-
     Optimizer optimizer(cam);
-    optimizer.AddOneKeyFeame(new KeyFrame(kfs[0]));
-    for(int i = 1; i < getImgNum; ++i) {
-        // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-        const int reuseLandmarkNum = kfs[i].ReuseLandmark(optimizer.window_.back());
-        cout << i << " th reuseLandmarkNum: " << reuseLandmarkNum << endl;
-        kfs[i].InitializeLandmark();
-        optimizer.AddOneKeyFeame(new KeyFrame(kfs[i]));
+    optimizer.AddOneKeyFeame(kfs[0]);
+
+    const int maxUpdateId = kfs.size();
+    for(int i = 1; i < maxUpdateId; ++i) {
+        // kfs[0].UpdateDepth(kfs[i]);
+        const double coverRatio = optimizer.window_.back()->UpdateDepth(*kfs[i]);
+        // 产生新KF
+        if(i%10 == 0) {
+            const int reuseLandmarkNum = kfs[i]->ReuseLandmark(optimizer.window_.back());
+            cout << i << " th reuseLandmarkNum: " << reuseLandmarkNum << endl;
+            kfs[i]->InitializeLandmark();
+            optimizer.AddOneKeyFeame(kfs[i]);
+        }
     }
+
+    cout << "kfs[0].landmark_.size: " << kfs[0]->landmark_.size() << endl;
+
     optimizer.SlidingWindowOptimize();
 
-
-/*
-    // 调用非线性优化进行BA
-    KeyFrame &kf = kfs.back();
-    vector<Mat> vDist;
-    vector<Mat> vDx;
-    vector<Mat> vDy;
-    vector<Pose> T12;
-    vector<Pose> T12_true;
-    vector<Mat> edgeImg_true;
-
-    for(int i = 1; i < getImgNum; ++i) {
-        vDist.push_back(kfs[i].dist_[0]);
-        vDx.push_back(kfs[i].dx_[0]);
-        vDy.push_back(kfs[i].dy_[0]);
-        T12.push_back(kfs[0].Tcw_ * kfs[i].Twc_);
-        T12_true.push_back(kfs[0].Tcw_ * kfs[i].Twc_);
-        edgeImg_true.push_back(kfs[i].edgeImg_[0]);
-    }
-
-    Optimizer optimizer(vDist, vDx, vDy, cam, 1, 100, useInvZ, false);
-
-    chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-    const double cost = optimizer.Optimize(kfs[0].landmark_, T12);
-    chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-
-    cout << "\n\nprepare data spend: " << chrono::duration<double>(t1 - t0).count() << "s" << endl;
-    cout << "generate landmark spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
-    cout << "optimize total spend " << chrono::duration<double>(t4 - t3).count() << "s" << endl;
-    cout << "Pose diff: " << T12_true[0].Inverse() * T12[0] << endl;
-    cout << "cost | mean: " << cost << " | " << cost/landmarkNum << endl;
-
-    // 查看优化后的结果
-    const int binWidth = kfs[0].grayImg_.cols / equalparts;
-
-    vector<vector<Eigen::Vector2d> > projPx1(equalparts);
-    vector<vector<vector<Eigen::Vector2d> > > reprojPx3(T12.size(), vector<vector<Eigen::Vector2d> >(equalparts));
-    for(const Landmark* p : kfs[0].landmark_) {
-        if(p == nullptr) {
-            continue;
-        }
-        projPx1[p->uv_.x()/binWidth].push_back(p->uv_);
-
-        for(int i = 0; i < T12.size(); ++i) {
-            const Pose Tc2c1 = T12[i].Inverse();
-            Eigen::Vector3d pc2 = Tc2c1 * p->GetPw();
-            reprojPx3[i][p->uv_.x()/binWidth].push_back(cam->Project2PixelPlane(pc2));
-        }
-        // DrawMatch(kfs[0].edgeImg_[0], kf.edgeImg_[0], {projPx1.back()}, {reprojPx3.back()}, "one edge matche after optimization", 1, 1);
-    }
-    cout << endl;
-
-    for(int i = 0; i < T12.size(); ++i) {
-        for(int j = 0; j < equalparts; ++j) {
-        DrawMatch(kfs[0].edgeImg_[0], edgeImg_true[i], projPx1[j], reprojPx3[i][j], 
-            "edge matches after optimization "+to_string(i), 1, 10);
-        }
-    }
-*/
-    ShowPointCloud( noOptLandmark, kfs[0].landmark_);
-    ShowPointCloud( noOptLandmark, kfs[0].landmark_, 1.0);
-
-    // 释放内存
-    for(Landmark* p : noOptLandmark) {
-        delete p;
-        p = nullptr;
-    }
     return 0;
 }

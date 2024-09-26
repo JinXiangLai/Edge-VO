@@ -826,9 +826,9 @@ void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {
     window.spin();
 }
 
-void ShowPointCloud(const vector<Landmark* > &ps1, 
-    const vector<Landmark* > &ps2, const double zOffset) {
-    viz::Viz3d window("Point Cloud Viewer");
+void ShowPointCloud(const vector<Landmark* > &ps1, const vector<Landmark* > &ps2, 
+    const std::string &windowName, const double zOffset) {
+    viz::Viz3d window(windowName);
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points1, points2;
@@ -863,6 +863,7 @@ void ShowPointCloud(const vector<Landmark* > &ps1,
     // 创建点云对象
     viz::WCloud cloud1(points1, colors1);
     viz::WCloud cloud2(points2, colors2);
+    cloud2.setRenderingProperty(viz::RenderingProperties::POINT_SIZE, 5.);
  
     // 显示点云
     window.showWidget("PointCloud1", cloud1);

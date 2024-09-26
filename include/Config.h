@@ -24,7 +24,7 @@ constexpr double kDeg2Rad = M_PI/180;
 constexpr double kImageScale = 0.5;
 constexpr int kDescriptorPatchLen = 3; // 计算3x3邻域内的描述子
 constexpr int kDescriptorPatchSize = kDescriptorPatchLen * kDescriptorPatchLen;
-constexpr double kMinTranslation = 0.05; // m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
+constexpr double kMinTranslation = 0.1; // m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
 
 // 异常深度滤波操作
 constexpr double kMaxDepth = 100.0; // TODO: 距离越大，偏差一个像素可能就会有几十米的偏差
@@ -41,9 +41,9 @@ constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那�
 constexpr double kConvergeDiff = 0.5;
 constexpr double kAbnormalResidual = 15; // 15 个像素距离为异常残差值
 
-constexpr int kMaxKFnumInWindow = 4;
+constexpr int kMaxKFnumInWindow = 7;
 
-constexpr double kImgTimeOffset = 0.06; // sec
+constexpr double kImgTimeOffset = 0.60; // 0.06; // sec
 
 constexpr double kNewKFtrans = 2.5; // m
 constexpr double kNewKFrot = 10; // degree

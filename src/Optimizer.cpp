@@ -258,7 +258,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     // cout << "B - C.T:\n" << B-C.transpose() <<std::endl;
     Eigen::MatrixXd Dinv(D.rows(), D.cols());
     for(int i = 0; i < pointSize; i+=pointDim) {
-        Dinv.block(i, i, pointDim, pointDim) = D.block(i, i, pointDim, pointDim).inverse();
+        Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
     }
     const Eigen::MatrixXd E = -B * Dinv;
     Eigen::MatrixXd leftMatrix(H.rows(), H.cols());
@@ -288,8 +288,11 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
 }
 
 bool Optimizer::ExecuteLMoptimize() {
-    double lastCost = -1;
-    double firstCost = -1;
+    firstCalculateResidual_ = true; // get the useful landmark for this optimization progress
+    vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
+    double lastCost = CalculateResidual();
+    ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
+    double firstCost = lastCost;
     bool status = false;
     // reset lambda
     lambda_ = 1.0;
@@ -303,6 +306,7 @@ bool Optimizer::ExecuteLMoptimize() {
         
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
+        _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
         H_.diagonal() += _lambda;
         Eigen::VectorXd delta_x;
         if(!onlyPoseUpdate_) {
@@ -316,11 +320,6 @@ bool Optimizer::ExecuteLMoptimize() {
         // cout << setprecision(3) << "delta_x: " << delta_x.transpose() << endl; 
         
         // 保留状态备份
-        if(lastCost < 0) {
-            lastCost = cost;
-            firstCost = lastCost;
-        }
-        
         vector<Landmark> pcBackup(optLandmark_.size());
         for(int i = 0; i < optLandmark_.size(); ++i) {
             pcBackup[i] = *optLandmark_[i];
@@ -470,7 +469,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
             status = true;
             break;
         }
-        if(lambda_ > 1e10) {
+        if(lambda_ > 1e20) {
             cout << fixed << "lambad too large: " << lambda_ << endl;
             break;
         }
@@ -522,7 +521,7 @@ void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
 }
 
 void Optimizer::RemoveOldestKeyFrame() {
-    if(window_.size() < kMaxKFnumInWindow) {
+    if(window_.size() <= kMaxKFnumInWindow) {
         return;
     }
     cout << "window size: " << window_.size() << " begin remove oldest" << endl;
@@ -628,8 +627,10 @@ bool Optimizer::SetOptimizeVariables() {
 double Optimizer::CalculateResidual() {
     double cost = 0;
 
+    vector<Landmark*> usefulLandmark; // 记录能够参与当前优化的边缘点
+    
     for(int i = 0; i < optLandmark_.size(); ++i) {
-        const Landmark *p = optLandmark_[i];
+        Landmark *p = optLandmark_[i];
         KeyFrame *host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
@@ -664,7 +665,13 @@ double Optimizer::CalculateResidual() {
                 r = 1;
             }
             cost += r;
+            usefulLandmark.push_back(p);
         }
+    }
+    // 重新赋值参与优化的地图点
+    if(firstCalculateResidual_) {
+        optLandmark_ = usefulLandmark;
+        firstCalculateResidual_ = false;
     }
     return cost;
 }
@@ -683,6 +690,7 @@ double Optimizer::ConstructJ_H_b_g() {
 
     // 或许我们不知道residual，Jacobian的行数，但是H矩阵以及g向量的维度是可知的
     const int variableDim = window_.size() * poseDim + optLandmark_.size() * depthDim;
+    cout << "opt variable dim: " << variableDim << endl;
     H_.resize(variableDim, variableDim);
     H_.setZero();
     g_.resize(variableDim);
@@ -692,7 +700,6 @@ double Optimizer::ConstructJ_H_b_g() {
     int depthErrorNum = 0;
     int targetErrorNum = 0;
     int usefulNum = 0;
-    int badNum = 0;
     // 计算residual & jacobian
     /*********
     *    T0 T1 ... d0 d1 ...
@@ -701,12 +708,14 @@ double Optimizer::ConstructJ_H_b_g() {
     const int depthStartCol = window_.size() * poseDim;
     const int resDim = 1;
     int resNum = 0; // 显示当前计算到雅可比的第几行
+    // TODO: 有很多landmark不能参与计算，需要将其排除在H及g信息之外，典型的如：
+    // opt variable dim: 22902
+    // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
     for(int i = 0; i < optLandmark_.size(); ++i) {
         const Landmark *p = optLandmark_[i];
         KeyFrame *host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
-        cout << "p.tar.size: " << p->target_.size() << endl;
 #ifndef TEST
         for(const auto &tar : p->target_) {
             // 不能向host投影，TODO: 删除host在target中的观测

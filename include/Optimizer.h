@@ -72,6 +72,7 @@ public:
     KeyFrame *newest_ = nullptr;
     Eigen::MatrixXd J_, H_; // J_的行维度无法预知
     Eigen::VectorXd g_; // b_，残差的行维度一般是无法提前预知的
+    bool firstCalculateResidual_ = true; // TODO: Check bug
 };
 
 #endif

@@ -28,6 +28,8 @@ int main(int argc, char** argv){
 
     // 读取程序参数
     string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
+    //string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+
     if (argc < 5){
         cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
         exit(-1);
@@ -63,7 +65,7 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
-        curKF = new KeyFrame({img, Twc, cam, 1});
+        curKF = new KeyFrame(img, Twc, cam, 1);
         curKF->CannyEdgeDetect();
         curKF->GenerateDTandDerivative();
         if(!initFrame) {
