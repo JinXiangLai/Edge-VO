@@ -288,10 +288,14 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
 }
 
 bool Optimizer::ExecuteLMoptimize() {
-    firstCalculateResidual_ = true; // get the useful landmark for this optimization progress
+    firstCalculateResidual_ = true; // 首次运行时，会在CalculateResidual函数内选择优化地图点
     vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
     double lastCost = CalculateResidual(); // 同时选择新的优化地图点
     // ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
+    
+    MarginalizeOldestKeyFrame();
+
+
     double firstCost = lastCost;
     bool status = false;
     // reset lambda
@@ -306,8 +310,18 @@ bool Optimizer::ExecuteLMoptimize() {
         
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
-        _lambda.head(6 * (window_.size()-1)).setConstant(DBL_MAX); // 首帧的约束足够大
+        if(Hp_.rows() > 1) {
+            cout << "Hp_: [" << Hp_.rows() << "x" << Hp_.cols() << "]" << endl;
+            cout << "g_p_: [" << g_p_.rows() << "x1]" << endl;
+            H_ += Hp_;
+            g_ += g_p_;
+            cout << "Prior Message Added!!!" << endl;;
+        } else {
+            _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
+            cout << "Fixed First Frame!!!" << endl;
+        }
         H_.diagonal() += _lambda;
+
         Eigen::VectorXd delta_x;
         if(!onlyPoseUpdate_) {
             chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
@@ -486,32 +500,6 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
     return status;
 }
 
-// TODO： 先不考虑边缘化，而是直接丢弃首帧
-void Optimizer::MarginalizeOldestKeyFrame() {
-    /*********************************************************
-    * 注意：VINS-MONO论文中的r_p, Hp分别代表先验残差、先验雅可比，
-    * 即 先验约束项 |r_p - Hp * X|^2 <==> |r_p - Jp * X|^2
-    * 注意：VINS-MONO论文中，多处出现H矩阵，其均不代表J’*J!!!
-    * 参考为：https://github.com/StevenCui/VIO-Doc/tree/master
-    ***********************************************************
-    * |A B|   |dx1|   |g1|
-    * |C D| * |dx2| = |g2| ==>
-    * 将A边缘化掉，得：
-    * |E F|   |dx1|   |h1|
-    * |0 G| * |dx2| = |h2| ==>
-    * G*dx2 = h2, 并且，dx2满足：
-    * {我们知道，对于一个线性化的量测方程而言，有：
-    * J'*J * dx = -J' * b，
-    ******************************************************
-    * 令G = J' * J, h2 = -J' * b, 
-    * 那么构建先验约束： r = |b - J*X|^2，该式在求解极小值点dx的过程中，
-    * 恰好能满足出现： G*dx = h2这一先验约束
-    *********************************************************
-    * 所以，只被margTwc观测到的地图点，我们不再用它构建方程，直接丢弃
-    * 既被margTwc又被其他Twc观测到的地图点，不将其边缘化，而是继续更新
-    *******************************************************/
-}
-
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
     window_.push_back(kf);
     if(window_.size() > kMaxKFnumInWindow) {
@@ -588,14 +576,6 @@ void Optimizer::RemoveOldestKeyFrame() {
     historicalKF_.push_back(oldest);
     cout << "historicalKF_.size: " << historicalKF_.size() << endl;
     return;
-}
-
-
-void Optimizer::ResetOptVariables() {
-    // 优化结束后，重置这些标志量
-    optLandmark_.clear();
-    oldest_ = nullptr;
-    newest_ = nullptr;
 }
 
 bool Optimizer::SetOptimizeVariables() {
@@ -676,6 +656,98 @@ double Optimizer::CalculateResidual() {
         firstCalculateResidual_ = false;
     }
     return cost;
+}
+
+// TODO： 先不考虑边缘化，而是直接丢弃首帧
+void Optimizer::MarginalizeOldestKeyFrame() {
+    if(window_.size() <= kMaxKFnumInWindow) {
+        return;
+    }
+    Hp_.resize(1, 1);
+    g_p_.resize(1, 1);
+    /*********************************************************
+    * 注意：VINS-MONO论文中的r_p, Hp分别代表先验残差、先验雅可比，
+    * 即 先验约束项 |r_p - Hp * X|^2 <==> |r_p - Jp * X|^2
+    * 注意：VINS-MONO论文中，多处出现H矩阵，其均不代表J’*J!!!，而是代表J
+    * 参考为：https://github.com/StevenCui/VIO-Doc/tree/master
+    ***********************************************************
+    * |A B|   |dx1|   |g1|
+    * |C D| * |dx2| = |g2| ==>
+    * 将A边缘化掉，得：
+    * |E F|   |dx1|   |h1|
+    * |0 G| * |dx2| = |h2| ==>
+    * G*dx2 = h2, 并且，dx2满足：
+    * {我们知道，对于一个线性化的量测方程而言，有：
+    * J'*J * dx = -J' * b，
+    ******************************************************
+    * 令G = J' * J, h2 = -J' * b, 
+    * 那么构建先验约束： r = |b - J*X|^2，该式在求解极小值点dx的过程中，
+    * 恰好能满足出现： G*dx = h2这一先验约束
+    *********************************************************
+    * 所以，只被margTwc观测到的地图点，我们不再用它构建方程，直接丢弃
+    * 既被margTwc又被其他Twc观测到的地图点，不将其边缘化，而是继续更新
+    *******************************************************/
+    
+    
+    // Stpe: 首先将需要被边缘化的地图点的行和列移动到左上角
+    /****************************************************************
+    *       T0    T1    d0    d1                       T0   d1   T1   d0
+    * T0  T0T0  T1T0  doT0  d1T0                  T0 T0T0 d1T0 T1T0 d0T0
+    * T1  T0T1  T1T1  d0T1  d1T1 ==> 移动d1到左上角 d1 T0d1 d1d1 T1d1 d0d1
+    * d0  T0d0  T1d0  d0d0  d1d0                  T1 T0T1 d1T1 T1T1 d0T1
+    * d1  T0d1  T1d1  d0d1  d1d1                  d0 T0d0 d1d0 T1d0 d0d0
+    * 直接操作信息矩阵H_来移动看起来是不可能的，但是我们可以先组织优化变量的顺序，
+    * 再计算排序后的H_矩阵，这样直接边缘化左上角就简单了
+    *****************************************************************/
+    set<Landmark*> margLandmark;
+    // TODO: 选择另一种策略移除一帧，类似Landmark的处理方式，将其移到window_[0]再构建信息矩阵H即可
+    KeyFrame *oldestKF = window_[0];
+    for(int i = 0; i < optLandmark_.size(); ++i) {
+        Landmark* p = optLandmark_[i];
+        if(p->target_.empty() || (p->target_.size()==1 && p->target_.count(oldestKF))) {
+            margLandmark.insert(p);
+        }
+    }
+    vector<Landmark*> sortMargOptLandmark;
+    for(Landmark *p : margLandmark) {
+        // OK, 这样就实现了将边缘化地图点移到左上角的目的啦！！！
+        sortMargOptLandmark.push_back(p);
+    }
+    for(Landmark *p : optLandmark_) {
+        if(!margLandmark.count(p)) {
+            sortMargOptLandmark.push_back(p);
+        }
+    }
+    // 根据新的Landmark顺序，构建信息矩阵H_，并保存FEJ
+    optLandmark_ = sortMargOptLandmark;
+    // 这里可以实现将线性化点固定在Marginalization时刻
+    ConstructJ_H_b_g();
+    if(!margLandmark.empty()) {
+        // 构建完H矩阵后，可以从优化地图点中移除marg landmark
+        optLandmark_.erase(optLandmark_.begin(), optLandmark_.begin() + margLandmark.size());
+    }
+    RemoveOldestKeyFrame();
+
+    // Step:接下来计算相关先验Hp, g_p
+    const int poseDim = window_[0]->Twc_.Size();
+    const int depthDim = 1;
+    const int margDim = poseDim + margLandmark.size() * depthDim;
+    const int leftDim = H_.cols() - margDim;
+    Eigen::MatrixXd H = H_;
+    // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
+    // | I          0 |   | A  B |   | A  B |
+    // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
+    const Eigen::MatrixXd &A = H.block(0, 0, margDim, margDim);
+    const Eigen::MatrixXd &B = H.block(0, margDim, margDim, leftDim);
+    const Eigen::MatrixXd &C = H.block(margDim, 0, leftDim, margDim);
+    const Eigen::MatrixXd &D = H.block(margDim, margDim, leftDim, leftDim);
+    const Eigen::MatrixXd invA = A.inverse();
+    const Eigen::MatrixXd temp = -C * invA;
+    Hp_ = -temp*B + D;
+ 
+    // | A  B  |   |x1|   | I          0 |   |g1|
+    // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
+    g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
 }
 
 double Optimizer::ConstructJ_H_b_g() {

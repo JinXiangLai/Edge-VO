@@ -98,7 +98,6 @@ int main(int argc, char** argv){
 
             optimizer.AddOneKeyFeame(curKF);
             optimizer.SlidingWindowOptimize();
-            optimizer.RemoveOldestKeyFrame();
 
             // ShowPointCloud(optimizer.window_.back()->landmark_);
         } else {

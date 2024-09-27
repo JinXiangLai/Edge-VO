@@ -41,7 +41,7 @@ constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那�
 constexpr double kConvergeDiff = 0.5;
 constexpr double kAbnormalResidual = 5; // 15 个像素距离为异常残差值
 
-constexpr int kMaxKFnumInWindow = 7;
+constexpr int kMaxKFnumInWindow = 5;
 
 constexpr double kImgTimeOffset = 0.06; // 0.06; // sec
 

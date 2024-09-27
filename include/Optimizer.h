@@ -40,8 +40,6 @@ public:
 
     void AddOneKeyFeame(KeyFrame *kf);
 
-    void ResetOptVariables();
-
     double ConstructJ_H_b_g();
 
     KeyFrame* GetLastKF() {return window_.back();}
@@ -68,10 +66,8 @@ public:
     std::vector<KeyFrame*> historicalKF_;
     Pose *margTwc_ = nullptr;
     std::vector<Landmark*> optLandmark_; // 投影到最新帧能被观测到的才加入，以减小问题规模
-    KeyFrame *oldest_ = nullptr;
-    KeyFrame *newest_ = nullptr;
-    Eigen::MatrixXd J_, H_; // J_的行维度无法预知
-    Eigen::VectorXd g_; // b_，残差的行维度一般是无法提前预知的
+    Eigen::MatrixXd J_, H_, Hp_; // J_的行维度无法预知
+    Eigen::VectorXd g_, g_p_; // b_，残差的行维度一般是无法提前预知的
     bool firstCalculateResidual_ = true; // TODO: Check bug
 };
 
