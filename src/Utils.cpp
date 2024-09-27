@@ -766,19 +766,21 @@ bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
     return T12.t_wb_.norm() > kNewKFtrans || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > kNewKFrot;
 }
 
-void ShowPointCloud(const vector<Landmark> &ps, const Mat &img) {
+void ShowPointCloud(const vector<Landmark*> &ps) {
     viz::Viz3d window("Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points;
     vector<Vec3b> colors;
 
-    for(const Landmark &p : ps) {
+    for(Landmark *_p : ps) {
+        const Landmark &p = *_p;
         if(!p.Converge()) {
             continue;
         }
-        const double depth = p.depthRange_[0]; // p.z_;//0.5 * (p.depthRange_[0] + p.depthRange_[1]);
-        const Eigen::Vector3d &pc = p.cam_->InverseProject(p.uv_.cast<int>(), depth);
+        // const double depth = p.depthRange_[0]; // p.z_;//0.5 * (p.depthRange_[0] + p.depthRange_[1]);
+        // const Eigen::Vector3d &pc = p.cam_->InverseProject(p.uv_.cast<int>(), depth);
+        const Eigen::Vector3d &pc = p.GetPw();
         points.push_back({pc.x(), pc.y(), pc.z()});
         // cout << "[" << p.depthRange_[0] << " " << p.depthRange_[1] << "]  ";
 
@@ -899,6 +901,6 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     window.showWidget("LocalMap", cloud);
 
     // 运行事件循环，使窗口响应用户输入
-    window.spinOnce(3000);
-    // window.spin();
+    // window.spinOnce(3000);
+    window.spin();
 }

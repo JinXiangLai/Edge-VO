@@ -45,6 +45,13 @@ public:
 	std::map<KeyFrame*, Eigen::Vector2d> target_;
     std::shared_ptr<Camera> cam_;
 
+    // keep FEJ
+    std::map<KeyFrame*, Eigen::Matrix<double, 3, 6> > J_Pc2_Twc2; // J_Pc2_Twc2 and J_Pw_Twc1
+    std::map<KeyFrame*, Eigen::Matrix3d> J_Pc2_Pw;
+    std::vector<Eigen::Matrix<double, 3, 1> > J_Pw_z;
+    std::vector<Eigen::Matrix<double, 3, 6> > J_Pw_Twc1;
+    void ResetFEJ() {J_Pc2_Twc2.clear(); J_Pc2_Pw.clear(); J_Pw_z.clear(); J_Pw_Twc1.clear();}
+
     bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
 };
 

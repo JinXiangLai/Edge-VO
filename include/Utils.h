@@ -85,7 +85,7 @@ int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2);
 void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eigen::Vector2i &xRange, 
     Eigen::Vector2i &yRange);
 
-void ShowPointCloud(const std::vector<Landmark> &ps, const cv::Mat &img);
+void ShowPointCloud(const std::vector<Landmark*> &ps);
 
 void ShowPointCloud(const std::vector<Landmark*> &ps1, const std::vector<Landmark*> &ps2, 
     const std::string &windowName = "Point cloud", const double zOffset = 0.0);

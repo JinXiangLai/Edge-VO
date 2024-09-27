@@ -290,8 +290,8 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
 bool Optimizer::ExecuteLMoptimize() {
     firstCalculateResidual_ = true; // get the useful landmark for this optimization progress
     vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
-    double lastCost = CalculateResidual();
-    ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
+    double lastCost = CalculateResidual(); // 同时选择新的优化地图点
+    // ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
     double firstCost = lastCost;
     bool status = false;
     // reset lambda
@@ -306,7 +306,7 @@ bool Optimizer::ExecuteLMoptimize() {
         
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
-        _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
+        _lambda.head(6 * (window_.size()-1)).setConstant(DBL_MAX); // 首帧的约束足够大
         H_.diagonal() += _lambda;
         Eigen::VectorXd delta_x;
         if(!onlyPoseUpdate_) {
@@ -365,7 +365,7 @@ bool Optimizer::ExecuteLMoptimize() {
             status = true;
             break;
         }
-        if(lambda_ > 1e10) {
+        if(lambda_ > 1e20) {
             cout << fixed << "lambad too large: " << lambda_ << endl;
             break;
         }
@@ -380,7 +380,7 @@ bool Optimizer::ExecuteLMoptimize() {
     }
     cout << "First cost | final cost | decrease ratio: " << firstCost << " | " << lastCost << " | "
          << (1. - lastCost/firstCost) * 100 << "%" << endl;
-    cout << "Total Optimize spend " << spendTime << "s" << endl;
+    cout << "Total Optimize spend " << spendTime << "s\n" << endl;
 
     return status;
 }
@@ -481,7 +481,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
     }
     cout << "First cost | final cost | decrease ratio: " << firstCost << " | " << lastCost << " | "
          << (1. - lastCost/firstCost) * 100 << "%" << endl;
-    cout << "Total Optimize spend " << spendTime << "s" << endl;
+    cout << "Total Optimize spend " << spendTime << "s\n" << endl;
 
     return status;
 }
@@ -610,6 +610,8 @@ bool Optimizer::SetOptimizeVariables() {
         KeyFrame *kf = window_[i];
         vector<Landmark*> &ld = kf->landmark_;
         for(Landmark *p : ld) {
+            // 重置FEJ保存的雅可比
+            p->ResetFEJ();
             if(p != nullptr && !ps.count(p) && !p->IsOutOfRange() && p->Converge()) {
                 ps.insert(p);
             }
@@ -712,7 +714,7 @@ double Optimizer::ConstructJ_H_b_g() {
     // opt variable dim: 22902
     // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
     for(int i = 0; i < optLandmark_.size(); ++i) {
-        const Landmark *p = optLandmark_[i];
+        Landmark *p = optLandmark_[i];
         KeyFrame *host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
@@ -723,7 +725,7 @@ double Optimizer::ConstructJ_H_b_g() {
                 ++targetErrorNum;
                 continue;
             }
-            const KeyFrame *target = tar.first;
+            KeyFrame *target = tar.first;
 #else
         for(const KeyFrame* target : window_) {
             if(target == host) {
@@ -777,49 +779,72 @@ double Optimizer::ConstructJ_H_b_g() {
             const double d = 1/pc2.z();
             const double d2 = 1./pow(pc2.z(), 2);
             J_Pc2Norm_Pc2 << d, 0, -pc2.x()*d2,
-                             0, d, -pc2.y()*d2,
-                             0, 0, 0;
+                            0, d, -pc2.y()*d2,
+                            0, 0, 0;
             const Eigen::Matrix<double, 2, 3> J_px2_Pc2 = J_px2_Pc2Norm * J_Pc2Norm_Pc2;
-
-            // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
-            Eigen::Matrix<double, 3, 6> J_Pc2_Twc2; // ------------------------> optimization variable
-            const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
-            // Pc2 w.r.t Rwc2
-            J_Pc2_Twc2.block(0, 0, 3, 3) = skewSymmetric(target->Tcw_.q_wb_ * dt); // Twc_.q_wb_.inverse()
-            // Pc2 w.r.t Pwc2
-            J_Pc2_Twc2.block(0, 3, 3, 3) = -target->Tcw_.q_wb_.toRotationMatrix(); // Twc.q_wb.R.transpose()
-
-            // Pc2 w.r.t Pw
-            const Eigen::Matrix3d J_Pc2_Pw = target->Tcw_.q_wb_.toRotationMatrix();
-
-            // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
-            Eigen::Matrix<double, 3, 6> J_Pw_Twc1; // ------------------------> optimization variable
-            // Pw w.r.t Rwc1
-            J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * skewSymmetric(pc1);
-            // Pw w.r.t Pwc1
-            J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
-
-            // Pw w.r.t Pc1
-            const Eigen::Matrix3d J_Pw_Pc1 = host->Twc_.q_wb_.toRotationMatrix();
-
-            // Pc1 w.r.t z
-            const Eigen::Vector3d pc1Norm(p->GetPcNorm());
-            Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(), 1}; // --------> optimization variable
-
             const Eigen::Matrix<double, 1, 3> J_res_Pc2 = J_res_px2 * J_px2_Pc2;
-            const Eigen::Matrix<double, 1, 3> J_res_Pw = J_res_Pc2 * J_Pc2_Pw;
+
+            // FEJ
+            if(!p->J_Pc2_Twc2.count(target)) {
+            // if(!p->J_Pc2_Twc2.count(target) || 1) {
+                // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
+                Eigen::Matrix<double, 3, 6> J_Pc2_Twc2; // ------------------------> optimization variable
+                const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
+                // Pc2 w.r.t Rwc2
+                J_Pc2_Twc2.block(0, 0, 3, 3) = skewSymmetric(target->Tcw_.q_wb_ * dt); // Twc_.q_wb_.inverse()
+                // Pc2 w.r.t Pwc2
+                J_Pc2_Twc2.block(0, 3, 3, 3) = -target->Tcw_.q_wb_.toRotationMatrix(); // Twc.q_wb.R.transpose()
+
+                // Pc2 w.r.t Pw
+                // TODO: 这里也应该要使用首次的Tcw值吧！！！由于target有多帧，所以要保留多个
+                const Eigen::Matrix3d J_Pc2_Pw = target->Tcw_.q_wb_.toRotationMatrix();
+                
+                if(p->J_Pc2_Pw.count(target)) {
+                    // just for debug
+                    p->J_Pc2_Twc2[target] = J_Pc2_Twc2;
+                    p->J_Pc2_Pw[target] = J_Pc2_Pw;
+                } else {
+                    p->J_Pc2_Twc2.insert({target, J_Pc2_Twc2});
+                    p->J_Pc2_Pw.insert({target, J_Pc2_Pw});
+                }
+
+                if(p->J_Pw_z.empty()) {
+                // if(p->J_Pw_z.empty() || 1) {
+                    // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
+                    Eigen::Matrix<double, 3, 6> J_Pw_Twc1; // ------------------------> optimization variable
+                    // Pw w.r.t Rwc1
+                    J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * skewSymmetric(pc1);
+                    // Pw w.r.t Pwc1
+                    J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
+
+                    // Pw w.r.t Pc1
+                    const Eigen::Matrix3d J_Pw_Pc1 = host->Twc_.q_wb_.toRotationMatrix();
+
+                    // Pc1 w.r.t z
+                    const Eigen::Vector3d pc1Norm(p->GetPcNorm());
+                    Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(), 1}; // --------> optimization variable
+
+                    if(!p->J_Pw_z.empty()) {
+                        // just for debug
+                        p->J_Pw_z.clear();
+                        p->J_Pw_Twc1.clear();
+                    }
+                    p->J_Pw_z.push_back(J_Pw_Pc1 * J_Pc1_z);
+                    p->J_Pw_Twc1.push_back(J_Pw_Twc1);
+                }
+            }
 
             // Residual w.r.t optimization variables Jacobian
-            Eigen::Matrix<double, 1, 6> A1 = J_res_Pw * J_Pw_Twc1;
+            Eigen::Matrix<double, 1, 6> A1 = J_res_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_Twc1[0]; // J_res_Pw * J_Pw_Twc1;
             if(host == window_[0]) {
                 // fixed滑动窗口第一帧
                 A1.setZero();
             }
-            Eigen::Matrix<double, 1, 6> A2 = J_res_Pc2 * J_Pc2_Twc2;
+            Eigen::Matrix<double, 1, 6> A2 =  J_res_Pc2 * p->J_Pc2_Twc2.at(target); // J_res_Pc2 * J_Pc2_Twc2;
             if(target == window_[0]) {
                 A2.setZero();
             }
-            const Eigen::Matrix<double, 1, 1> B = J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
+            const Eigen::Matrix<double, 1, 1> B = J_res_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_z[0]; // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
             const double w = 1.0; // /p->depthCov_;
             const int a1i = resNum, a1j = kfMapCol[host],
                       a2i = resNum, a2j = kfMapCol[target],
@@ -871,9 +896,9 @@ bool Optimizer::SlidingWindowOptimize() {
 
 void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
-    for(int i = 0; i < historicalKF_.size(); ++i) {
+    for(int i = 0; i < window_.size(); ++i) {
         // 新插入的最后一个KF未成熟
-        KeyFrame *kf = historicalKF_[i];
+        KeyFrame *kf = window_[i];
         for(Landmark *p : kf->landmark_) {
             if(p!=nullptr && !ps.count(p) && p->Converge()) {
                 ps.insert(p);

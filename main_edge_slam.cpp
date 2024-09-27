@@ -93,12 +93,14 @@ int main(int argc, char** argv){
             curKF->InitializeLandmark();
             kfs.push_back(curKF);
 
+            // 可视化步骤
+            // optimizer.ShowLocalMap();
+
             optimizer.AddOneKeyFeame(curKF);
             optimizer.SlidingWindowOptimize();
             optimizer.RemoveOldestKeyFrame();
 
-            // 可视化步骤
-            // optimizer.ShowLocalMap();
+            // ShowPointCloud(optimizer.window_.back()->landmark_);
         } else {
             delete curKF; // 释放非KF内存
         }

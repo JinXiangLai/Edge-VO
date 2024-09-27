@@ -156,8 +156,7 @@ int main(int argc, char** argv){
         }
     }
 
-    ShowPointCloud( noOptLandmark, kfs[0].landmark_);
-    ShowPointCloud( noOptLandmark, kfs[0].landmark_, 1.0);
+    ShowPointCloud( noOptLandmark, kfs[0].landmark_, "Filter vs Opt");
 
     // 释放内存
     for(Landmark* p : noOptLandmark) {
