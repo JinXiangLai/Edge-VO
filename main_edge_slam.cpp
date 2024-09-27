@@ -27,8 +27,8 @@ void Run(vector<KeyFrame*> *historicalKF);
 int main(int argc, char** argv){
 
     // 读取程序参数
-    string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
-    //string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+    //string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
+    string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
 
     if (argc < 5){
         cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;

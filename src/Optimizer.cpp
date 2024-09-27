@@ -11,7 +11,7 @@
 #include "Landmark.h"
 #include "Utils.h"
 
-// #define TEST // 测试优化算法是否有问题
+ #define TEST // 测试优化算法是否有问题
 
 using namespace std;
 using namespace cv;
@@ -291,9 +291,9 @@ bool Optimizer::ExecuteLMoptimize() {
     firstCalculateResidual_ = true; // 首次运行时，会在CalculateResidual函数内选择优化地图点
     vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
     double lastCost = CalculateResidual(); // 同时选择新的优化地图点
-    // ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
     
     MarginalizeOldestKeyFrame();
+    // ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
 
 
     double firstCost = lastCost;
@@ -373,6 +373,11 @@ bool Optimizer::ExecuteLMoptimize() {
         } else {
             lambda_ *= 0.3;
             lastCost = newCost;
+            // 更新先验残差构成信息项
+            if(g_p_.rows() > 1) {
+                cout << "delta_x: [" << delta_x.rows() << "x1]" << endl;
+                g_p_.noalias() += Hp_ * delta_x; 
+            }
         }
         if(newCost < 1e-9) {
             cout << "Congratulations! LM converge!!!" << endl;
@@ -620,16 +625,14 @@ double Optimizer::CalculateResidual() {
         for(const auto &tar : p->target_) {
             // 不能向host投影，TODO: 删除host在target中的观测
             // 根据滑窗性质，只需投影到最后一个KF实现逐步收敛即可
-            if(tar.first == host || tar.first!=window_.back()) {
+            // if(tar.first == host || tar.first!=window_.back()) {
+            if(tar.first == host) {
                 continue;
             }
             const KeyFrame *target = tar.first;
 #else
-        for(const KeyFrame* target : window_) {
-
-            if(target == host) {
-                continue;
-            }
+        if(!(p->target_.size()==1 && p->target_.count(window_[0]))) {
+            KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
@@ -720,6 +723,8 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     }
     // 根据新的Landmark顺序，构建信息矩阵H_，并保存FEJ
     optLandmark_ = sortMargOptLandmark;
+    cout << "total, marg, left landmars: " << optLandmark_.size() << " " << margLandmark.size() 
+        << " " << (optLandmark_.size() - margLandmark.size()) << endl;
     // 这里可以实现将线性化点固定在Marginalization时刻
     ConstructJ_H_b_g();
     if(!margLandmark.empty()) {
@@ -747,7 +752,23 @@ void Optimizer::MarginalizeOldestKeyFrame() {
  
     // | A  B  |   |x1|   | I          0 |   |g1|
     // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
+    // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
     g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
+
+    // 易知，先验残差为： |Jp*X - b_p|^2. 其中，Hp_=Jp'*Jp，因此可以得到Jp，g_p_=Jp'*b_p，因此可以得到先验残差b_p(VINS-MONO)
+    // 根据G-N方法，展开先验残差项得:
+    // (Jp*X)'*(Jp*x) - 2*(Jp*X)'*b_p + b_p'*b_p ==>
+    // X'*Jp'*Jp*X - 2*X'*Jp'*b_p + b_p'*bp ==> 极小值点在该式导数为0处，即解满足:
+    // Jp'*Jp*X = 2Jp'*bp
+    // 如果令 r_p = Jp*Xmarg - b_p，那么当Xnew = Xmarg+ΔX时，先验残差更新为：
+    // r_p += Jp*ΔX
+    //
+    // 
+    // 事实上，上式理解为：
+    // Hp_*(X-Xmarg) = g_p_, 那么，当Xnew=X+ΔX后，有==>
+    // Hp_*(X-Xmarg+ΔX) = g_p_ + Hp_*ΔX，因此，当X更新后，我们需要同步更新
+    // g_p_ += Hp_*ΔX
+
 }
 
 double Optimizer::ConstructJ_H_b_g() {
@@ -793,17 +814,15 @@ double Optimizer::ConstructJ_H_b_g() {
 #ifndef TEST
         for(const auto &tar : p->target_) {
             // 不能向host投影，TODO: 删除host在target中的观测
-            if(tar.first == host || tar.first!=window_.back()) {
+            // if(tar.first == host || tar.first!=window_.back()) {
+            if(tar.first == host) {
                 ++targetErrorNum;
                 continue;
             }
             KeyFrame *target = tar.first;
 #else
-        for(const KeyFrame* target : window_) {
-            if(target == host) {
-                ++noInrangeNum;
-                continue;
-            }
+        if(!(p->target_.size()==1 && p->target_.count(window_[0])) ) {
+            KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
