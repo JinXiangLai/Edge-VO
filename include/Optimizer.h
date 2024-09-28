@@ -54,6 +54,8 @@ public:
 
     double HuberLoss(const double residual, double &J_huber_r);
 
+    int ChooseOneKF2Marginalization();
+
 private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小

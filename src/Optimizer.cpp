@@ -1,5 +1,6 @@
 #include "Optimizer.h"
 
+#include <cfloat>
 #include <cstddef>
 #include <stdlib.h>
 #include <unistd.h>
@@ -991,6 +992,8 @@ bool Optimizer::SlidingWindowOptimize() {
     if(!SetOptimizeVariables() ) {
         return false;
     }
+    int margKFid = ChooseOneKF2Marginalization();
+    cout << "margKFid: " << margKFid << endl;
     return ExecuteLMoptimize();
 }
 
@@ -1013,6 +1016,48 @@ double Optimizer::HuberLoss(const double residual, double &J_huber_r) {
     }
     return huberLoss;
 }
+
+int Optimizer::ChooseOneKF2Marginalization() {
+    // Keep the last 2 frame
+    if(window_.size() <= kMaxKFnumInWindow) {
+        return 1000;
+    }
+    // 不考虑结构的情况下，移除掉与最新帧观测最少的
+    // TODO: 有多帧小于可删除阈值时，考虑删除关键点分布较差的KF
+    vector<double> score(window_.size()-2, 0);
+    for(int i = 0; i < window_.size()-2; ++i) {
+        vector<Landmark*> &ps = window_[i]->landmark_;
+        double convergeNum = 0;
+        double seenByNewestNum = 0;
+        for(Landmark *p : ps) {
+            if(p==nullptr || !p->Converge() || p->outOfRange_) {
+                continue;
+            }
+            convergeNum += 1;
+            const Eigen::Vector3d pc2 = window_.back()->Tcw_ * p->GetPw();
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+            if(InRange(window_.back()->dist_[0], px2.cast<int>()) && 
+                window_.back()->dist_[0].at<float>(px2.y(), px2.x()) < kGoodDescriptorDist) {
+                seenByNewestNum += 1;
+            }
+        }
+        score[i] = seenByNewestNum / convergeNum;
+    }
+    double smallRatio = DBL_MAX;
+    int smallId = -1;
+    for(int i = 0; i < score.size(); ++i) {
+        if(score[i] < smallRatio) {
+            smallId = i;
+            smallRatio = score[i];
+        }
+    }
+
+    KeyFrame *oldest = window_[smallId];
+    window_[smallId] = window_[0];
+    window_[0] = oldest;
+    return smallId;
+}
+
 
 void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
