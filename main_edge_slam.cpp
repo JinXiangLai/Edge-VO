@@ -158,7 +158,7 @@ void Run(vector<KeyFrame*> *historicalKF) {
                 }
             }
         }
-        if(!ps.empty() && 0) {
+        if(!ps.empty()) {
             ShowLocalMap(ps);
             cout << "show " << temp.size() << " KFs map points" << endl;;
         } else {

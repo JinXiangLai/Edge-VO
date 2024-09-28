@@ -313,10 +313,12 @@ bool Optimizer::ExecuteLMoptimize() {
         if(Hp_.rows() > 1) {
             cout << "Hp_: [" << Hp_.rows() << "x" << Hp_.cols() << "]" << endl;
             cout << "g_p_: [" << g_p_.rows() << "x1]" << endl;
+            cout << "H_: [" << H_.rows() << "x" << H_.cols() << "]" << endl;
+            cout << "g_: [" << g_.rows() << "x1]" << endl;
             H_ += Hp_;
             g_ += g_p_;
-            cout << setprecision(3) << "Hp_: " << Hp_.diagonal().transpose() << endl;
-            cout << setprecision(3) << "g_p_: " << g_p_.transpose() << endl;
+            //cout << setprecision(3) << "Hp_: " << Hp_.diagonal().transpose() << endl;
+            //cout << setprecision(3) << "g_p_: " << g_p_.transpose() << endl;
             cout << "Prior Message Added!!!" << endl;;
         } else {
             _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
@@ -593,6 +595,7 @@ bool Optimizer::SetOptimizeVariables() {
 
     // 添加有效地图点进行优化
     set<Landmark*> ps;
+    // 最新帧不参与投影
     for(int i = 0; i < window_.size() - 1; ++i) {
         KeyFrame *kf = window_[i];
         vector<Landmark*> &ld = kf->landmark_;
@@ -716,10 +719,10 @@ void Optimizer::MarginalizeOldestKeyFrame() {
         }
     }
     vector<Landmark*> sortMargOptLandmark;
-    for(Landmark *p : margLandmark) {
-        // OK, 这样就实现了将边缘化地图点移到左上角的目的啦！！！
-        sortMargOptLandmark.push_back(p);
-    }
+    //for(Landmark *p : margLandmark) {
+    //    // OK, 这样就实现了将边缘化地图点移到左上角的目的啦！！！
+    //    sortMargOptLandmark.push_back(p);
+    //}
     for(Landmark *p : optLandmark_) {
         if(!margLandmark.count(p)) {
             sortMargOptLandmark.push_back(p);
@@ -731,18 +734,14 @@ void Optimizer::MarginalizeOldestKeyFrame() {
         << " " << (optLandmark_.size() - margLandmark.size()) << endl;
     // 这里可以实现将线性化点固定在Marginalization时刻
     ConstructJ_H_b_g();
-    if(!margLandmark.empty()) {
-        // 构建完H矩阵后，可以从优化地图点中移除marg landmark
-        optLandmark_.erase(optLandmark_.begin(), optLandmark_.begin() + margLandmark.size());
-    }
-    RemoveOldestKeyFrame();
 
-    ShowPointCloud(sortMargOptLandmark, optLandmark_, "Marg left landmark");
+    //ShowPointCloud(sortMargOptLandmark, optLandmark_, "Marg left landmark");
 
     // Step:接下来计算相关先验Hp, g_p
     const int poseDim = window_[0]->Twc_.Size();
     const int depthDim = 1;
-    const int margDim = poseDim + margLandmark.size() * depthDim;
+    //const int margDim = poseDim + margLandmark.size() * depthDim;
+    const int margDim = poseDim;
     const int leftDim = H_.cols() - margDim;
     // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
     // | I          0 |   | A  B |   | A  B |
@@ -751,6 +750,7 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     const Eigen::MatrixXd &B = H_.block(0, margDim, margDim, leftDim);
     const Eigen::MatrixXd &C = H_.block(margDim, 0, leftDim, margDim);
     const Eigen::MatrixXd &D = H_.block(margDim, margDim, leftDim, leftDim);
+    // TODO: 当边缘化landmark时，可以使用稀疏性求逆
     const Eigen::MatrixXd invA = A.inverse();
     const Eigen::MatrixXd temp = -C * invA;
     Hp_ = -temp*B + D;
@@ -777,6 +777,13 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     // Hp_*(X-Xmarg) = g_p_, 那么，当Xnew=X+ΔX后，有==>
     // Hp_*(X-Xmarg+ΔX) = g_p_ + Hp_*ΔX，因此，当X更新后，我们需要同步更新
     // g_p_ += Hp_*ΔX
+
+    // 暂时不边缘化点，而是直接丢弃
+    //if(!margLandmark.empty()) {
+    //    // 构建完H矩阵后，可以从优化地图点中移除marg landmark
+    //    optLandmark_.erase(optLandmark_.begin(), optLandmark_.begin() + margLandmark.size());
+    //}
+    RemoveOldestKeyFrame();
 
 }
 
@@ -996,8 +1003,8 @@ bool Optimizer::SlidingWindowOptimize() {
     if(!SetOptimizeVariables() ) {
         return false;
     }
-    //int margKFid = ChooseOneKF2Marginalization();
-    //cout << "margKFid: " << margKFid << endl;
+    int margKFid = ChooseOneKF2Marginalization();
+    cout << "margKFid: " << margKFid << endl;
     return ExecuteLMoptimize();
 }
 
