@@ -1,7 +1,6 @@
 #include "Optimizer.h"
 
 #include <cfloat>
-#include <cstddef>
 #include <stdlib.h>
 #include <unistd.h>
 #include <set>
@@ -316,6 +315,8 @@ bool Optimizer::ExecuteLMoptimize() {
             cout << "g_p_: [" << g_p_.rows() << "x1]" << endl;
             H_ += Hp_;
             g_ += g_p_;
+            cout << setprecision(3) << "Hp_: " << Hp_.diagonal().transpose() << endl;
+            cout << setprecision(3) << "g_p_: " << g_p_.transpose() << endl;
             cout << "Prior Message Added!!!" << endl;;
         } else {
             _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
@@ -592,7 +593,7 @@ bool Optimizer::SetOptimizeVariables() {
 
     // 添加有效地图点进行优化
     set<Landmark*> ps;
-    for(int i = 0; i < window_.size(); ++i) {
+    for(int i = 0; i < window_.size() - 1; ++i) {
         KeyFrame *kf = window_[i];
         vector<Landmark*> &ld = kf->landmark_;
         for(Landmark *p : ld) {
@@ -632,7 +633,7 @@ double Optimizer::CalculateResidual() {
             }
             const KeyFrame *target = tar.first;
 #else
-        if(!(p->target_.size()==1 && p->target_.count(window_[0]))) {
+        if(!(p->target_.size()==1 && p->target_.count(window_.back()))) {
             KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
@@ -743,18 +744,21 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     const int depthDim = 1;
     const int margDim = poseDim + margLandmark.size() * depthDim;
     const int leftDim = H_.cols() - margDim;
-    Eigen::MatrixXd H = H_;
     // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
     // | I          0 |   | A  B |   | A  B |
     // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
-    const Eigen::MatrixXd &A = H.block(0, 0, margDim, margDim);
-    const Eigen::MatrixXd &B = H.block(0, margDim, margDim, leftDim);
-    const Eigen::MatrixXd &C = H.block(margDim, 0, leftDim, margDim);
-    const Eigen::MatrixXd &D = H.block(margDim, margDim, leftDim, leftDim);
+    const Eigen::MatrixXd &A = H_.block(0, 0, margDim, margDim);
+    const Eigen::MatrixXd &B = H_.block(0, margDim, margDim, leftDim);
+    const Eigen::MatrixXd &C = H_.block(margDim, 0, leftDim, margDim);
+    const Eigen::MatrixXd &D = H_.block(margDim, margDim, leftDim, leftDim);
     const Eigen::MatrixXd invA = A.inverse();
     const Eigen::MatrixXd temp = -C * invA;
     Hp_ = -temp*B + D;
- 
+    cout << "debug A: " << setprecision(3) << A.diagonal().transpose() << endl
+         << "debug B: " << B.diagonal().transpose() << endl
+         << "debug D: " << D.diagonal().transpose() << endl
+         << "debug invA: " << invA.diagonal().transpose() << endl
+         << "debug temp: " << temp.diagonal().transpose() << endl;
     // | A  B  |   |x1|   | I          0 |   |g1|
     // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
     // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
@@ -826,7 +830,7 @@ double Optimizer::ConstructJ_H_b_g() {
             }
             KeyFrame *target = tar.first;
 #else
-        if(!(p->target_.size()==1 && p->target_.count(window_[0])) ) {
+        if(!(p->target_.size()==1 && p->target_.count(window_.back())) ) {
             KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
@@ -939,11 +943,11 @@ double Optimizer::ConstructJ_H_b_g() {
             Eigen::Matrix<double, 1, 6> A1 = J_res_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_Twc1[0]; // J_res_Pw * J_Pw_Twc1;
             if(host == window_[0]) {
                 // fixed滑动窗口第一帧
-                A1.setZero();
+                //A1.setZero();
             }
             Eigen::Matrix<double, 1, 6> A2 =  J_res_Pc2 * p->J_Pc2_Twc2.at(target); // J_res_Pc2 * J_Pc2_Twc2;
             if(target == window_[0]) {
-                A2.setZero();
+                //A2.setZero();
             }
             const Eigen::Matrix<double, 1, 1> B = J_res_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_z[0]; // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
             const double w = 1.0; // /p->depthCov_;
@@ -992,8 +996,8 @@ bool Optimizer::SlidingWindowOptimize() {
     if(!SetOptimizeVariables() ) {
         return false;
     }
-    int margKFid = ChooseOneKF2Marginalization();
-    cout << "margKFid: " << margKFid << endl;
+    //int margKFid = ChooseOneKF2Marginalization();
+    //cout << "margKFid: " << margKFid << endl;
     return ExecuteLMoptimize();
 }
 
@@ -1045,13 +1049,15 @@ int Optimizer::ChooseOneKF2Marginalization() {
     }
     double smallRatio = DBL_MAX;
     int smallId = -1;
+    cout << "score: ";
     for(int i = 0; i < score.size(); ++i) {
+        cout << score[i] << " ";
         if(score[i] < smallRatio) {
             smallId = i;
             smallRatio = score[i];
         }
     }
-
+    cout << endl;
     KeyFrame *oldest = window_[smallId];
     window_[smallId] = window_[0];
     window_[0] = oldest;

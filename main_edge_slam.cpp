@@ -56,7 +56,6 @@ int main(int argc, char** argv){
     shared_ptr<Camera> cam = make_shared<Camera>(kImageScale);
     Optimizer optimizer(cam);
     
-    vector<KeyFrame*> kfs;
     KeyFrame *initFrame = nullptr;
     KeyFrame *lastKF = nullptr;
     KeyFrame *curKF = nullptr;
@@ -70,28 +69,32 @@ int main(int argc, char** argv){
         curKF->GenerateDTandDerivative();
         if(!initFrame) {
             initFrame = curKF;
-            kfs.push_back(initFrame);
             initFrame->InitializeLandmark();
+            optimizer.AddOneKeyFeame(initFrame);
             viewerThread = new thread(Run, &optimizer.historicalKF_);
             continue; // 认为初始化完毕
         }
         ShowImage(curKF->edgeImg_[0], "edgeImg"+to_string(i), showImg);
         
+        // 使用KF更新当前帧的pose
+        const Pose Twc1 = optimizer.window_.back()->priorTwc_;
+        const Pose Twc2 = curKF->priorTwc_;
+        const Pose Tc1c2 = Twc1.Inverse() * Twc2;
+        curKF->SetTwc(optimizer.window_.back()->Twc_ * Tc1c2);
         
         // Step: 利用当前帧更新landmark depth，depth与host frame绑定
-        const double recoverRatio = kfs.back()->UpdateDepth(*curKF);
+        const double recoverRatio = optimizer.window_.back()->UpdateDepth(*curKF);
         cout << "recoverRatio: " << recoverRatio << endl;
         
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if(recoverRatio < kNewKFMinMatchEdgeRatio || NeedNewKF(kfs.back(), curKF)) {   
+        if(recoverRatio < kNewKFMinMatchEdgeRatio || NeedNewKF(optimizer.window_.back(), curKF)) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-            const int reuseLandmarkNum = curKF->ReuseLandmark(kfs.back());
+            const int reuseLandmarkNum = curKF->ReuseLandmark(optimizer.window_.back());
             cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
             // 同时未跟踪上landmark的边缘点生成新的landmark
             curKF->InitializeLandmark();
-            kfs.push_back(curKF);
 
             // 可视化步骤
             // optimizer.ShowLocalMap();
@@ -155,7 +158,7 @@ void Run(vector<KeyFrame*> *historicalKF) {
                 }
             }
         }
-        if(!ps.empty()) {
+        if(!ps.empty() && 0) {
             ShowLocalMap(ps);
             cout << "show " << temp.size() << " KFs map points" << endl;;
         } else {

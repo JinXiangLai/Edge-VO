@@ -38,7 +38,7 @@ constexpr int kGoodDescriptorDist = kMaxDescriptorDist * 0.6;
 constexpr double kMaxTrackProjectError = 1.0; // 追踪landmark不能超过的重投影像素误差
 
 constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那样设定最优与次优描述子的比值，可能导致特征点稀少
-constexpr double kConvergeDiff = 0.1;
+constexpr double kConvergeDiff = 0.2;
 constexpr double kAbnormalResidual = 10; // 15 个像素距离为异常残差值
 constexpr double kHuberDelta = 5;
 
