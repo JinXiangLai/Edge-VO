@@ -52,7 +52,11 @@ public:
 
     bool SetOptimizeVariables();
 
+    double HuberLoss(const double residual, double &J_huber_r);
+
 private:
+    // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
+    // 因此，λ越大，ΔX须越小
     double lambda_ = 1.0;
     std::vector<cv::Mat> dist_, dx_, dy_;
     int maxIte_ = 100;

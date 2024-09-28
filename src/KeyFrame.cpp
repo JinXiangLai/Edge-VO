@@ -134,7 +134,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(pc1->Converge()) {
             convergeEdgeNum_ += 1;
         }
-        // TODO: landmark会被其他帧观测到，所以不能一直使用host帧的像素进行深度更新?
+        // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         const vector<Eigen::Vector2d> kp2 = pc1->FindMatches(kf2);
         
         // 更新的是host帧下的深度

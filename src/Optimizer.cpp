@@ -18,7 +18,7 @@ using namespace cv;
 
 constexpr double kPriorDepthWeight = 1e8;
 
-Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, std::shared_ptr<Camera> cam,
+Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vector<Mat> &dy, shared_ptr<Camera> cam,
     const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate) 
     : lambda_(lambda)
     , dist_(dist)
@@ -29,7 +29,7 @@ Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vecto
     , onlyPoseUpdate_(onlyPoseUpdate)
     , cam_(cam) {}
 
-Optimizer::Optimizer(std::shared_ptr<Camera> cam, const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate)
+Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate)
     : lambda_(lambda)
     , maxIte_(maxIte)
     , useInvDepth_(useInvDepth)
@@ -255,7 +255,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     const Eigen::MatrixXd &B = H.block(0, poseSize, poseSize, pointSize);
     const Eigen::MatrixXd &C = H.block(poseSize, 0, pointSize, poseSize);
     const Eigen::MatrixXd &D = H.block(poseSize, poseSize, pointSize, pointSize);
-    // cout << "B - C.T:\n" << B-C.transpose() <<std::endl;
+    // cout << "B - C.T:\n" << B-C.transpose() <<endl;
     Eigen::MatrixXd Dinv(D.rows(), D.cols());
     for(int i = 0; i < pointSize; i+=pointDim) {
         Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
@@ -271,7 +271,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     Eigen::MatrixXd newA = A + E * C;
     Eigen::VectorXd new_b = leftMatrix * b;
     Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
-    cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << std::endl;
+    cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << endl;
 
 
     // 求point增量
@@ -279,7 +279,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
     Eigen::VectorXd deltaPoint = Dinv * (new_b.middleRows(poseSize, pointSize) - C * deltaPose);
-    // std::cout << setprecision(3) << "deltaPoint: "<< deltaPoint.transpose() << std::endl;
+    // cout << setprecision(3) << "deltaPoint: "<< deltaPoint.transpose() << endl;
 
     Eigen::VectorXd deltaX(deltaPose.rows() + deltaPoint.rows());
     deltaX.middleRows(0, poseSize) = deltaPose;
@@ -644,11 +644,13 @@ double Optimizer::CalculateResidual() {
             }
 
             double r = BilinearInterpolate(target->dist_[0], px2);
-            // 使用胡伯核函数剔除异常残差值
-            if(r > kAbnormalResidual) {
-                // TODO: 检验LM计算比较残差值时是否可以这样计算
-                r = 1;
+            if(r > kAbnormalResidual && firstCalculateResidual_) {
+                // 残差值异常，判定为离群点
+                continue;
             }
+            // 使用胡伯核函数剔除异常残差值
+            double J_huber_r = 0;
+            r = HuberLoss(r, J_huber_r);
             cost += r;
             usefulLandmark.push_back(p);
         }
@@ -732,6 +734,8 @@ void Optimizer::MarginalizeOldestKeyFrame() {
         optLandmark_.erase(optLandmark_.begin(), optLandmark_.begin() + margLandmark.size());
     }
     RemoveOldestKeyFrame();
+
+    ShowPointCloud(sortMargOptLandmark, optLandmark_, "Marg left landmark");
 
     // Step:接下来计算相关先验Hp, g_p
     const int poseDim = window_[0]->Twc_.Size();
@@ -837,10 +841,14 @@ double Optimizer::ConstructJ_H_b_g() {
 
             // 经过校验，可以构建residual和jacobian
             double r = BilinearInterpolate(target->dist_[0], px2);
+            //if(r > kAbnormalResidual) {
+            //    // 残差值异常大，认为是离群点
+            //    // 只有首次寻找地图点时考虑异常值，后面的目标只是减小损失函数值
+            //    continue;
+            //}
             // 使用胡伯核函数剔除异常残差值
-            if(r > kAbnormalResidual) {
-                r = 1;
-            }
+            double J_huber_r = 0;
+            r = HuberLoss(r, J_huber_r);
             ++usefulNum;
             cost += r;
             debugKFMapResidualNum[target] += 1;
@@ -862,7 +870,8 @@ double Optimizer::ConstructJ_H_b_g() {
             ************************/
 
             // res w.r.t (u2, v2) [1x2]
-            const Eigen::Matrix<double, 1, 2> J_res_px2(dx, dy);
+            //const Eigen::Matrix<double, 1, 2> J_res_px2(dx, dy);
+            const Eigen::Matrix<double, 1, 2> J_res_px2(J_huber_r * dx, J_huber_r * dy);
 
             // px2 w.r.t Pc2 [2x3]
             const Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm = p->cam_->K_.block(0, 0, 2, 3);
@@ -983,6 +992,26 @@ bool Optimizer::SlidingWindowOptimize() {
         return false;
     }
     return ExecuteLMoptimize();
+}
+
+double Optimizer::HuberLoss(const double residual, double &J_huber_r) {
+    double huberLoss = 0;
+    if(abs(residual) > kHuberDelta) {
+        // r = δ*(|a|-δ)
+        huberLoss = kHuberDelta * (abs(residual) - 0.5 * kHuberDelta);
+        if(residual > 0) {
+            // abs(residual) = residual
+            J_huber_r = 1 * kHuberDelta;
+        } else {
+            // abs(residual) = -residual
+            J_huber_r = -1 * kHuberDelta;
+        }
+    } else {
+        // r = 0.5*a^2
+        huberLoss = 0.5 * pow(residual, 2);
+        J_huber_r = residual;
+    }
+    return huberLoss;
 }
 
 void Optimizer::ShowLocalMap() {

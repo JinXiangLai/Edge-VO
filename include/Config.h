@@ -33,13 +33,14 @@ constexpr double kMinGoodTriangulateAngle = 1.5; // 使用深度滤波时不在�
 constexpr double kMaxGoodTriangulateAngle = 60.0; // 实践过程中发现视差角过大的是异常深度值如1.2m左右
 
 // constexpr double kMaxDescriptorDist = 10.0; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
-constexpr int kMaxDescriptorDist = 10; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
+constexpr int kMaxDescriptorDist = 8; // 描述子最大差异值 TODO: 这个值需要仔细设置一下
 constexpr int kGoodDescriptorDist = kMaxDescriptorDist * 0.6;
 constexpr double kMaxTrackProjectError = 1.0; // 追踪landmark不能超过的重投影像素误差
 
 constexpr double kThRatio = 1.0; // 为了减小误匹配，必须像ORBSLAM那样设定最优与次优描述子的比值，可能导致特征点稀少
-constexpr double kConvergeDiff = 0.5;
-constexpr double kAbnormalResidual = 5; // 15 个像素距离为异常残差值
+constexpr double kConvergeDiff = 0.1;
+constexpr double kAbnormalResidual = 10; // 15 个像素距离为异常残差值
+constexpr double kHuberDelta = 5;
 
 constexpr int kMaxKFnumInWindow = 3;
 
