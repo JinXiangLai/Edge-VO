@@ -1,5 +1,6 @@
 #include "Landmark.h"
 
+#include "Pose.h"
 #include "Utils.h"
 #include <cstdint>
 
@@ -15,7 +16,13 @@ Landmark::Landmark(const Eigen::Vector2d &px, KeyFrame *host, const shared_ptr<C
     , descriptor_(desc)
     , host_(host)
     , uv_(px)
-    , cam_(cam) {}
+    , cam_(cam){
+        depthCov_ = std::pow(config->maxDepth, 2);
+        invDepthCov_ = std::pow(1./config->maxDepth, 2);
+        depthRange_[0] = config->minDepth;
+        depthRange_[1] = config->maxDepth;
+        uncertainty_ = config->maxDepth;
+    }
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
     return cam_->InverseProject(uv_.cast<int>(), 1.0);
@@ -41,15 +48,15 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
     }
 
     // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
-    depthRange_[0] = max(kMinDepth, z_ - 2*uncertainty_);
-    depthRange_[1] = min(kMaxDepth, z_ + 2*uncertainty_);
+    depthRange_[0] = max(config->minDepth, z_ - 2*uncertainty_);
+    depthRange_[1] = min(config->maxDepth, z_ + 2*uncertainty_);
 }
 
 void Landmark::UpdateUncertainty() {
     uncertainty_ = sqrt(depthCov_);
     invZ_ = 1.0 / z_;
-    depthRange_[0] = max(kMinDepth, z_ - 3 * uncertainty_);
-    depthRange_[1] = min(kMaxDepth, z_ + 3 * uncertainty_);
+    depthRange_[0] = max(config->minDepth, z_ - 3 * uncertainty_);
+    depthRange_[1] = min(config->maxDepth, z_ + 3 * uncertainty_);
 }
 
 vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {

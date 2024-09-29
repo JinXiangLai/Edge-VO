@@ -5,7 +5,6 @@
 #include <map>
 #include <memory>
 
-#include "Pose.h"
 #include "Camera.h"
 #include "KeyFrame.h"
 
@@ -24,18 +23,21 @@ public:
     int Size() const; // 优化变量的维度
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
-    bool Converge() const {return uncertainty_ < kConvergeDiff && z_ > kMinDepth && z_ < kMaxDepth;}
+    bool Converge() const {
+        return uncertainty_ < config->maxDepthConvergeStd && 
+            z_ > config->minDepth && z_ < config->maxDepth;
+    }
     void SetOutOfRange() {outOfRange_ = true;}
     bool IsOutOfRange() const {return outOfRange_;}
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame &kf2);
 
     double z_ = 1.0;
-    double depthCov_ = std::pow(kMaxDepth, 2);
+    double depthCov_ = 1e10;
     double invZ_ = 1.0;
-    double invDepthCov_ = std::pow(1./kMaxDepth, 2);
+    double invDepthCov_ = 1e-10;
 
-    double depthRange_[2] = {kMinDepth, kMaxDepth};
-    double uncertainty_ = kMaxDepth;
+    double depthRange_[2] = {0, 0};
+    double uncertainty_ = 0;
     uint64_t descriptor_ = 0;
 
 	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便

@@ -53,8 +53,9 @@ bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     // 边缘行、列忽略
     // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
     //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
-    return p.x() >= 6*kImageScale && p.x() < img.cols-6*kImageScale && 
-            p.y() >= 6*kImageScale && p.y() < img.rows-10*kImageScale; // 把车头像素滤掉
+    const double imgScale = config->imageScale;
+    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
+            p.y() >= 6*imgScale && p.y() < img.rows-10*imgScale; // 把车头像素滤掉
 }
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
@@ -245,7 +246,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         const int descId = kf2.pointMapId_.at({x, y});
         const u_int64_t d2 = kf2.descriptor_[descId];
         score = CalculateDescriptorScore(d1, d2);
-        return score < kMaxDescriptorDist;
+        return score < config->maxDescriptorDist;
 
         // return (edgeImg.at<uchar>(y, x) == 0);
         // return InRange(edgeImg, p) && (edgeImg.at<uchar>(y-1, x) != 255
@@ -417,7 +418,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
                                 // 进行深度滤波
                                 return pcZ >= landmark.depthRange_[0] && 
                                     pcZ <= landmark.depthRange_[1] &&
-                                    pcZ > kMinDepth && pcZ < kMaxDepth;
+                                    pcZ > config->minDepth && pcZ < config->maxDepth;
                             };
 
     const Eigen::Vector2d kp1 = landmark.uv_;
@@ -488,7 +489,7 @@ Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d &rpy, const Eigen::Vector3d
 void varifyTriangulate() {
     Pose Twc1(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero());
     Pose Tc1c2 = ConvertRPYandPostion2Pose({0, 0, 20}, {0.5, 1., -0.5}, kDeg2Rad);
-    shared_ptr<Camera> cam = make_shared<Camera>(1.0);
+    shared_ptr<Camera> cam = make_shared<Camera>(config);
     
     const Eigen::Vector2d px1{15, 17};
     const double z1 = 5.0;
@@ -606,9 +607,10 @@ void FindImageAndPose(const int idx, const vector<string> & vstrImages, const ve
     };
 
     imgs.push_back(cv::imread(vstrImages[idx], IMREAD_GRAYSCALE));
-    const int newW = imgs[0].cols * kImageScale, newH = imgs[0].rows * kImageScale;
+    const double imgScale = config->imageScale;
+    const int newW = imgs[0].cols * imgScale, newH = imgs[0].rows * imgScale;
     cv::resize(imgs[0], imgs[0], cv::Size(newW, newH) );
-    vTwc.push_back(InterpolatePose(vTimeStamps[idx] + kImgTimeOffset) );
+    vTwc.push_back(InterpolatePose(vTimeStamps[idx] + config->imgTimeOffset) );
 
     int id = idx;
     int curId = 1;
@@ -619,7 +621,7 @@ void FindImageAndPose(const int idx, const vector<string> & vstrImages, const ve
 
         const double time = vTimeStamps[id];
         Pose Twc_i = InterpolatePose(time);
-        if((Twc_i.Inverse() * vTwc[curId-1]).t_wb_.norm() > kMinTranslation) {
+        if((Twc_i.Inverse() * vTwc[curId-1]).t_wb_.norm() > config->minTranslation) {
             imgs.push_back(cv::imread(vstrImages[id], IMREAD_GRAYSCALE));
             cv::resize(imgs[curId], imgs[curId], cv::Size(newW, newH) );
             vTwc.push_back(Twc_i);
@@ -658,29 +660,30 @@ void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vect
     };
 
     img = cv::imread(vstrImages[idx], IMREAD_GRAYSCALE);
-    const int newW = img.cols * kImageScale, newH = img.rows * kImageScale;
+    const double imgScale = config->imageScale;
+    const int newW = img.cols * imgScale, newH = img.rows * imgScale;
     cv::resize(img, img, cv::Size(newW, newH) );
-    Twc = InterpolatePose(vTimeStamps[idx] + kImgTimeOffset);
+    Twc = InterpolatePose(vTimeStamps[idx] + config->imgTimeOffset);
 }
 
-double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
-    /****************
-    * +---+---+---+
-    * + 1 + 2 + 1 +
-    * +---+---+---+
-    * + 2 + 3 + 2 +
-    * +---+---+---+
-    * + 1 + 2 + 1 +
-    * +---+---+---+
-    *****************/
-    constexpr double ratio = 1.0/15;
-    const Eigen::Matrix<float, kDescriptorPatchSize, 1> d = (d1-d2).cwiseAbs();
-    const double cost = d[0] + 2*d[1] + d[2] +
-                        2*d[3] + 3*d[4] + 2*d[5] +
-                        d[6] + 2*d[7] + d[8];
-    // return (cost/15)/9;
-    return cost * ratio;
-}
+//double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
+//    /****************
+//    * +---+---+---+
+//    * + 1 + 2 + 1 +
+//    * +---+---+---+
+//    * + 2 + 3 + 2 +
+//    * +---+---+---+
+//    * + 1 + 2 + 1 +
+//    * +---+---+---+
+//    *****************/
+//    constexpr double ratio = 1.0/15;
+//    const Eigen::Matrix<float, kDescriptorPatchSize, 1> d = (d1-d2).cwiseAbs();
+//    const double cost = d[0] + 2*d[1] + d[2] +
+//                        2*d[3] + 3*d[4] + 2*d[5] +
+//                        d[6] + 2*d[7] + d[8];
+//    // return (cost/15)/9;
+//    return cost * ratio;
+//}
 
 uint64_t CalculateDescriptor(const Mat &grayImg, const Eigen::Vector2i &px) {
     // 返回descDim维描述子, [8x8]的范围内对角线位置的像素值比值
@@ -752,7 +755,7 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
         d1 = pc1Norm * t12Norm, d2 = pc2.norm() * t12Norm;
     const double alpha = acos(pc1.dot(t12)/d1);
     const double belta = acos(pc2.dot(-t12)/d2);
-    const double deltaBelta = atan2(kPixelError, f);
+    const double deltaBelta = atan2(config->filterPixelError, f);
 
     const double belta2 = belta + deltaBelta;
     const double gamma = M_PI - alpha - belta2;
@@ -763,7 +766,8 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
     const Pose T12 = kf->Tcw_ * f->Twc_;
-    return T12.t_wb_.norm() > kNewKFtrans || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > kNewKFrot;
+    return T12.t_wb_.norm() > config->needNewKFtrans 
+        || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
 }
 
 void ShowPointCloud(const vector<Landmark*> &ps) {

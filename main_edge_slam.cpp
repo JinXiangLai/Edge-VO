@@ -2,6 +2,7 @@
 #include <thread>
 #include <unistd.h>
 
+#include <opencv2/viz/vizcore.hpp>
 
 #include "Config.h"
 #include "Landmark.h"
@@ -21,39 +22,41 @@ using namespace cv;
 viz::Viz3d window("Local Map Viewer"); // 放在这里有问题
 cv::Affine3d viewPose;
 
-void ShowLocalMap(const set<Landmark* > &ps);
+void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc);
 void Run(vector<KeyFrame*> *historicalKF);
 
 int main(int argc, char** argv){
 
     // 读取程序参数
-    //string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
-    string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+    string configFilePath = "../config.yaml";
 
     if (argc < 5){
-        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
+        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
         exit(-1);
     } else if(argc < 6) {
-        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
-        cout << "Default dataDir: " << dataDir << endl;
+        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
+        cout << "Default config: " << configFilePath << endl;
     }  else {
-        dataDir = string (argv[5]);
+        configFilePath = string (argv[5]);
     }
+    
     const bool useInvZ = bool (stoi(argv[1]));
     const bool showImg = bool(stoi(argv[2]));
     const int firstImgIdx = int(stoi(argv[3]));
     const int loopClosureImgIdx = int(stoi(argv[4]));
+    Config _config(configFilePath);
+    config = &_config;
 
     // 读取外部数据
     vector<string> vstrImages;
     vector<double> vTimeStamps;
     // TODO:需要将轮速系转换为相机系，所以倒不如直接在ORBSLAM3下的框架进行开发呢！！！
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
-    LoadImages(dataDir, vstrImages, vTimeStamps);
-    LoadPriorOdom(dataDir, vPriorPose);
+    LoadImages(config->dataDir, vstrImages, vTimeStamps);
+    LoadPriorOdom(config->dataDir, vPriorPose);
 
-    WheelCameraCalib calib;
-    shared_ptr<Camera> cam = make_shared<Camera>(kImageScale);
+    WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
+    shared_ptr<Camera> cam = make_shared<Camera>(config);
     Optimizer optimizer(cam);
     
     KeyFrame *initFrame = nullptr;
@@ -71,7 +74,9 @@ int main(int argc, char** argv){
             initFrame = curKF;
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
-            viewerThread = new thread(Run, &optimizer.historicalKF_);
+            //viewerThread = new thread(Run, &optimizer.historicalKF_);
+            viewerThread = new thread(Run, &optimizer.window_);
+
             continue; // 认为初始化完毕
         }
         ShowImage(curKF->edgeImg_[0], "edgeImg"+to_string(i), showImg);
@@ -89,7 +94,8 @@ int main(int argc, char** argv){
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if(recoverRatio < kNewKFMinMatchEdgeRatio || NeedNewKF(optimizer.window_.back(), curKF)) {   
+        if(recoverRatio < config->needNewKFMaxMatchEdgeRatio 
+            || NeedNewKF(optimizer.window_.back(), curKF) ) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
             const int reuseLandmarkNum = curKF->ReuseLandmark(optimizer.window_.back());
             cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
@@ -114,7 +120,7 @@ int main(int argc, char** argv){
     return 0;
 }
 
-void ShowLocalMap(const set<Landmark* > &ps) {
+void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     window.setViewerPose(viewPose);
     vector<Point3d> points;
     
@@ -130,9 +136,34 @@ void ShowLocalMap(const set<Landmark* > &ps) {
     viz::WCloud cloud(points, colors);
     // cloud.setColor(cv::viz::Color::green());
     // cloud.setSize(5);
+
+    vector<Point3d> startEndCameraPos(2);
+    for(int i = 0; i < vTwc.size(); ++i) {
+        // Eigen默认列优先，这里先将其改为行优先以与Mat适配
+        Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Twc = vTwc[i].ToMatrix4d();
+        double *data = _Twc.data();
+        cv::Mat mat44(4, 4, CV_64F, data);
+        const cv::Affine3d Twc(mat44);
+        
+        if(i == 0 || i == vTwc.size()-1) {
+            const Eigen::Vector3d t = vTwc[i].t_wb_;
+            if(i == 0) {
+                startEndCameraPos[0] = {t.x(), t.y(), t.z()};
+            } else {
+                startEndCameraPos[1] = {t.x(), t.y(), t.z()};
+            }
+        }
+        // 显示坐标系
+        window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
+    }
  
-    // 显示点云
+    // 创建一个球体
+    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 10, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 10, {0, 255, 255});
+
     window.showWidget("PointCloud", cloud);
+    window.showWidget("S0", s0);
+    window.showWidget("S1", s1);
 
     // 运行事件循环，使窗口响应用户输入
     // window.spinOnce(1);
@@ -140,18 +171,21 @@ void ShowLocalMap(const set<Landmark* > &ps) {
     // window.close();
 
     // 保留现场
-    // window.removeAllWidgets();
-    window.removeWidget("PointCloud");
+     window.removeAllWidgets();
+    //window.removeWidget("PointCloud");
     // viewPose = window.getViewerPose();
 }
 
 void Run(vector<KeyFrame*> *historicalKF) {
     while(1) {
         set<Landmark*> ps;
+        vector<Pose> vTwc;
+
         vector<KeyFrame*> temp = *historicalKF;
         for(int i = 0; i < temp.size(); ++i) {
             // 新插入的最后一个KF未成熟
             KeyFrame *kf = temp[i];
+            vTwc.push_back(kf->Twc_);
             for(Landmark *p : kf->landmark_) {
                 if(p!=nullptr && !ps.count(p) && p->Converge()) {
                     ps.insert(p);
@@ -159,7 +193,7 @@ void Run(vector<KeyFrame*> *historicalKF) {
             }
         }
         if(!ps.empty()) {
-            ShowLocalMap(ps);
+            ShowLocalMap(ps, vTwc);
             cout << "show " << temp.size() << " KFs map points" << endl;;
         } else {
             // cout << "wait for local map..." << endl;

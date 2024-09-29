@@ -1,0 +1,50 @@
+#include "Config.h"
+
+using namespace std;
+
+Config::Config(const std::string &yamlFilePath) {
+
+    YAML::Node f = YAML::LoadFile(yamlFilePath);
+    if(f.IsNull()) {
+        cerr << "Load yaml file at: {" << yamlFilePath << "} Error!" << endl;
+        exit(-1);
+    }
+    cout << "Load yaml file at: {" << yamlFilePath << "}!" << endl;
+    dataDir = f["dataDir"].as<string>();
+    cout << "dataDir: " << dataDir << endl;
+    intrinstic = f["Camera.intrinstic"].as<std::vector<double>>();
+    distortion = f["Camera.distortion"].as<std::vector<double>>();
+    Qcg = f["Qcg"].as<std::vector<double>>();
+    Pcg = f["Pcg"].as<std::vector<double>>();
+    imageScale = f["Camera.imageScale"].as<double>();
+    wheelRadius = f["wheelRadius"].as<double>();
+    descriptorPatchLen = f["descriptorPatchLen"].as<int>();
+    minTranslation = f["minTranslation"].as<double>();
+    maxDepth = f["maxDepth"].as<double>();
+    minDepth = f["minDepth"].as<double>();
+    minGoodTriangulateAngle = f["minGoodTriangulateAngle"].as<double>();
+    maxGoodTriangulateAngle = f["maxGoodTriangulateAngle"].as<double>();
+    
+    maxDescriptorDist = f["maxDescriptorDist"].as<double>(); // 可能和int类型比较哦
+    goodDescriptorDistRatio = f["goodDescriptorDistRatio"].as<double>();
+    goodDescriptorDist = maxDescriptorDist * goodDescriptorDistRatio;
+
+    nonMaximumSuppressionRatio = f["nonMaximumSuppressionRatio"].as<double>();
+    maxTrackProjectPixelError = f["maxTrackProjectPixelError"].as<double>();
+
+    maxDepthConvergeStd = f["maxDepthConvergeStd"].as<double>();
+    maxDepthConvergeVariance = pow(maxDepthConvergeStd, 2);
+
+    abnormalProjectResidual = f["abnormalProjectResidual"].as<double>();
+    huberDelta = f["huberDelta"].as<double>();
+    minKFnumInWindow = f["minKFnumInWindow"].as<int>();
+    maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
+    imgTimeOffset = f["imgTimeOffset"].as<double>();
+    
+    needNewKFtrans = f["needNewKFtrans"].as<double>();
+    needNewKFrot = f["needNewKFrot"].as<double>();
+    needNewKFMaxMatchEdgeRatio = f["needNewKFMaxMatchEdgeRatio"].as<double>();
+    filterPixelError = f["filterPixelError"].as<double>();
+}
+
+Config *config = nullptr;

@@ -33,3 +33,10 @@ void Pose::Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t
     q_wb_ *= Eigen::Quaterniond(deltaR);
     t_wb_ += delta_t;
 }
+
+Eigen::Matrix4d Pose::ToMatrix4d() const {
+    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+    T.block(0, 0, 3, 3) = q_wb_.toRotationMatrix();
+    T.block(0, 3, 3, 1) = t_wb_;
+    return T;
+}

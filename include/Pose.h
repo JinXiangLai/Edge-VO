@@ -11,6 +11,7 @@ public:
     Pose() {}
     Pose(const Pose& T);
     Pose Inverse() const;
+    Eigen::Matrix4d ToMatrix4d() const;
     Eigen::Vector3d operator*(const Eigen::Vector3d &p) const;
     Pose operator*(const Pose& T) const;
     friend std::ostream& operator<<(std::ostream &cout, const Pose& T);

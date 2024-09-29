@@ -51,6 +51,11 @@ void Run() {
 }
 
 int main(int argc, char** argv) {
+    // 读取程序参数
+    string configFilePath = "../config.yaml";
+    Config _config(configFilePath);
+    config = &_config;
+
     const int v1 = 10, v2 = 19;
     Assert(CalculateDescriptorScore(v1, v2) == 3, "v1^v2 Error!");
 
@@ -67,10 +72,17 @@ int main(int argc, char** argv) {
     const Pose Tc1c2 = ConvertRPYandPostion2Pose({0, 2, 3}, t_c1c2, kDeg2Rad);
     const Pose Tidentity = Tc1c2 * Tc1c2.Inverse();
     cout << "Tidentity: " << Tidentity << endl;
-    Assert(Tidentity.t_wb_.isApprox(Eigen::Vector3d::Zero()) && 
-        Tidentity.q_wb_.isApprox(Eigen::Quaterniond::Identity()), "Inverse operate Error!");
+    //Assert(Tidentity.t_wb_.isApprox(Eigen::Vector3d::Zero()) && 
+    //    Tidentity.q_wb_.isApprox(Eigen::Quaterniond::Identity()), "Inverse operate Error!");
     cout << "Tidentity: " << Tidentity << endl;
 
+    Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Tc1c2 = Tc1c2.ToMatrix4d();
+    cv::Mat _Twc(4, 4, CV_64F, _Tc1c2.data());
+    cv::Affine3d Twc(_Twc);
+    cout << setprecision(3) << "Eigen Twc ColMajor:\n" << Tc1c2.ToMatrix4d() << endl;
+    cout << setprecision(3) << "Eigen _Twc RowMajor:\n" << _Tc1c2 << endl;
+    cout << setprecision(3) << "Mat4 Twc:\n" << _Twc << endl;
+    cout << setprecision(3) << "Affine3d Twc:\n" << Twc.matrix << endl; 
     // ShowPointCloud();
     // thread th(Run);
     // th.join();

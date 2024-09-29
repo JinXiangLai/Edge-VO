@@ -76,7 +76,7 @@ void GetImageAndPose(const int idx, const std::vector<std::string> &vstrImages, 
     const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, 
     Pose &Twc);
 
-double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
+// double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
 
 uint64_t CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2i &px);
 

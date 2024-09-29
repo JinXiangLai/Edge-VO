@@ -1,3 +1,5 @@
+#include "KeyFrame.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -5,8 +7,6 @@
 #include <string>
 #include <vector>
 
-#include "KeyFrame.h"
-#include "Camera.h"
 #include "Config.h"
 #include "Eigen/src/Core/Matrix.h"
 #include "Pose.h"
@@ -24,8 +24,9 @@ void KeyFrame::CannyEdgeDetect() {
     cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
-    double lowerThreshold = max(40.0, 60 * kImageScale); // 下限阈值
-    double upperThreshold = max(60.0, 90 * kImageScale); // 上限阈值，越小提取边缘越多
+    const double imgScale = config->imageScale;
+    double lowerThreshold = max(40.0, 60 * imgScale); // 下限阈值
+    double upperThreshold = max(60.0, 90 * imgScale); // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
     Canny(blurred, edgeImg_[0], lowerThreshold, upperThreshold, apertureSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
@@ -176,7 +177,7 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
 
         // 更新的是host帧下的depth
         const Eigen::Vector3d pc2 = Tcw_ * pc1->GetPw();
-        if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+        if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
             continue;
         }
 
@@ -190,7 +191,7 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
             const uint64_t d2 = descriptor_[vecId];
             const uint64_t d1 = pc1->descriptor_;
             uint64_t score = CalculateDescriptorScore(d1, d2);
-            if(score < kGoodDescriptorDist) {
+            if(score < config->goodDescriptorDist) {
                 // 增加相互观测
                 landmark_[vecId] = pc1;
                 pc1->target_.insert({this, px2.cast<double>()});
@@ -223,4 +224,3 @@ void KeyFrame::SetTwc(const Pose &Twc) {
     Twc_ = Twc;
     Tcw_ = Twc.Inverse();
 }
-

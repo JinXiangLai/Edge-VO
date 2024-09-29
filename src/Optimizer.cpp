@@ -57,7 +57,7 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
                 // res[i*pc1.size()*resDim + j] = dist_.at<float>(px.y(), px.x());
                 const double r = BilinearInterpolate(dist, px);
                 // TODO: 增加异常值鲁棒核函数
-                if(r < kAbnormalResidual) {
+                if(r < config->abnormalProjectResidual) {
                     res[i*pc1.size()*resDim + j] = r;
                 } else {
                     res[i*pc1.size()*resDim + j] = 1;
@@ -388,7 +388,7 @@ bool Optimizer::ExecuteLMoptimize() {
             status = true;
             break;
         }
-        if(lambda_ > 1e20) {
+        if(lambda_ > 1e10) {
             cout << fixed << "lambad too large: " << lambda_ << endl;
             break;
         }
@@ -511,14 +511,14 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
 
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
     window_.push_back(kf);
-    if(window_.size() > kMaxKFnumInWindow) {
+    if(window_.size() > config->maxKFnumInWindow) {
         // margTwc_ = &window_.front()->Twc_;
         // MarginalizeOldestKeyFrame();
     }
 }
 
 void Optimizer::RemoveOldestKeyFrame() {
-    if(window_.size() <= kMaxKFnumInWindow) {
+    if(window_.size() <= config->maxKFnumInWindow) {
         return;
     }
     cout << "window size: " << window_.size() << " begin remove oldest" << endl;
@@ -547,13 +547,13 @@ void Optimizer::RemoveOldestKeyFrame() {
                 KeyFrame *kf = window_[j];
                 if(p->target_.count(kf)) {
                     const Eigen::Vector3d pc2 = kf->Tcw_ * pw;
-                    if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+                    if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
                         continue;
                     }
                     Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
                     const double pxError = (px2 - p->target_[kf]).norm();
                     // 像素误差过大，无法转移控制权
-                    if(pxError > kMaxTrackProjectError) {
+                    if(pxError > config->maxTrackProjectPixelError) {
                         continue;
                     }
                     
@@ -640,7 +640,7 @@ double Optimizer::CalculateResidual() {
             KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-            if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+            if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
                 continue;
             }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
@@ -649,7 +649,7 @@ double Optimizer::CalculateResidual() {
             }
 
             double r = BilinearInterpolate(target->dist_[0], px2);
-            if(r > kAbnormalResidual && firstCalculateResidual_) {
+            if(r > config->abnormalProjectResidual && firstCalculateResidual_) {
                 // 残差值异常，判定为离群点
                 continue;
             }
@@ -670,7 +670,7 @@ double Optimizer::CalculateResidual() {
 
 // TODO： 先不考虑边缘化，而是直接丢弃首帧
 void Optimizer::MarginalizeOldestKeyFrame() {
-    if(window_.size() <= kMaxKFnumInWindow) {
+    if(window_.size() <= config->maxKFnumInWindow) {
         return;
     }
     Hp_.resize(1, 1);
@@ -746,7 +746,11 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
     // | I          0 |   | A  B |   | A  B |
     // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
-    const Eigen::MatrixXd &A = H_.block(0, 0, margDim, margDim);
+    Eigen::MatrixXd A = H_.block(0, 0, margDim, margDim);
+    Eigen::VectorXd eps(margDim);
+    // To avoid A is all Zero，对角线的约束照例说也不应该为0
+    eps.setConstant(0);
+    A.diagonal() += eps;
     const Eigen::MatrixXd &B = H_.block(0, margDim, margDim, leftDim);
     const Eigen::MatrixXd &C = H_.block(margDim, 0, leftDim, margDim);
     const Eigen::MatrixXd &D = H_.block(margDim, margDim, leftDim, leftDim);
@@ -841,7 +845,7 @@ double Optimizer::ConstructJ_H_b_g() {
             KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-            if(pc2.z() < kMinDepth || pc2.z() > kMaxDepth) {
+            if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
                 ++depthErrorNum;
                 continue;
             }
@@ -1010,15 +1014,16 @@ bool Optimizer::SlidingWindowOptimize() {
 
 double Optimizer::HuberLoss(const double residual, double &J_huber_r) {
     double huberLoss = 0;
-    if(abs(residual) > kHuberDelta) {
+    const double huberDelta = config->huberDelta;
+    if(abs(residual) > huberDelta) {
         // r = δ*(|a|-δ)
-        huberLoss = kHuberDelta * (abs(residual) - 0.5 * kHuberDelta);
+        huberLoss = huberDelta * (abs(residual) - 0.5 * huberDelta);
         if(residual > 0) {
             // abs(residual) = residual
-            J_huber_r = 1 * kHuberDelta;
+            J_huber_r = 1 * huberDelta;
         } else {
             // abs(residual) = -residual
-            J_huber_r = -1 * kHuberDelta;
+            J_huber_r = -1 * huberDelta;
         }
     } else {
         // r = 0.5*a^2
@@ -1030,25 +1035,26 @@ double Optimizer::HuberLoss(const double residual, double &J_huber_r) {
 
 int Optimizer::ChooseOneKF2Marginalization() {
     // Keep the last 2 frame
-    if(window_.size() <= kMaxKFnumInWindow) {
+    if(window_.size() <= config->maxKFnumInWindow) {
         return 1000;
     }
     // 不考虑结构的情况下，移除掉与最新帧观测最少的
     // TODO: 有多帧小于可删除阈值时，考虑删除关键点分布较差的KF
-    vector<double> score(window_.size()-2, 0);
-    for(int i = 0; i < window_.size()-2; ++i) {
+    constexpr int keepLastKFnum = 3;
+    vector<double> score(window_.size() - keepLastKFnum, 0);
+    for(int i = 0; i < window_.size() - keepLastKFnum; ++i) {
         vector<Landmark*> &ps = window_[i]->landmark_;
         double convergeNum = 0;
         double seenByNewestNum = 0;
         for(Landmark *p : ps) {
-            if(p==nullptr || !p->Converge() || p->outOfRange_) {
+            if(p==nullptr || !p->Converge() || p->IsOutOfRange()) {
                 continue;
             }
             convergeNum += 1;
             const Eigen::Vector3d pc2 = window_.back()->Tcw_ * p->GetPw();
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
             if(InRange(window_.back()->dist_[0], px2.cast<int>()) && 
-                window_.back()->dist_[0].at<float>(px2.y(), px2.x()) < kGoodDescriptorDist) {
+                window_.back()->dist_[0].at<float>(px2.y(), px2.x()) < config->goodDescriptorDist) {
                 seenByNewestNum += 1;
             }
         }

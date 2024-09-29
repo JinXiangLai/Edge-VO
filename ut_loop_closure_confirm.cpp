@@ -17,39 +17,41 @@ using namespace cv;
 int main(int argc, char** argv){
 
     // 读取程序参数
-    string dataDir = "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i";
-    //string dataDir = "/home/laijinxiang/edge-slam/bdj3-record_data-i";
+    // 读取程序参数
+    string configFilePath = "../config.yaml";
 
     if (argc < 5){
-        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
+        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
         exit(-1);
     } else if(argc < 6) {
-        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index [data directory]" << endl;
-        cout << "Default dataDir: " << dataDir << endl;
+        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
+        cout << "Default config: " << configFilePath << endl;
     }  else {
-        dataDir = string (argv[5]);
+        configFilePath = string (argv[5]);
     }
+    
     const bool useInvZ = bool (stoi(argv[1]));
     const bool showImg = bool(stoi(argv[2]));
     const int firstImgIdx = int(stoi(argv[3]));
     const int loopClosureImgIdx = int(stoi(argv[4]));
+    Config _config(configFilePath);
+    config = &_config;
 
     // 读取外部数据
     vector<string> vstrImages;
     vector<double> vTimeStamps;
     // TODO:需要将轮速系转换为相机系，所以倒不如直接在ORBSLAM3下的框架进行开发呢！！！
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
-    LoadImages(dataDir, vstrImages, vTimeStamps);
-    LoadPriorOdom(dataDir, vPriorPose);
+    LoadImages(config->dataDir, vstrImages, vTimeStamps);
+    LoadPriorOdom(config->dataDir, vPriorPose);
     // 找到3张图像及对应的Pose
     vector<Mat> imgs;
     vector<Pose> vTwc;
-    WheelCameraCalib calib;
+    WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
     const int getImgNum = 30;
     FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum);
 
-    shared_ptr<Camera> cam = make_shared<Camera>(kImageScale);
-
+    shared_ptr<Camera> cam = make_shared<Camera>(config);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     // 初始化关键帧
     vector<KeyFrame*> kfs;

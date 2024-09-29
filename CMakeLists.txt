@@ -32,7 +32,6 @@ add_compile_options(-Werror=return-type)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV 4 REQUIRED)
 
-
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIR}
@@ -40,6 +39,7 @@ include_directories(
 )
 
 add_library(edge_slam SHARED
+    src/Config.cpp
     src/Camera.cpp
     src/WheelCameraCalib.cpp
     src/Pose.cpp
@@ -51,6 +51,22 @@ add_library(edge_slam SHARED
 target_link_libraries(edge_slam
     ${OpenCV_LIBS}
     ${EIGEN3_LIBS}
+    -lyaml-cpp
+)
+
+
+add_executable(edge_slam_main main_edge_slam.cpp)
+target_link_libraries(edge_slam_main
+    edge_slam
+    -lpthread
+    -lyaml-cpp
+)
+
+add_executable(ut unit_test.cpp)
+target_link_libraries(ut 
+    edge_slam
+    -lpthread
+    -lyaml-cpp
 )
 
 add_executable(main main_loop_closure_confirm.cpp)
@@ -61,16 +77,5 @@ target_link_libraries(main
 add_executable(ut_main ut_loop_closure_confirm.cpp)
 target_link_libraries(ut_main 
     edge_slam
-)
-
-add_executable(edge_slam_main main_edge_slam.cpp)
-target_link_libraries(edge_slam_main
-    edge_slam
-    -lpthread
-)
-
-add_executable(ut unit_test.cpp)
-target_link_libraries(ut 
-    edge_slam
-    -lpthread
+    -lyaml-cpp
 )
