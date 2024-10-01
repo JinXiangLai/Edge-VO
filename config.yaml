@@ -26,7 +26,7 @@ maxDepthConvergeStd: 0.5 # 深度收敛的标准差
 abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 5 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 5
+maxKFnumInWindow: 8
 imgTimeOffset: 0.06 # sec,时间同步误差
 needNewKFtrans: 0.5 # 选取新KF的条件
 needNewKFrot: 5 # deg
@@ -34,7 +34,7 @@ needNewKFMaxMatchEdgeRatio: 0.5 # 匹配边缘点数量小于该阈值时，需�
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
 maxIteration: 10 # LM算法迭代次数
 
-messageLevel: 0 # 0-debug, 1-info, 2-error
+messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
 
 minGoodTriangulateAngle: 1.5 # deg, 使用深度滤波时不在意视差

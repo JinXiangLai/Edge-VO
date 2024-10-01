@@ -296,7 +296,7 @@ bool Optimizer::ExecuteLMoptimize() {
     vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
     double lastCost = CalculateResidual();
     
-    //MarginalizeOldestKeyFrame();
+    MarginalizeOldestKeyFrame();
     // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
     // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
     // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
@@ -1303,7 +1303,8 @@ double Optimizer::ConstructJ_H_b_g_byMatch() {
 bool Optimizer::SlidingWindowOptimize() {
     cout << "Begin SlidingWindowOptimize!!!" << endl;
     if(!SetOptimizeVariables() ) {
-        return false;
+        cerr << "find landmark num: " << optLandmark_.size() << " <100 no optimization dump" << endl;
+        // return false;
     }
     int margKFid = SelectOneKF2Marginalization();
     cout << "margKFid: " << margKFid << endl;
