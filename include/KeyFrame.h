@@ -34,7 +34,9 @@ public:
         dy_.resize(level);
         unPx_.resize(level);
     }
-    ~KeyFrame() {std::cout << "delete keyframe: " << this << std::endl;}
+    ~KeyFrame() {
+        //std::cout << "delete keyframe: " << this << std::endl;
+    }
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
     void GenerateDTandDerivative();

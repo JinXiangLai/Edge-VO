@@ -42,6 +42,8 @@ public:
 
     double ConstructJ_H_b_g();
 
+    double ConstructJ_H_b_g_byMatch();
+
     KeyFrame* GetLastKF() {return window_.back();}
 
     bool ExecuteLMoptimize();
@@ -54,7 +56,17 @@ public:
 
     double HuberLoss(const double residual, double &J_huber_r);
 
-    int ChooseOneKF2Marginalization();
+    double HuberLoss(const Eigen::Vector2d &residual, Eigen::Matrix<double, 1, 2> &J_huber_r);
+
+    int SelectOneKF2Marginalization();
+
+    int SampleUsefulLandmark();
+
+    int TransferLandmarkOwnership();
+
+    void UpdatePriorConstraint(Eigen::VectorXd &delta_x) {
+        g_p_.noalias() += Hp_ * delta_x;
+    }
 
 private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
@@ -74,7 +86,6 @@ public:
     std::vector<Landmark*> optLandmark_; // 投影到最新帧能被观测到的才加入，以减小问题规模
     Eigen::MatrixXd J_, H_, Hp_; // J_的行维度无法预知
     Eigen::VectorXd g_, g_p_; // b_，残差的行维度一般是无法提前预知的
-    bool firstCalculateResidual_ = true; // TODO: Check bug
 };
 
 #endif

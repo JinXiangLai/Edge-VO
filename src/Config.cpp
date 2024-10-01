@@ -37,7 +37,7 @@ Config::Config(const std::string &yamlFilePath) {
 
     abnormalProjectResidual = f["abnormalProjectResidual"].as<double>();
     huberDelta = f["huberDelta"].as<double>();
-    minKFnumInWindow = f["minKFnumInWindow"].as<int>();
+    keepLastKFnumInWindow = f["keepLastKFnumInWindow"].as<int>();
     maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
     imgTimeOffset = f["imgTimeOffset"].as<double>();
     
@@ -45,6 +45,11 @@ Config::Config(const std::string &yamlFilePath) {
     needNewKFrot = f["needNewKFrot"].as<double>();
     needNewKFMaxMatchEdgeRatio = f["needNewKFMaxMatchEdgeRatio"].as<double>();
     filterPixelError = f["filterPixelError"].as<double>();
+
+    messageLevel = f["messageLevel"].as<int>();
+    maxIteration = f["maxIteration"].as<int>();
+    maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
+    fastTh = f["fastTh"].as<int>();
 }
 
 Config *config = nullptr;

@@ -12,6 +12,7 @@
 constexpr double kRad2Deg = 180/M_PI;
 constexpr double kDeg2Rad = M_PI/180;
 
+enum MessageLevel {Debug, Info, Error};
 
 class Config {
 public:
@@ -36,13 +37,24 @@ public:
     double maxDepthConvergeStd, maxDepthConvergeVariance;
     double abnormalProjectResidual;
     double huberDelta;
-    int minKFnumInWindow, maxKFnumInWindow;
+    int keepLastKFnumInWindow, maxKFnumInWindow;
     double imgTimeOffset;
     double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio;
     double filterPixelError;
+    int messageLevel;
+    int maxIteration;
+    int maxActiveLandmarkEachKF;
+    int fastTh;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次
+
+constexpr int FASTpoint[16][2] = {
+    {0, 3}, {1, 3}, {2, 2}, {3, 1},
+    {3, 0}, {3, -1}, {2, -2}, {1, -3},
+    {0, -3}, {-1, -3}, {-2, -2}, {-3, -1},
+    {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}
+};
 
 //#define CAR_NUM 18
 //#if CAR_NUM == 15

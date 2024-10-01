@@ -45,7 +45,12 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond &_q);
 std::ostream& operator<<(std::ostream &cout, const Pose& T);
 
 cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &kp1, 
-    const std::vector<Eigen::Vector2d> &kp2, const std::string &name = "matches", const int ratio = 1, const int jump = 10);
+    const std::vector<Eigen::Vector2d> &kp2, const std::string &name = "matches", 
+    const int ratio = 1, const int jump = 10);
+    
+int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track first kf matches");
+
+int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
 std::vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
 
@@ -95,4 +100,6 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
 
 void ShowPointCloud(const std::set<Landmark* > &ps);
+
+bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px);
 #endif

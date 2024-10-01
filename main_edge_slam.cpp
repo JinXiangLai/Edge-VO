@@ -89,7 +89,8 @@ int main(int argc, char** argv){
         
         // Step: 利用当前帧更新landmark depth，depth与host frame绑定
         const double recoverRatio = optimizer.window_.back()->UpdateDepth(*curKF);
-        cout << "recoverRatio: " << recoverRatio << endl;
+        if(config->messageLevel <= MessageLevel::Error)
+            cout << "recoverRatio: " << recoverRatio << endl;
         
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
@@ -107,10 +108,23 @@ int main(int argc, char** argv){
 
             optimizer.AddOneKeyFeame(curKF);
             optimizer.SlidingWindowOptimize();
+            
 
+            //const int edgeMatchNum = DrawMatch(optimizer.window_.front(), 
+            //    optimizer.window_.back(), "Cur track First matches");
+            //cout << "Cur track First matches: " << edgeMatchNum << endl;
+            
+            //const int winSize = optimizer.window_.size();
+            //const int edgeMatchNum2 = DrawMatch(optimizer.window_[winSize-2], 
+            //    optimizer.window_.back(), "Cur track Last matches");
+            //cout << "Cur track Last matches: " << edgeMatchNum2 << endl;
+
+
+            
             // ShowPointCloud(optimizer.window_.back()->landmark_);
         } else {
             delete curKF; // 释放非KF内存
+            usleep(100 * 1000);
         }
     }
 
@@ -158,8 +172,8 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     }
  
     // 创建一个球体
-    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 10, {255, 255, 255});
-    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 10, {0, 255, 255});
+    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 1, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 1, {0, 255, 255});
 
     window.showWidget("PointCloud", cloud);
     window.showWidget("S0", s0);
@@ -194,9 +208,9 @@ void Run(vector<KeyFrame*> *historicalKF) {
         }
         if(!ps.empty()) {
             ShowLocalMap(ps, vTwc);
-            cout << "show " << temp.size() << " KFs map points" << endl;;
+            cout << "show " << temp.size() << " KFs map points" << endl;
         } else {
-            // cout << "wait for local map..." << endl;
+            cerr << "wait for local map..." << endl;
         }
         usleep(100 * 1000);
     }

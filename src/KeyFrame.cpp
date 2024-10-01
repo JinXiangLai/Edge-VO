@@ -30,23 +30,49 @@ void KeyFrame::CannyEdgeDetect() {
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
     Canny(blurred, edgeImg_[0], lowerThreshold, upperThreshold, apertureSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-    cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
-              << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
+    
+    if(config->messageLevel == MessageLevel::Debug)
+        cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
+                << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
+
+    
+    //const string name("edgeImg");
+    //cv::namedWindow(name);
+    //cv::imshow(name, edgeImg_[0]);
+    //cv::waitKey(0);
+
 
     vector<Point2i> px;
     // 取出边缘像素点
-    for(int x = 0; x < edgeImg_[0].cols; ++x) {
-        for(int y = 0; y < edgeImg_[0].rows; ++y) {
-            if(edgeImg_[0].at<uchar>(y, x) == 255) {
+    //vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
+    vector<Eigen::Vector2i> xy;
+    constexpr int jump = 6;
+    //vector<Eigen::Vector2i> xy;
+    for(int x = jump; x < edgeImg_[0].cols-jump; ++x) {
+        for(int y = jump; y < edgeImg_[0].rows-jump; ++y) {
+            if(edgeImg_[0].at<uchar>(y, x) != 0) {
+                // 边缘像素进行膨胀
+                for(int i = 0; i < xy.size(); ++i) {
+                    Point2i pt{x+xy[i][0], y+xy[i][1]};
+                    if(edgeImg_[0].at<uchar>(pt) != 254) {
+                        edgeImg_[0].at<uchar>(pt) = 254;
+                        px.push_back(pt);
+                    }
+                }
                 px.push_back({x, y});
             }
         }
     }
 
+    //cv::imshow(" inflation", edgeImg_[0]);
+    //cv::waitKey(0);
+
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
     unPx_[0] = cam_->UndistortPoints(px); // 去畸变后的像素平面上的点
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
-    cout << "Undistort " << px.size() << "points spend " << chrono::duration<double>(t5 - t4).count() << "s" << endl;
+    if(config->messageLevel == MessageLevel::Debug)
+        cout << "Undistort " << px.size() << "points spend " 
+            << chrono::duration<double>(t5 - t4).count() << "s" << endl;
 
     edgeImg_[0] = Mat::ones(edgeImg_[0].rows, edgeImg_[0].cols, CV_8UC1) * 255;
     vector<Eigen::Vector2d>::iterator it = unPx_[0].begin();
@@ -76,6 +102,9 @@ void KeyFrame::CannyEdgeDetect() {
             it = unPx_[0].erase(it);
         }
     }
+
+    //cv::imshow(name+" used", edgeImg_[0]);
+    //cv::waitKey(0);
 }
 
 void KeyFrame::GenerateDTandDerivative() {
@@ -127,6 +156,12 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     double matchEdgeNum = 0;
     convergeEdgeNum_ = 0; // 重新统计当前KF的收敛边缘点集
 
+    const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
+    if(Tc1c2.t_wb_.norm() < 0.01) {
+        // 位移过小，不能进行更新
+        return 1;
+    }
+
     for(int i = 0; i < landmark_.size(); ++i) {
         if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
             continue;
@@ -150,7 +185,10 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }   
     }
     
-    cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum << " " << convergeEdgeNum_ << endl;
+    if(config->messageLevel <= MessageLevel::Error)
+        cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
+            << " " << convergeEdgeNum_ << endl;
+
     if(convergeEdgeNum_ < landmark_.size() * 0.2) {
         // 有效路标点数量过低，需要继续进行深度滤波
         return 1.;
@@ -161,7 +199,21 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
 int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
     // 给新的KF2预分配内存
     landmark_ = vector<Landmark*>(unPx_[0].size(), nullptr);
-    
+
+
+    auto Project2Edge = [this](const Eigen::Vector2i px) -> bool {
+        // 允许的像素偏差
+        const vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, 
+            {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
+        for(const Eigen::Vector2i &p : xy) {
+            Eigen::Vector2i px2 = px + p;
+            if(pointMapId_.count(px2) ) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     const int debugBin = 5;
     vector<vector<Eigen::Vector2d> > debugProj1(5), debugProj2(5);
     const int debugPart = edgeImg_[0].cols / 5; // 显示分区 
@@ -182,7 +234,7 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
         }
 
         const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
-        if(pointMapId_.count(px2) ) {
+        if(pointMapId_.count(px2) || Project2Edge(px2) ) {
             const int vecId = pointMapId_[px2];
             if(landmark_[vecId] != nullptr) {
                 // TODO: 选一个更好的，或者按照先来后到
@@ -211,7 +263,7 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
         // DrawMatch(kf1->edgeImg_[0], edgeImg_[0], debugProj1[i], debugProj2[i], 
         //     name, 1, 1);
     }
-    // cv::destroyAllWindows();
+    cv::destroyAllWindows();
     return reuseLandmarkNum;
 }
 

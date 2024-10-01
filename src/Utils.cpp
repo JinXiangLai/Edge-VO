@@ -158,7 +158,9 @@ ostream& operator<<(ostream &cout, const Pose& T){
 Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &kp1, const vector<Eigen::Vector2d> &kp2,
                 const string &name, const int ratio, const int jump) {
     if(kp1.empty() || kp2.empty()) {
-        cerr << "kp1 & kp2 size: " << kp1.size() << " & " << kp2.size() << endl;
+        cerr << "{"+name << "} Error!" << endl
+             << "kp1 & kp2 size: " << kp1.size() << " & " << kp2.size() << endl;
+        exit(-1);
     }
     Assert(kp1.size()==kp2.size() || kp1.size() == 1 || kp1.size() < kp2.size(), "match point size error!");
     Mat im(max(img1.rows, img2.rows), (img1.cols+img2.cols), CV_8UC3, cv::Scalar{0, 0, 0});
@@ -414,11 +416,18 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &k
 
 bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &landmark) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
-    auto SolutionInrange = [&landmark](const double pcZ) -> bool {
+    const Pose T12 = T21.Inverse();
+    auto SolutionInrange = [&landmark, &T12](const double pcZ) -> bool {
                                 // 进行深度滤波
+                                const Eigen::Vector3d v1 = landmark.cam_->InverseProject(landmark.uv_.cast<int>(), 
+                                   pcZ);
+                                const Eigen::Vector3d v2 = v1 - T12.t_wb_;
+                                const double ang = acos(v1.dot(v2)/v1.norm()/v2.norm()) * kRad2Deg;
                                 return pcZ >= landmark.depthRange_[0] && 
-                                    pcZ <= landmark.depthRange_[1] &&
-                                    pcZ > config->minDepth && pcZ < config->maxDepth;
+                                       pcZ <= landmark.depthRange_[1] &&
+                                       pcZ > config->minDepth && 
+                                       pcZ < config->maxDepth &&
+                                       ang > config->minGoodTriangulateAngle;
                             };
 
     const Eigen::Vector2d kp1 = landmark.uv_;
@@ -765,10 +774,76 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
 }
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
-    const Pose T12 = kf->Tcw_ * f->Twc_;
+    const Pose T12 = kf->priorTwc_.Inverse() * f->Twc_;
     return T12.t_wb_.norm() > config->needNewKFtrans 
         || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
 }
+
+bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px) {
+    const Point2i pt{px.x(), px.y()};
+    const int v = gray.at<uchar>(pt);
+
+    int maxNum = 0;
+    int minNum = 0;
+    for(int i = 0; i < 16; ++i) {
+        const Point2i pt2 {pt.x+FASTpoint[i][0], pt.y+FASTpoint[i][1]};
+        const int v2 = gray.at<uchar>(pt2);
+        const int diff = v - v2;
+        if(diff > config->fastTh) {
+            ++maxNum;
+        } else if(diff < config->fastTh) {
+            ++minNum;
+        }
+    }
+    return maxNum > 11 || minNum > 11;
+}
+
+int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name) {
+    if(kf1 == kf2) {
+        return 0;
+    }
+    std::vector<Eigen::Vector2d> px1, px2;
+
+    for(Landmark *p : kf1->landmark_) {
+        if(p->target_.count(kf2)) { 
+            // 说明还是将host也加入相互观测方便
+            px1.push_back(p->target_[kf1]);
+            px2.push_back(p->target_[kf2]);
+        }
+    }
+    if(px1.empty()) {
+        px1.push_back({0, 0});
+        px2.push_back({0, 0});
+    }
+    DrawMatch(kf1->edgeImg_[0], kf2->edgeImg_[0], px1, px2, name);
+    return px1.size();
+}
+
+int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
+    vector<Eigen::Vector2d> Px1, Px2;
+    shared_ptr<Camera> cam = kf2->cam_;
+    for(int i = 0; i < ps.size(); ++i) {
+        Landmark *p = ps[i];
+        KeyFrame *host = p->host_;
+        const Eigen::Vector3d pc1 = p->GetPc();
+        const Eigen::Vector3d pw = host->Twc_ * pc1;
+
+        const Eigen::Vector3d pc2 = kf2->Tcw_ * pw;
+        if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
+            continue;
+        }
+        const Eigen::Vector2d px2 = cam->Project2PixelPlane(pc2);
+        if(!InRange(kf2->dist_[0], px2.cast<int>()) ) {
+            continue;
+        }
+
+        Px1.push_back(p->uv_);
+        Px2.push_back(px2);
+    }
+    DrawMatch(ps[0]->host_->edgeImg_[0], kf2->edgeImg_[0], Px1, Px2, name);
+    return Px1.size();
+}
+
 
 void ShowPointCloud(const vector<Landmark*> &ps) {
     viz::Viz3d window("Point Cloud Viewer");
@@ -869,7 +944,7 @@ void ShowPointCloud(const vector<Landmark* > &ps1, const vector<Landmark* > &ps2
     // 创建点云对象
     viz::WCloud cloud1(points1, colors1);
     viz::WCloud cloud2(points2, colors2);
-    cloud2.setRenderingProperty(viz::RenderingProperties::POINT_SIZE, 5.);
+    cloud2.setRenderingProperty(viz::RenderingProperties::POINT_SIZE, 2.);
  
     // 显示点云
     window.showWidget("PointCloud1", cloud1);
