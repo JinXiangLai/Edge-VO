@@ -41,6 +41,8 @@ minGoodTriangulateAngle: 1.5 # deg, 使用深度滤波时不在意视差
 
 fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
 
+relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
+
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0
 minTranslation: 0.5 # m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]

@@ -50,6 +50,7 @@ Config::Config(const std::string &yamlFilePath) {
     maxIteration = f["maxIteration"].as<int>();
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
+    relativePoseConstraintWeight = f["relativePoseConstraintWeight"].as<double>();
 }
 
 Config *config = nullptr;

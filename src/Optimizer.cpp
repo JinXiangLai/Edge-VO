@@ -303,6 +303,11 @@ bool Optimizer::ExecuteLMoptimize() {
     RemoveOldestKeyFrame();
     //ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
 
+    // 丢失追踪，重新进行
+    if (optLandmark_.size() < 10) {
+        return false;
+    }
+
 
     double firstCost = lastCost;
     bool status = false;
@@ -848,6 +853,11 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     // | I          0 |   | A  B |   | A  B |
     // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
     Eigen::MatrixXd A = H_.block(0, 0, margDim, margDim);
+    if(A.diagonal().squaredNorm() < 1.) {
+        Hp_.resize(1, 1);
+        g_p_.resize(1, 1);
+        return;
+    }
     Eigen::VectorXd eps(margDim);
     // To avoid A is all Zero，对角线的约束照例说也不应该为0
     eps.setConstant(0);
@@ -1294,16 +1304,92 @@ double Optimizer::ConstructJ_H_b_g_byMatch() {
 
         }
     }
+
+    if(config->relativePoseConstraintWeight > 0.) {
+        Eigen::MatrixXd H;
+        Eigen::VectorXd g;
+        ConstructRelativePoseConstraint(H, g);
+        H_.block(0, 0, H.rows(), H.cols()) += H;
+        g_.middleRows(0, g.rows()) += g;
+    }
     cout << "usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: " << usefulNum << " " 
          << depthErrorNum << " " << targetErrorNum << " " << noInrangeNum << " " 
          << (depthErrorNum + targetErrorNum + noInrangeNum) << endl;
     return cost;
 }
 
+void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd &H, Eigen::VectorXd &g) {
+    if(config->relativePoseConstraintWeight <= 0.) {
+        return;
+    }
+    const int PoseDim = window_[0]->Twc_.Size();
+    const int resDim = 6;
+
+    H.resize(window_.size() * PoseDim, window_.size() * PoseDim);
+    g.resize(window_.size() * PoseDim);
+    H.setZero();
+    g.setZero();
+    const double w = config->relativePoseConstraintWeight;
+    for(int i = 1; i < window_.size(); ++i) {
+        KeyFrame *kf1 = window_[i-1];
+        KeyFrame *kf2 = window_[i];
+        const Pose pTwc1 = kf1->priorTwc_;
+        const Pose pTwc2 = kf2->priorTwc_;
+        const Pose pTc1c2 = pTwc1.Inverse() * pTwc2;
+        const Pose Tc1c2 = kf1->Twc_.Inverse() * kf2->Twc_;
+        const Eigen::Quaterniond deltaQ(pTc1c2.q_wb_.inverse() * Tc1c2.q_wb_);
+        Eigen::Matrix<double, 6, 1> r_R_P;
+        // 实际是 ΔR * Rwc1.inv * Rwc2
+        r_R_P.head(3) = LogSO3(deltaQ.toRotationMatrix());
+        // 实际是 ΔP - Rwc1.T*Pwc1 + Rwc1.T*Pwc2 
+        r_R_P.tail(3) = pTc1c2.t_wb_ - Tc1c2.t_wb_;
+
+        const int aj1 = (i-1) * PoseDim, aj2 = i * PoseDim;
+        Eigen::Matrix<double, 6, 6> A1, A2;
+        A1.setZero();
+        A2.setZero();
+
+        // 使用"BCH近似"之前，需要通过"伴随性质"将扰动量换到右边
+        // dLogSO3(ΔR*R1.T*R2) ---> 微分扰动
+        // = LogSO3(ΔR*exp(-ε1^)*R1.T*R2) ---> 使用伴随:
+        // = LogSO3(ΔR*R1.T*R2 * Exp(-R2.T*R1*ε1)) ---> Exp{小量}，使用BCH近似
+        // = [Jr(ΔR*R1.T*R2).inv * -R2.T*R1*ε1] + LogSo3(ΔR*R1.T*R2)
+        const Eigen::Matrix3d invJr = InverseRightJacobianSO3(r_R_P.head(3));
+        const Eigen::Vector3d dt = kf1->Twc_.t_wb_ - kf2->Twc_.t_wb_;
+        const Eigen::Matrix3d R1 = kf1->Twc_.q_wb_.toRotationMatrix();
+        const Eigen::Matrix3d R2 = kf2->Twc_.q_wb_.toRotationMatrix();
+        
+        // LogSO3(ΔR * Rwc1.inv * Rwc2) w.r.t Rwc1
+        A1.block(0, 0, 3, 3) = -invJr * R2.transpose() * R1;
+
+        // LogSO3(ΔR * Rwc1.inv * Rwc2) w.r.t Rwc2
+        A2.block(0, 0, 3, 3) = invJr;
+
+        // ΔP + Rwc1.T*(Pwc1 - Pwc2) w.r.t Rwc1
+        A1.block(3, 0, 3, 3) = skewSymmetric(R1.transpose() * dt);
+
+        // ΔP + Rwc1.T*(Pwc1 - Pwc2) w.r.t Rwc2
+
+        // ΔP + Rwc1.T*(Pwc1 - Pwc2) w.r.t Pwc1
+        A1.block(3, 3, 3, 3) = R1.transpose();
+
+        // ΔP + Rwc1.T*(Pwc1 -Pwc2) w.r.t Pwc2
+        A2.block(3, 3, 3, 3) = -R1.transpose();
+
+        H.block(aj1, aj1, 6, 6) += A1.transpose() * A1 * w;
+        H.block(aj1, aj2, 6, 6) += A1.transpose() * A2 * w;
+        H.block(aj2, aj2, 6, 6) += A2.transpose() * A2 * w;
+        H.block(aj2, aj1, 6, 6) += A2.transpose() * A1 * w;
+        g.middleRows(aj1, 6) -= A1.transpose() * r_R_P * w;
+        g.middleRows(aj2, 6) -= A2.transpose() * r_R_P * w;
+    }
+}
+
 bool Optimizer::SlidingWindowOptimize() {
     cout << "Begin SlidingWindowOptimize!!!" << endl;
     if(!SetOptimizeVariables() ) {
-        cerr << "find landmark num: " << optLandmark_.size() << " <100 no optimization dump" << endl;
+        cerr << "find landmark for optimization num: " << optLandmark_.size() 
+            << " too small " << endl;
         // return false;
     }
     int margKFid = SelectOneKF2Marginalization();
@@ -1382,7 +1468,7 @@ int Optimizer::SelectOneKF2Marginalization() {
         score[i] = seenByNewestNum / convergeNum;
     }
     double smallRatio = DBL_MAX;
-    int smallId = -1;
+    int smallId = 0;
     cout << "score: ";
     for(int i = 0; i < score.size(); ++i) {
         cout << score[i] << " ";

@@ -102,4 +102,9 @@ bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
 void ShowPointCloud(const std::set<Landmark* > &ps);
 
 bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px);
+
+Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R);
+
+Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d &v); // BCH近似使用
+
 #endif

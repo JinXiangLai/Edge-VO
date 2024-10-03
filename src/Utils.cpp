@@ -798,6 +798,36 @@ bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px) {
     return maxNum > 11 || minNum > 11;
 }
 
+Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R)
+{
+    const double tr = R(0,0)+R(1,1)+R(2,2);
+    Eigen::Vector3d w;
+    w << (R(2,1)-R(1,2))/2, (R(0,2)-R(2,0))/2, (R(1,0)-R(0,1))/2;
+    const double costheta = (tr-1.0)*0.5f;
+    if(costheta>1 || costheta<-1)
+        return w;
+    const double theta = acos(costheta);
+    const double s = sin(theta);
+    if(fabs(s)<1e-5)
+        return w;
+    else
+        return theta*w/s;
+}
+
+Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d &v)
+{
+    const double x = v[0], y = v[1], z = v[2];
+    const double d2 = x*x+y*y+z*z;
+    const double d = sqrt(d2);
+
+    Eigen::Matrix3d W;
+    W << 0.0, -z, y,z, 0.0, -x,-y,  x, 0.0;
+    if(d<1e-5)
+        return Eigen::Matrix3d::Identity();
+    else
+        return Eigen::Matrix3d::Identity() + W/2 + W*W*(1.0/d2 - (1.0+cos(d))/(2.0*d*sin(d)));
+}
+
 int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name) {
     if(kf1 == kf2) {
         return 0;

@@ -45,6 +45,7 @@ public:
     int maxIteration;
     int maxActiveLandmarkEachKF;
     int fastTh;
+    double relativePoseConstraintWeight;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

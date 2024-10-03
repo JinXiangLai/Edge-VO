@@ -79,3 +79,9 @@ target_link_libraries(ut_main
     edge_slam
     -lyaml-cpp
 )
+
+add_executable(orb varify_ORB_orienttaion_invariance.cpp)
+target_link_libraries(orb 
+    ${OpenCV_LIBS}
+    ${EIGEN3_LIBS}
+)
