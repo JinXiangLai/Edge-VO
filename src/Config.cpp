@@ -51,6 +51,15 @@ Config::Config(const std::string &yamlFilePath) {
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
     relativePoseConstraintWeight = f["relativePoseConstraintWeight"].as<double>();
+
+    model = f["Camera.model"].as<string>();
+    maxKeepEpilorMatchPointNum = f["maxKeepEpilorMatchPointNum"].as<int>();
+
+    useInvZ = f["useInvZ"].as<bool>();
+    showDebugImg = f["showDebugImg"].as<bool>();
+    firstImgIdx = f["firstImgIdx"].as<int>();
+    loopClosureImgIdx = f["loopClosureImgIdx"].as<int>();
+    fastNum = f["fastNum"].as<int>();
 }
 
 Config *config = nullptr;

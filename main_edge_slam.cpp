@@ -28,32 +28,45 @@ void Run(vector<KeyFrame*> *historicalKF);
 int main(int argc, char** argv){
 
     // 读取程序参数
-    string configFilePath = "../config.yaml";
+    //string configFilePath = "../config.yaml";
+    string configFilePath = "../tum_config.yaml";
 
-    if (argc < 5){
-        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
-        exit(-1);
-    } else if(argc < 6) {
-        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
-        cout << "Default config: " << configFilePath << endl;
-    }  else {
-        configFilePath = string (argv[5]);
+
+    if (argc < 2){
+        cerr << "[WARNING] Usage: ./main configFile[DEFAULT: " << configFilePath << "]" << endl;
+    } else {
+        configFilePath = string (argv[1]);
+        cerr << "[INFO] configFile: " << configFilePath << endl;
     }
     
-    const bool useInvZ = bool (stoi(argv[1]));
-    const bool showImg = bool(stoi(argv[2]));
-    const int firstImgIdx = int(stoi(argv[3]));
-    const int loopClosureImgIdx = int(stoi(argv[4]));
     Config _config(configFilePath);
     config = &_config;
+
+    const bool useInvZ = config->useInvZ;
+    const bool showImg = config->showDebugImg;
+    const int firstImgIdx = config->firstImgIdx;
+    const int loopClosureImgIdx = config->loopClosureImgIdx;
+
 
     // 读取外部数据
     vector<string> vstrImages;
     vector<double> vTimeStamps;
     // TODO:需要将轮速系转换为相机系，所以倒不如直接在ORBSLAM3下的框架进行开发呢！！！
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
-    LoadImages(config->dataDir, vstrImages, vTimeStamps);
+    if(config->model == "pinhole") {
+        LoadImages(config->dataDir, vstrImages, vTimeStamps, ".png");
+    } else {
+        LoadImages(config->dataDir, vstrImages, vTimeStamps);
+    }
     LoadPriorOdom(config->dataDir, vPriorPose);
+
+    for(int i = 1; i < vTimeStamps.size(); ++i) {
+        Assert(vTimeStamps[i]-vTimeStamps[i-1] > 0, "Check img timestamp error!!!");
+    }
+    for(int i = 1; i < vPriorPose.size(); ++i) {
+        Assert(vPriorPose[i][0] > vPriorPose[i-1][0], "Check odom timestamp error!!!");
+        cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
+    }
 
     WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
     shared_ptr<Camera> cam = make_shared<Camera>(config);
@@ -72,6 +85,8 @@ int main(int argc, char** argv){
         curKF->GenerateDTandDerivative();
         if(!initFrame) {
             initFrame = curKF;
+            // 首帧设置为单位矩阵
+            initFrame->SetTwc(Pose());
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             //viewerThread = new thread(Run, &optimizer.historicalKF_);
@@ -98,8 +113,20 @@ int main(int argc, char** argv){
         if(recoverRatio < config->needNewKFMaxMatchEdgeRatio 
             || NeedNewKF(optimizer.window_.back(), curKF) ) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-            const int reuseLandmarkNum = curKF->ReuseLandmark(optimizer.window_.back());
-            cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
+            //const int reuseLandmarkNum = curKF->ReuseLandmark(optimizer.window_.back());
+
+            vector<KeyFrame*> &win = optimizer.window_;
+            if(win.size() > 3) {
+                // debug查看上上帧的追踪效果
+                // 看起来不像是追踪不到上上帧，而是跟踪中断了，
+                // 追踪上上上帧时，出现较多的误匹配，这是由什么引起的？？
+                const int debugReuseLandmarkNum2 = curKF->TrackLandmarkByEpilorLine(*optimizer.window_[win.size()-3]);
+                cout << "debugReuseLandmarkNum2: " << debugReuseLandmarkNum2 << endl;
+            } else {
+                const int reuseLandmarkNum = curKF->TrackLandmarkByEpilorLine(*optimizer.window_.back());
+                cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
+            }
+
             // 同时未跟踪上landmark的边缘点生成新的landmark
             curKF->InitializeLandmark();
 
@@ -107,20 +134,26 @@ int main(int argc, char** argv){
             // optimizer.ShowLocalMap();
 
             optimizer.AddOneKeyFeame(curKF);
-            optimizer.SlidingWindowOptimize();
-            
+            //optimizer.SlidingWindowOptimize();
 
-            //const int edgeMatchNum = DrawMatch(optimizer.window_.front(), 
-            //    optimizer.window_.back(), "Cur track First matches");
-            //cout << "Cur track First matches: " << edgeMatchNum << endl;
-            
-            //const int winSize = optimizer.window_.size();
-            //const int edgeMatchNum2 = DrawMatch(optimizer.window_[winSize-2], 
-            //    optimizer.window_.back(), "Cur track Last matches");
-            //cout << "Cur track Last matches: " << edgeMatchNum2 << endl;
+            if(win.size() < 5) {
+                const int edgeMatchNum = DrawMatch(optimizer.window_.front(), 
+                optimizer.window_.back(), "Cur track First matches");
+                cout << "Cur track First matches: " << edgeMatchNum << endl;
+            } else {
+                const int edgeMatchNum2 = DrawMatch(optimizer.window_[win.size()-2], 
+                    optimizer.window_.back(), "Cur track Last 1 matches");
+                cout << "Cur track Last 1 matches: " << edgeMatchNum2 << endl;
+            }
+
+            if(win.size() > 3) {
+                const int edgeMatchNum2 = DrawMatch(optimizer.window_[win.size()-4], 
+                optimizer.window_.back(), "Cur track Last matches");
+                cout << "Cur track Last matches: " << edgeMatchNum2 << endl;
+            }
 
 
-            
+
             // ShowPointCloud(optimizer.window_.back()->landmark_);
         } else {
             delete curKF; // 释放非KF内存
@@ -168,16 +201,16 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
             }
         }
         // 显示坐标系
-        window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
+        //window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
     }
  
     // 创建一个球体
-    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 1, {255, 255, 255});
-    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 1, {0, 255, 255});
+    cv::viz::WSphere s0(startEndCameraPos[0], 0.01, 1, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], 0.01, 1, {0, 255, 255});
 
     window.showWidget("PointCloud", cloud);
-    window.showWidget("S0", s0);
-    window.showWidget("S1", s1);
+    //window.showWidget("S0", s0);
+    //window.showWidget("S1", s1);
 
     // 运行事件循环，使窗口响应用户输入
     // window.spinOnce(1);

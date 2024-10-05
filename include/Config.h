@@ -11,7 +11,7 @@
 
 constexpr double kRad2Deg = 180/M_PI;
 constexpr double kDeg2Rad = M_PI/180;
-
+constexpr int kDescriptorPatchSize = 9;
 enum MessageLevel {Debug, Info, Error};
 
 class Config {
@@ -46,6 +46,14 @@ public:
     int maxActiveLandmarkEachKF;
     int fastTh;
     double relativePoseConstraintWeight;
+    std::string model;
+    int maxKeepEpilorMatchPointNum = 3;
+
+    bool useInvZ;
+    bool showDebugImg;
+    int firstImgIdx;
+    int loopClosureImgIdx;
+    int fastNum;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

@@ -237,23 +237,37 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
     // c[0]*x + c[1]*y + c[2] = 0
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
-    auto Kp2Useful = [&kf2, &d1](const Eigen::Vector2i &p2, int &score) -> bool {
+    auto Kp2Useful = [&kf2, &d1](Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
-        const int x=p2[0], y=p2[1];
 
-        if(!InRange(edgeImg, p2) || (edgeImg.at<uchar>(y, x) != 0)) {
+        if(!InRange(edgeImg, p2) ) {
+            return false;
+        }
+        
+        int x=p2[0], y=p2[1];
+        bool isEdge = edgeImg.at<uchar>(y, x) == 0;
+        if(!isEdge) {
+            // 允许小的像素偏差
+            vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
+            for(const Eigen::Vector2i &dp : xy) {
+                Point2i p(x+dp.x(), y+dp.y());
+                if(edgeImg.at<uchar>(p) == 0) {
+                    isEdge = true;
+                    // 赋值边缘像素点
+                    p2.x() = p.x;
+                    p2.y() = p.y;
+                    break;
+                }
+            }
+        }
+        if(!isEdge) {
             return false;
         }
 
-        const int descId = kf2.pointMapId_.at({x, y});
+        const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
         const u_int64_t d2 = kf2.descriptor_[descId];
         score = CalculateDescriptorScore(d1, d2);
         return score < config->maxDescriptorDist;
-
-        // return (edgeImg.at<uchar>(y, x) == 0);
-        // return InRange(edgeImg, p) && (edgeImg.at<uchar>(y-1, x) != 255
-        //     || edgeImg.at<uchar>(y, x) != 255 || edgeImg.at<uchar>(y+1, x) != 255
-        //     || edgeImg.at<uchar>(y, x-1) != 255 || edgeImg.at<uchar>(y, x+1) != 255);
     };
 
     Eigen::Vector2i xRange, yRange;
@@ -274,7 +288,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         const int x = -c2/c0 + roundOff;
         cout << "epilor line col: " << x << endl;
         for(int y = minRow; y < maxRow; ++y) {
-            const Eigen::Vector2i px{x, y};
+            Eigen::Vector2i px{x, y};
             int score = INT_MAX;
             if(Kp2Useful(px, score) ) {
                 scoreKp2.push_back(make_pair(score, px));
@@ -284,7 +298,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         const int y = -c2/c1 + roundOff;
         cout << "epilor line row: " << y << endl;
         for(int x = minCol; x < maxCol; ++x) {
-            const Eigen::Vector2i px{x, y};
+            Eigen::Vector2i px{x, y};
             int score = INT_MAX;
             if(Kp2Useful(px, score) ) {
                 scoreKp2.push_back(make_pair(score, px));
@@ -295,7 +309,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
         const double a = -c0/c1, b = -c2/c1;
         for(int x = minCol; x < maxCol; ++x) {
             const int y = a*x + b + roundOff;
-            const Eigen::Vector2i px{x, y};
+            Eigen::Vector2i px{x, y};
             int score = INT_MAX;
             if(Kp2Useful(px, score) ) {
                 scoreKp2.push_back(make_pair(score, px));
@@ -305,7 +319,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
 
     sort(scoreKp2.begin(), scoreKp2.end(), [](const pair<int, Eigen::Vector2i> &p1, 
             const pair<int, Eigen::Vector2i> &p2) -> bool {return p1.first < p2.first;} );
-    for(int i = 0; i < 3 && i < scoreKp2.size(); ++i) {
+    for(int i = 0; i < config->maxKeepEpilorMatchPointNum && i < scoreKp2.size(); ++i) {
         kp2.emplace_back(scoreKp2[i].second.cast<double>());
     }
     return kp2;
@@ -466,14 +480,16 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
         return false;
     }
 
-    const double u1 = landmark.z_, cov1 = landmark.depthCov_;
-    // cout << "maxDepth, minDepth, depth size: " << maxDepth << " " << minDepth << " " << depth.size() << endl;
+    const double u1 = landmark.z_, cov1 = landmark.depthCov_; 
+    cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
+         << depth.size() << " " << cov1 << endl;
     // 信息融合，标准差一直减小
     landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
     landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
+    cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+         << " " << landmark.z_ << endl;
     landmark.UpdateUncertainty();
-    // cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
-    //     << " " << landmark.z_ << endl;
+
     
     static ofstream unf;
     static int num = 0;
@@ -527,9 +543,9 @@ void varifyTriangulate() {
     // 结论：在[3x3]邻域范围内，对三角化精度的影响尚可接受
 }
 
-size_t LoadImages(const string& strDirectory, vector<string>& vstrImages, vector<double>& vTimeStamps) {
+size_t LoadImages(const string& strDirectory, vector<string>& vstrImages, vector<double>& vTimeStamps,
+    const std::string &imgSuffix) {
     const string imageDirectory = strDirectory + "/image";
-    const string imgSuffix = ".jpg";
     const string imageTimestampFile = strDirectory + "/image_timestamp.csv";
     
     ifstream fImgTimestamp;
@@ -566,7 +582,7 @@ size_t LoadPriorOdom(const string &strDirectory, vector<Eigen::Matrix<double, 8,
 
     string input;
     while (getline(fOdom, input)) {
-        if (input.empty()) {
+        if (input.empty() || input[0] == '#') {
             continue;
         }
         stringstream ss(input);
@@ -675,24 +691,24 @@ void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vect
     Twc = InterpolatePose(vTimeStamps[idx] + config->imgTimeOffset);
 }
 
-//double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
-//    /****************
-//    * +---+---+---+
-//    * + 1 + 2 + 1 +
-//    * +---+---+---+
-//    * + 2 + 3 + 2 +
-//    * +---+---+---+
-//    * + 1 + 2 + 1 +
-//    * +---+---+---+
-//    *****************/
-//    constexpr double ratio = 1.0/15;
-//    const Eigen::Matrix<float, kDescriptorPatchSize, 1> d = (d1-d2).cwiseAbs();
-//    const double cost = d[0] + 2*d[1] + d[2] +
-//                        2*d[3] + 3*d[4] + 2*d[5] +
-//                        d[6] + 2*d[7] + d[8];
-//    // return (cost/15)/9;
-//    return cost * ratio;
-//}
+double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
+    /****************
+    * +---+---+---+
+    * + 1 + 2 + 1 +
+    * +---+---+---+
+    * + 2 + 3 + 2 +
+    * +---+---+---+
+    * + 1 + 2 + 1 +
+    * +---+---+---+
+    *****************/
+    constexpr double ratio = 1.0/15;
+    const Eigen::Matrix<float, kDescriptorPatchSize, 1> d = (d1-d2).cwiseAbs();
+    const double cost = d[0] + 2*d[1] + d[2] +
+                        2*d[3] + 3*d[4] + 2*d[5] +
+                        d[6] + 2*d[7] + d[8];
+    // return (cost/15)/9;
+    return cost * ratio;
+}
 
 uint64_t CalculateDescriptor(const Mat &grayImg, const Eigen::Vector2i &px) {
     // 返回descDim维描述子, [8x8]的范围内对角线位置的像素值比值
@@ -774,7 +790,7 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
 }
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
-    const Pose T12 = kf->priorTwc_.Inverse() * f->Twc_;
+    const Pose T12 = kf->priorTwc_.Inverse() * f->priorTwc_;
     return T12.t_wb_.norm() > config->needNewKFtrans 
         || Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
 }
@@ -791,11 +807,11 @@ bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px) {
         const int diff = v - v2;
         if(diff > config->fastTh) {
             ++maxNum;
-        } else if(diff < config->fastTh) {
+        } else if(diff < -config->fastTh) {
             ++minNum;
         }
     }
-    return maxNum > 11 || minNum > 11;
+    return maxNum > config->fastNum || minNum > config->fastNum;
 }
 
 Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R)
@@ -835,7 +851,7 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name) {
     std::vector<Eigen::Vector2d> px1, px2;
 
     for(Landmark *p : kf1->landmark_) {
-        if(p->target_.count(kf2)) { 
+        if(p != nullptr && p->target_.count(kf2)) { 
             // 说明还是将host也加入相互观测方便
             px1.push_back(p->target_[kf1]);
             px2.push_back(p->target_[kf2]);

@@ -35,36 +35,20 @@ void KeyFrame::CannyEdgeDetect() {
         cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
                 << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
 
-    
-    //const string name("edgeImg");
-    //cv::namedWindow(name);
-    //cv::imshow(name, edgeImg_[0]);
-    //cv::waitKey(0);
-
-
     vector<Point2i> px;
     // 取出边缘像素点
-    //vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
-    vector<Eigen::Vector2i> xy;
     constexpr int jump = 6;
-    //vector<Eigen::Vector2i> xy;
     for(int x = jump; x < edgeImg_[0].cols-jump; ++x) {
         for(int y = jump; y < edgeImg_[0].rows-jump; ++y) {
-            if(edgeImg_[0].at<uchar>(y, x) != 0) {
-                // 边缘像素进行膨胀
-                for(int i = 0; i < xy.size(); ++i) {
-                    Point2i pt{x+xy[i][0], y+xy[i][1]};
-                    if(edgeImg_[0].at<uchar>(pt) != 254) {
-                        edgeImg_[0].at<uchar>(pt) = 254;
-                        px.push_back(pt);
-                    }
+            if(edgeImg_[0].at<uchar>(y, x) == 255 && IsFastPoint(grayImg_, {x, y})) {
+                if(1 || IsFastPoint(grayImg_, {x, y})) {
+                    px.push_back({x, y});
                 }
-                px.push_back({x, y});
             }
         }
     }
 
-    //cv::imshow(" inflation", edgeImg_[0]);
+    //cv::imshow("distor", edgeImg_[0]);
     //cv::waitKey(0);
 
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
@@ -103,7 +87,7 @@ void KeyFrame::CannyEdgeDetect() {
         }
     }
 
-    //cv::imshow(name+" used", edgeImg_[0]);
+    //cv::imshow("undistor", edgeImg_[0]);
     //cv::waitKey(0);
 }
 
@@ -172,13 +156,12 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         const vector<Eigen::Vector2d> kp2 = pc1->FindMatches(kf2);
-        
         // 更新的是host帧下的深度
         const Pose T21 = kf2.Tcw_ * pc1->host_->Twc_;
         if(UpdateLandmarkDepth(kp2, T21, *cam_, *pc1) ) {
-            // cout << "depth range, depth, std: [" << pc1.depthRange_[0] << " " << pc1.depthRange_[1] << "] " << pc1.z_ 
-            //     << " " << pc1.uncertainty_ << endl;
-            // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {pc1.uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+             cout << "depth range, depth, std: [" << pc1->depthRange_[0] << " " << pc1->depthRange_[1] << "] "
+              << pc1->z_ << " " << pc1->uncertainty_ << endl;
+            //DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {pc1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
             if(pc1->Converge() ) {
                 matchEdgeNum += 1.0;
             }
@@ -194,6 +177,67 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         return 1.;
     }
     return matchEdgeNum / convergeEdgeNum_;
+}
+
+// 使用极线约束跟踪每一个边缘点
+int KeyFrame::TrackLandmarkByEpilorLine(const KeyFrame &kf1) {
+    int trackNum = 0;
+
+    const Pose Tc1c2 = kf1.priorTwc_.Inverse() * priorTwc_;
+    if(Tc1c2.t_wb_.norm() < 0.01) {
+        // 位移过小，不能进行更新
+        return 1;
+    }
+
+    const Pose T21 = Tcw_ * kf1.Twc_;
+
+    // 给新的KF2预分配内存
+    if(landmark_.empty()) {
+        landmark_ = vector<Landmark*>(unPx_[0].size(), nullptr);
+    }
+
+    int epipolarSearchNoneNum = 0; // debug参数
+    int depthOutofRangeNum = 0;
+
+    const vector<Landmark*> &landmark = kf1.landmark_;
+    for(int i = 0; i < landmark.size(); ++i) {
+        if(landmark[i] == nullptr || landmark[i]->IsOutOfRange()) {
+            // 未收敛的landmark也当作可追踪的，因其在未来可能收敛
+            continue;
+        }
+        Landmark *lp1 = landmark[i];
+        const vector<Eigen::Vector2d> kp2 = lp1->FindMatches(*this);
+        if(kp2.empty()) {
+            ++epipolarSearchNoneNum;
+            continue;
+        }
+
+        for(const Eigen::Vector2d &p : kp2) {
+            const Eigen::Vector3d pc1 = Triangulate(lp1->uv_, p, T21, *cam_);
+            if(pc1.z() >= lp1->depthRange_[0] && pc1.z() <= lp1->depthRange_[1]) {
+                const int vecId = pointMapId_[p.cast<int>()];
+                if(landmark_[vecId] != nullptr) {
+                    // TODO: 选一个更好的，或者按照先来后到
+                    break;
+                }
+                const uint64_t d2 = descriptor_[vecId];
+                const uint64_t d1 = lp1->descriptor_;
+                uint64_t score = CalculateDescriptorScore(d1, d2);
+                if(score < config->goodDescriptorDist) {
+                    // 增加相互观测
+                    landmark_[vecId] = lp1;
+                    lp1->target_.insert({this, p.cast<double>()});
+                    ++trackNum;
+
+                }
+            } else {
+                ++depthOutofRangeNum;
+            }
+        }
+    }
+    cout << "epipolarSearchNoneNum, depthOutofRangeNum, trackNum: " << epipolarSearchNoneNum
+         << " " << depthOutofRangeNum << " " << trackNum << endl;
+    return trackNum;
 }
 
 int KeyFrame::ReuseLandmark(KeyFrame *kf1) {

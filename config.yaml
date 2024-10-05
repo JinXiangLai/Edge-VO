@@ -3,6 +3,7 @@
 
 dataDir: "/home/laijinxiang/edge-slam/bdj3-record_data-i" # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 # Car 18
+Camera.model: "fisheye"
 Camera.intrinstic: [955.3379635, 961.527827, 955.415214, 541.135945] # fx cx fy cy
 Camera.distortion: [-0.026463, -0.018112, 0.016949, -0.007098] # k1 k2 k3 k4
 Qcg: [0.505820516001542, -0.4988584606367882, 0.5010022618843634, 0.4942495072630623] # qx qy qz qw
@@ -40,8 +41,16 @@ maxActiveLandmarkEachKF: 500
 minGoodTriangulateAngle: 1.5 # deg, 使用深度滤波时不在意视差
 
 fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
+fastNum: 9
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
+
+maxKeepEpilorMatchPointNum: 3 # 3 极线约束取最匹配的数量
+
+useInvZ: false
+showDebugImg: false
+firstImgIdx: 2650
+loopClosureImgIdx: -1
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0

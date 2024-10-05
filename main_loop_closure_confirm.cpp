@@ -20,22 +20,20 @@ int main(int argc, char** argv){
     // 读取程序参数
     string configFilePath = "../config.yaml";
 
-    if (argc < 5){
-        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
-        exit(-1);
-    } else if(argc < 6) {
-        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
-        cout << "Default config: " << configFilePath << endl;
-    }  else {
-        configFilePath = string (argv[5]);
+    if (argc < 2){
+        cerr << "[WARNING] Usage: ./main configFile[DEFAULT: " << configFilePath << "]" << endl;
+    } else {
+        configFilePath = string (argv[1]);
+        cerr << "[INFO] configFile: " << configFilePath << endl;
     }
-
-    const bool useInvZ = bool (stoi(argv[1]));
-    const bool showImg = bool(stoi(argv[2]));
-    const int firstImgIdx = int(stoi(argv[3]));
-    const int loopClosureImgIdx = int(stoi(argv[4]));
+    
     Config _config(configFilePath);
     config = &_config;
+
+    const bool useInvZ = config->useInvZ;
+    const bool showImg = config->showDebugImg;
+    const int firstImgIdx = config->firstImgIdx;
+    const int loopClosureImgIdx = config->loopClosureImgIdx;
 
 
     // 读取外部数据

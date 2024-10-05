@@ -49,6 +49,7 @@ public:
     bool IsOutOfRange() const {return outOfRange_;}
     void Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t);
     void SetTwc(const Pose &Twc);
+    int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
     cv::Mat grayImg_;
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;

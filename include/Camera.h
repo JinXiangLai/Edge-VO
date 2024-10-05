@@ -24,6 +24,7 @@ public:
     Eigen::Matrix3d K_inv_ = Eigen::Matrix3d::Identity();
     double fx_, fy_, cx_, cy_;
     double k1_, k2_, k3_, k4_;
+    double k5_; // 针对TUM数据集的针孔相机
     const double xStart_, yStart_, xStep_, yStep_, xEnd_, yEnd_; // 归一化平面上的显示范围
 };
 

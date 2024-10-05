@@ -69,7 +69,8 @@ void varifyTriangulate();
 
 std::vector<Eigen::Vector2d> CannyEdgeDetect(const cv::Mat &img, cv::Mat &edgeImg, const Camera &cam);
 
-size_t LoadImages(const std::string& strDirectory, std::vector<std::string>& vstrImages, std::vector<double>& vTimeStamps);
+size_t LoadImages(const std::string& strDirectory, std::vector<std::string>& vstrImages, 
+    std::vector<double>& vTimeStamps, const std::string &imgSuffix=".jpg");
 
 size_t LoadPriorOdom(const std::string &strDirectory, std::vector<Eigen::Matrix<double, 8, 1>> &vPriorPose);
 
@@ -81,7 +82,7 @@ void GetImageAndPose(const int idx, const std::vector<std::string> &vstrImages, 
     const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, 
     Pose &Twc);
 
-// double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
+double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
 
 uint64_t CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2i &px);
 
