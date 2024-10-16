@@ -1,7 +1,7 @@
 
 %YAML: 1.0
 
-dataDir: "/home/laijinxiang/edge-slam/bdj3-record_data-i" # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
+dataDir: "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i" # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # Car 18
 Camera.model: "fisheye"
 Camera.intrinstic: [955.3379635, 961.527827, 955.415214, 541.135945] # fx cx fy cy
@@ -23,7 +23,7 @@ maxDescriptorDist: 8 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
-maxDepthConvergeStd: 0.5 # 深度收敛的标准差
+maxDepthConvergeStd: 1000.5 # 深度收敛的标准差
 abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 5 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
@@ -31,9 +31,9 @@ maxKFnumInWindow: 8
 imgTimeOffset: 0.06 # sec,时间同步误差
 needNewKFtrans: 0.5 # 选取新KF的条件
 needNewKFrot: 5 # deg
-needNewKFMaxMatchEdgeRatio: 0.5 # 匹配边缘点数量小于该阈值时，需要选定新KF
+needNewKFMaxMatchEdgeRatio: 0.6 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
-maxIteration: 10 # LM算法迭代次数
+maxIteration: 100 # LM算法迭代次数
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
@@ -41,7 +41,7 @@ maxActiveLandmarkEachKF: 500
 minGoodTriangulateAngle: 1.5 # deg, 使用深度滤波时不在意视差
 
 fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
-fastNum: 9
+fastNum: 0
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
 
@@ -50,7 +50,7 @@ maxKeepEpilorMatchPointNum: 3 # 3 极线约束取最匹配的数量
 useInvZ: false
 showDebugImg: false
 firstImgIdx: 2650
-loopClosureImgIdx: -1
+loopClosureImgIdx: 2630
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0

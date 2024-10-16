@@ -70,10 +70,19 @@ public:
 
     void ConstructRelativePoseConstraint(Eigen::MatrixXd &H, Eigen::VectorXd &g);
 
+    bool UpdateCurrentFrame(KeyFrame *kf2);
+
+    double TransformDepthMap2CurrentFrame(KeyFrame *kf2);
+
+    void SetInitLambda(const double lambda) {
+        lambda_ = lambda;
+    }
+
 private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小
     double lambda_ = 1.0;
+    // 普通帧位姿优化使用
     std::vector<cv::Mat> dist_, dx_, dy_;
     int maxIte_ = 100;
     bool useInvDepth_ = false;
@@ -82,6 +91,7 @@ private:
 
 public:
     // edge slam使用
+    // 关键帧滑窗优化使用
     std::vector<KeyFrame*> window_;
     std::vector<KeyFrame*> historicalKF_;
     Pose *margTwc_ = nullptr;

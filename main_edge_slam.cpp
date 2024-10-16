@@ -14,15 +14,11 @@
 using namespace std;
 using namespace cv;
 
-// 利用极线约束去寻找anchor帧与普通帧的匹配以确定匹配特征点
-// 得到一个较为准确的深度初值，再与闭环帧执行BA优化
-// 结论，仅靠两帧生成的3D点存在很大的不确定性，而其为了剔除误匹配还是使用了描述子，
-// 描述子都难以区分误匹配点，估计光度残差更难些
-
-viz::Viz3d window("Local Map Viewer"); // 放在这里有问题
+viz::Viz3d window("Local Map Viewer"); 
 cv::Affine3d viewPose;
 
 void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc);
+void UpdatePointCloud(vector<KeyFrame*> *historicalKF);
 void Run(vector<KeyFrame*> *historicalKF);
 
 int main(int argc, char** argv){
@@ -65,7 +61,7 @@ int main(int argc, char** argv){
     }
     for(int i = 1; i < vPriorPose.size(); ++i) {
         Assert(vPriorPose[i][0] > vPriorPose[i-1][0], "Check odom timestamp error!!!");
-        cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
+        // cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
     }
 
     WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
@@ -76,6 +72,7 @@ int main(int argc, char** argv){
     KeyFrame *lastKF = nullptr;
     KeyFrame *curKF = nullptr;
     thread *viewerThread;
+    bool isInitialized = false;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         Mat img;
         Pose Twc;
@@ -103,29 +100,35 @@ int main(int argc, char** argv){
         curKF->SetTwc(optimizer.window_.back()->Twc_ * Tc1c2);
         
         // Step: 利用当前帧更新landmark depth，depth与host frame绑定
-        const double recoverRatio = optimizer.window_.back()->UpdateDepth(*curKF);
+        const double convergeEdgeRatio = optimizer.window_.back()->UpdateDepth(*curKF);
         if(config->messageLevel <= MessageLevel::Error)
-            cout << "recoverRatio: " << recoverRatio << endl;
+            cout << "convergeEdgeRatio: " << convergeEdgeRatio << endl;
+        
+        if(!isInitialized) {
+            if(convergeEdgeRatio > 0.8) {
+                // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
+                isInitialized = true;
+            } else {
+                continue;
+            }   
+        }
+
+        // 利用生成的深度图，对当前帧进行位姿图优化，优化当前帧pose，同时将深度图传递给它
+        // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
+        // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
+        optimizer.SetInitLambda(1e-4);
+        optimizer.UpdateCurrentFrame(curKF);
+        double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(curKF);
+        cout << "curKF depth map initialized depth ratio: " << initDepthRatio << endl;
+        // ShowPointCloud(curKF->landmark_);
+        // 当跟踪成功的点数量少于一定比例时，生成新的KF
         
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if(recoverRatio < config->needNewKFMaxMatchEdgeRatio 
+        if(initDepthRatio < config->needNewKFMaxMatchEdgeRatio
             || NeedNewKF(optimizer.window_.back(), curKF) ) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-            //const int reuseLandmarkNum = curKF->ReuseLandmark(optimizer.window_.back());
-
-            vector<KeyFrame*> &win = optimizer.window_;
-            if(win.size() > 3) {
-                // debug查看上上帧的追踪效果
-                // 看起来不像是追踪不到上上帧，而是跟踪中断了，
-                // 追踪上上上帧时，出现较多的误匹配，这是由什么引起的？？
-                const int debugReuseLandmarkNum2 = curKF->TrackLandmarkByEpilorLine(*optimizer.window_[win.size()-3]);
-                cout << "debugReuseLandmarkNum2: " << debugReuseLandmarkNum2 << endl;
-            } else {
-                const int reuseLandmarkNum = curKF->TrackLandmarkByEpilorLine(*optimizer.window_.back());
-                cout << "reuseLandmarkNum: " << reuseLandmarkNum << endl;
-            }
 
             // 同时未跟踪上landmark的边缘点生成新的landmark
             curKF->InitializeLandmark();
@@ -134,30 +137,14 @@ int main(int argc, char** argv){
             // optimizer.ShowLocalMap();
 
             optimizer.AddOneKeyFeame(curKF);
-            //optimizer.SlidingWindowOptimize();
-
-            if(win.size() < 5) {
-                const int edgeMatchNum = DrawMatch(optimizer.window_.front(), 
-                optimizer.window_.back(), "Cur track First matches");
-                cout << "Cur track First matches: " << edgeMatchNum << endl;
-            } else {
-                const int edgeMatchNum2 = DrawMatch(optimizer.window_[win.size()-2], 
-                    optimizer.window_.back(), "Cur track Last 1 matches");
-                cout << "Cur track Last 1 matches: " << edgeMatchNum2 << endl;
+            if(optimizer.window_.size() > 2) {
+                optimizer.SetInitLambda(1e-2);
+                optimizer.SlidingWindowOptimize();
             }
 
-            if(win.size() > 3) {
-                const int edgeMatchNum2 = DrawMatch(optimizer.window_[win.size()-4], 
-                optimizer.window_.back(), "Cur track Last matches");
-                cout << "Cur track Last matches: " << edgeMatchNum2 << endl;
-            }
-
-
-
-            // ShowPointCloud(optimizer.window_.back()->landmark_);
         } else {
             delete curKF; // 释放非KF内存
-            usleep(100 * 1000);
+            usleep(1 * 1000);
         }
     }
 
@@ -209,42 +196,51 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     cv::viz::WSphere s1(startEndCameraPos[1], 0.01, 1, {0, 255, 255});
 
     window.showWidget("PointCloud", cloud);
+    bool shutdownViz = false;
     //window.showWidget("S0", s0);
     //window.showWidget("S1", s1);
 
+    
+    window.registerKeyboardCallback(ShutdownViz, &shutdownViz);
     // 运行事件循环，使窗口响应用户输入
-    // window.spinOnce(1);
-    window.spin();
-    // window.close();
+    while (!shutdownViz) {
+        window.spinOnce(1000);
+    }
+    // window.spin();
+    window.removeAllWidgets();
+    window.close();
 
     // 保留现场
-     window.removeAllWidgets();
-    //window.removeWidget("PointCloud");
     // viewPose = window.getViewerPose();
 }
 
-void Run(vector<KeyFrame*> *historicalKF) {
-    while(1) {
-        set<Landmark*> ps;
-        vector<Pose> vTwc;
+void UpdatePointCloud(vector<KeyFrame*> *historicalKF) {
+    set<Landmark*> ps;
+    vector<Pose> vTwc;
 
-        vector<KeyFrame*> temp = *historicalKF;
-        for(int i = 0; i < temp.size(); ++i) {
-            // 新插入的最后一个KF未成熟
-            KeyFrame *kf = temp[i];
-            vTwc.push_back(kf->Twc_);
-            for(Landmark *p : kf->landmark_) {
-                if(p!=nullptr && !ps.count(p) && p->Converge()) {
-                    ps.insert(p);
-                }
+    vector<KeyFrame*> temp = *historicalKF;
+    for(int i = 0; i < temp.size(); ++i) {
+        // 新插入的最后一个KF未成熟
+        KeyFrame *kf = temp[i];
+        vTwc.push_back(kf->Twc_);
+        for(Landmark *p : kf->landmark_) {
+            if(p!=nullptr && !ps.count(p) && p->Converge()) {
+                ps.insert(p);
             }
         }
-        if(!ps.empty()) {
-            ShowLocalMap(ps, vTwc);
-            cout << "show " << temp.size() << " KFs map points" << endl;
-        } else {
-            cerr << "wait for local map..." << endl;
-        }
+    }
+    if(!ps.empty()) {
+        ShowLocalMap(ps, vTwc);
+        cout << "show " << temp.size() << " KFs map points" << endl;
+    } else {
+        cerr << "wait for local map..." << endl;
+    }
+}
+
+
+void Run(vector<KeyFrame*> *historicalKF) {
+    while(1) {
+        UpdatePointCloud(historicalKF);
         usleep(100 * 1000);
     }
 }

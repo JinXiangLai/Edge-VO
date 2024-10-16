@@ -12,7 +12,7 @@
 #include "Landmark.h"
 #include "Utils.h"
 
-// #define USE_DT_RESIDUAL // 测试优化算法是否有问题
+#define USE_DT_RESIDUAL // 测试优化算法是否有问题
 
 using namespace std;
 using namespace cv;
@@ -180,7 +180,7 @@ Eigen::MatrixXd Optimizer::CalculateJacobian(const vector<Landmark*> &pc1, const
             // A.setZero();
             Eigen::MatrixXd B = J_res_px2 * J_px2_Pc2 * J_Pc2_Pc1 * J_Pc1_z1;
 
-            const double w = 1.0 / p.depthCov_;
+            const double w = 1.0; // / p.depthCov_;
             J.block(ai, aj, resDim, A.cols()) = A;
             H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
             /******** -J.T * b的size为[J.cols() x 1]**************
@@ -295,8 +295,12 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
 bool Optimizer::ExecuteLMoptimize() {
     vector<Landmark*> debugAllConvergeLandmark = optLandmark_;
     double lastCost = CalculateResidual();
-    
+
+#ifndef USE_DT_RESIDUAL
     MarginalizeOldestKeyFrame();
+#else
+    // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+#endif
     // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
     // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
     // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
@@ -316,8 +320,11 @@ bool Optimizer::ExecuteLMoptimize() {
     chrono::steady_clock::time_point T1 = chrono::steady_clock::now();
     for(int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-        //const double cost = ConstructJ_H_b_g();
+#ifdef USE_DT_RESIDUAL
+        const double cost = ConstructJ_H_b_g();
+#else
         const double cost = ConstructJ_H_b_g_byMatch();
+#endif
 
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
         cout << "ConstructJ_H_b_g spend: " << chrono::duration<double>(t2 -t1).count() << " sec." << endl;
@@ -633,7 +640,7 @@ bool Optimizer::SetOptimizeVariables() {
 
     // 添加有效地图点进行优化
     set<Landmark*> ps;
-    // 最新帧不参与投影
+    // 最新帧作为量测帧来更新已有KF的深度
     for(int i = 0; i < window_.size() - 1; ++i) {
         KeyFrame *kf = window_[i];
         vector<Landmark*> &ld = kf->landmark_;
@@ -950,7 +957,8 @@ double Optimizer::ConstructJ_H_b_g() {
             }
             KeyFrame *target = tar.first;
 #else
-        if(!(p->target_.size()==1 && p->target_.count(window_.back())) ) {
+        if(host != window_.back() ) {
+            // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
             KeyFrame *target = window_.back();
 #endif
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
@@ -1394,9 +1402,14 @@ bool Optimizer::SlidingWindowOptimize() {
     }
     int margKFid = SelectOneKF2Marginalization();
     cout << "margKFid: " << margKFid << endl;
-    // 转移最老帧点的所有权，以便继续进行优化而非直接边缘化掉
+   
+#ifndef USE_DT_RESIDUAL
+     // 转移最老帧点的所有权，以便继续进行优化而非直接边缘化掉
+     // 只在跟踪特征点的情况下使用
     const int transformNum = TransferLandmarkOwnership();
     cout << "transformNum: " << transformNum << endl;
+#endif
+
     const int sampleNum = SampleUsefulLandmark();
     cout << "Sample landmark num: " << sampleNum << endl;
     return ExecuteLMoptimize();
@@ -1482,6 +1495,37 @@ int Optimizer::SelectOneKF2Marginalization() {
     window_[smallId] = window_[0];
     window_[0] = oldest;
     return smallId;
+}
+
+bool Optimizer::UpdateCurrentFrame(KeyFrame *kf2){
+    KeyFrame *ref = window_.back();
+    optLandmark_.clear();
+    for(int i = 0; i < ref->landmark_.size(); ++i) {
+        Landmark *kp = ref->landmark_[i];
+        if(kp!=nullptr && !kp->IsOutOfRange() && kp->Converge()) {
+            optLandmark_.push_back(kp);
+        }
+    }
+    dist_.clear();
+    dist_.push_back(kf2->dist_[0]);
+    dx_.clear();
+    dx_.push_back(kf2->dx_[0]);
+    dy_.clear();
+    dy_.push_back(kf2->dy_[0]);
+    Pose T12 = ref->Twc_.Inverse() * kf2->Twc_;
+    vector<Pose> optPose{T12};
+    Optimize(optLandmark_, optPose);
+    kf2->SetTwc(ref->Twc_ * optPose[0]);
+    return true;
+}
+
+
+double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame *kf2) {
+    double initializeDepthRatio = 0;
+    for(KeyFrame *kf1 : window_) {
+        initializeDepthRatio += ::TransformDepthMap2CurrentFrame(kf1, kf2, *cam_);
+    }
+    return initializeDepthRatio;
 }
 
 void Optimizer::ShowLocalMap() {

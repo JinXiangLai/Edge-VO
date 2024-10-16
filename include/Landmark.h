@@ -39,6 +39,8 @@ public:
     double depthRange_[2] = {0, 0};
     double uncertainty_ = 0;
     uint64_t descriptor_ = 0;
+    // TODO: 结合光度残差分布给定优化的权重值
+    int obvTime_ = 0; // 路标点被看的次数可以反映其可信度
 
 	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame *host_; // cnchor frame

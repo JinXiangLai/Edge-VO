@@ -108,4 +108,10 @@ Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R);
 
 Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d &v); // BCH近似使用
 
+void ShutdownViz(const cv::viz::KeyboardEvent &event, void *b);
+
+double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam);
+
+bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const double z);
+
 #endif

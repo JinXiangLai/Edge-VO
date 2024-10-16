@@ -150,19 +150,20 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
             continue;
         }
-        Landmark *pc1 = landmark_[i];
-        if(pc1->Converge()) {
+        Landmark *lk1 = landmark_[i];
+        if(lk1->Converge()) {
             convergeEdgeNum_ += 1;
         }
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
-        const vector<Eigen::Vector2d> kp2 = pc1->FindMatches(kf2);
+        const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
         // 更新的是host帧下的深度
-        const Pose T21 = kf2.Tcw_ * pc1->host_->Twc_;
-        if(UpdateLandmarkDepth(kp2, T21, *cam_, *pc1) ) {
-             cout << "depth range, depth, std: [" << pc1->depthRange_[0] << " " << pc1->depthRange_[1] << "] "
-              << pc1->z_ << " " << pc1->uncertainty_ << endl;
-            //DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {pc1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
-            if(pc1->Converge() ) {
+        const Pose T21 = kf2.Tcw_ * lk1->host_->Twc_;
+        if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1) ) {
+            // cout << "depth range, depth, std: [" << lk1->depthRange_[0] << " " << lk1->depthRange_[1] << "] "
+            //  << lk1->z_ << " " << lk1->uncertainty_ << endl;
+            //DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+            ++lk1->obvTime_; // 对于KF有用，因其会多次更新depth
+            if(lk1->Converge() ) {
                 matchEdgeNum += 1.0;
             }
         }   
@@ -174,9 +175,9 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
 
     if(convergeEdgeNum_ < landmark_.size() * 0.2) {
         // 有效路标点数量过低，需要继续进行深度滤波
-        return 1.;
+        return 0.;
     }
-    return matchEdgeNum / convergeEdgeNum_;
+    return double(convergeEdgeNum_) / landmark_.size();
 }
 
 // 使用极线约束跟踪每一个边缘点

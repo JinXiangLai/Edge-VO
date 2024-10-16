@@ -1,7 +1,7 @@
 
 %YAML: 1.0
 
-dataDir: "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg1_xyz"
+dataDir: /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg1_desk2 # "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg1_xyz"
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -48,7 +48,7 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 500
+firstImgIdx: 50
 loopClosureImgIdx: -1
 
 # 暂未启用项

@@ -428,21 +428,23 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &k
     return A.colPivHouseholderQr().solve(b);
 }
 
+bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const double z) {
+    // 进行深度滤波
+    const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_.cast<int>(), 
+        z);
+    const Eigen::Vector3d v2 = v1 - T12.t_wb_;
+    const double ang = acos(v1.dot(v2)/v1.norm()/v2.norm()) * kRad2Deg;
+    return z >= lk1.depthRange_[0] && 
+           z <= lk1.depthRange_[1] &&
+           ang > config->minGoodTriangulateAngle &&
+           ang < config->maxGoodTriangulateAngle &&
+           z > config->minDepth && 
+           z < config->maxDepth;
+}
+
 bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &landmark) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
     const Pose T12 = T21.Inverse();
-    auto SolutionInrange = [&landmark, &T12](const double pcZ) -> bool {
-                                // 进行深度滤波
-                                const Eigen::Vector3d v1 = landmark.cam_->InverseProject(landmark.uv_.cast<int>(), 
-                                   pcZ);
-                                const Eigen::Vector3d v2 = v1 - T12.t_wb_;
-                                const double ang = acos(v1.dot(v2)/v1.norm()/v2.norm()) * kRad2Deg;
-                                return pcZ >= landmark.depthRange_[0] && 
-                                       pcZ <= landmark.depthRange_[1] &&
-                                       pcZ > config->minDepth && 
-                                       pcZ < config->maxDepth &&
-                                       ang > config->minGoodTriangulateAngle;
-                            };
 
     const Eigen::Vector2d kp1 = landmark.uv_;
     vector<double> depth;
@@ -453,7 +455,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
     //    cout << pc1.z() << " ";
-        if(SolutionInrange(pc1.z()) ) {
+        if(CheckDepthQuality(landmark, T12, pc1.z()) ) {
             depth.push_back(pc1.z());
             if(pc1.z() < minDepth) {
                 minDepth = pc1.z();
@@ -481,13 +483,13 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     }
 
     const double u1 = landmark.z_, cov1 = landmark.depthCov_; 
-    cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
-         << depth.size() << " " << cov1 << endl;
+    //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
+    //     << depth.size() << " " << cov1 << endl;
     // 信息融合，标准差一直减小
     landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
     landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
-    cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
-         << " " << landmark.z_ << endl;
+    //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+    //     << " " << landmark.z_ << endl;
     landmark.UpdateUncertainty();
 
     
@@ -890,9 +892,52 @@ int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
     return Px1.size();
 }
 
+void ShutdownViz(const cv::viz::KeyboardEvent &event, void *_b) {
+    // 因为q or Q键是默认注册的按键，所以...
+    // 如果使用它们，反应有延迟
+    if (event.code == 'A' || event.code == 'a') {
+        bool *b = (bool*)_b;
+        *b = true;
+    }
+}
+
+double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam) {
+    Pose T21 = kf2->Twc_.Inverse() * kf1->Twc_;
+    Pose T12 = T21.Inverse();
+    int initNum = 0;
+    if(kf2->landmark_.empty()) {
+        kf2->InitializeLandmark();
+    }
+    for(int i = 0; i < kf1->landmark_.size(); ++i) {
+        Landmark *kp1 = kf1->landmark_[i];
+        if(kp1==nullptr || kp1->IsOutOfRange() || !kp1->Converge()) {
+            continue;
+        }
+
+        //  我们再次利用极线搜索来生成kf2的深度图
+        vector<Eigen::Vector2d> kp2s = kp1->FindMatches(*kf2);
+        for(Eigen::Vector2d &p2 : kp2s) {
+            // 在find match时我们就已保证p2点一定对应像素点
+            int id = kf2->pointMapId_.at({p2.x(), p2.y()});
+            Landmark *lk2 = kf2->landmark_[id];
+            
+            // 恢复当前kp2的深度，注意：是在kf2相机坐标系下的
+            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_, kp1->uv_, T12, cam);
+            // 进行深度值校验
+            if(CheckDepthQuality(*lk2, T21, pc2.z()) ) {
+                lk2->z_ = pc2.z();
+                // 这里我们初始化kp2的不确定度，它应该比较大
+                lk2->depthCov_ = kp1->depthCov_ * 4;
+                lk2->UpdateUncertainty();
+                ++initNum;
+            }
+        }
+    }
+    return double(initNum) / kf2->landmark_.size();
+}
 
 void ShowPointCloud(const vector<Landmark*> &ps) {
-    viz::Viz3d window("Point Cloud Viewer");
+    viz::Viz3d window("One Frame Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points;
@@ -900,7 +945,7 @@ void ShowPointCloud(const vector<Landmark*> &ps) {
 
     for(Landmark *_p : ps) {
         const Landmark &p = *_p;
-        if(!p.Converge()) {
+        if( _p == nullptr || !p.Converge()) {
             continue;
         }
         // const double depth = p.depthRange_[0]; // p.z_;//0.5 * (p.depthRange_[0] + p.depthRange_[1]);
