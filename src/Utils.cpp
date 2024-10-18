@@ -1086,18 +1086,31 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     window.spin();
 }
 
-void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
+void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc, KeyFrame *curkf) {
     viz::Viz3d window("Local Map Viewer"); 
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points;
-    
+
+    Mat curImg; 
+    if(curkf!=nullptr) {
+        cvtColor(curkf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
+    }
+
     for(Landmark *p : ps) {
         if(p == nullptr || !p->Converge()) {
             continue;
         }
         const Eigen::Vector3d pw = p->GetPw();
         points.push_back({pw.x(), pw.y(), pw.z()});
+        if(curkf!=nullptr) {
+            const Eigen::Vector3d pc2 = curkf->Tcw_ * pw;
+            const Eigen::Vector2i px2 = curkf->cam_->Project2PixelPlane(pc2).cast<int>();
+            if(InRange(curkf->grayImg_, px2)) {
+                //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
+                cv::circle(curImg, {px2.x(), px2.y()}, 2, {0, 0, 255});
+            }
+        }
     }
     vector<Vec3b> colors(points.size(), {0, 255, 0});
 
@@ -1128,6 +1141,12 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     // 创建一个球体
     cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 1, {255, 255, 255});
     cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 1, {0, 255, 255});
+
+    // 实时显示当前帧投影情况
+    if(curkf!=nullptr) {
+        // cv::viz::WImageOverlay img(curImg, );
+         window.showWidget("image", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, 960/2, 540/2)));
+    }
 
     window.showWidget("PointCloud", cloud);
     bool shutdownViz = false;

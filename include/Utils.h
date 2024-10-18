@@ -114,6 +114,6 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
 
 bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z);
 
-void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc);
+void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc, KeyFrame *curkf = nullptr);
 
 #endif

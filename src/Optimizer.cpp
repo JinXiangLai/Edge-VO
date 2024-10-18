@@ -1555,14 +1555,20 @@ void Optimizer::ShowLocalMap() {
         // 新插入的最后一个KF未成熟
         KeyFrame *kf = window_[i];
         vTwc.push_back(kf->Twc_);
-        for(Landmark *p : kf->landmark_) {
-            if(p!=nullptr && !ps.count(p) && p->Converge()) {
-                ps.insert(p);
-            }
+        // for(Landmark *p : kf->landmark_) {
+        //     if(p!=nullptr && !ps.count(p) && p->Converge()) {
+        //         ps.insert(p);
+        //     }
+        // }
+    }
+    for(Landmark *p : optLandmark_) {
+        if(p!=nullptr && !ps.count(p) && p->Converge()) {
+            ps.insert(p);
         }
     }
+    
     if(!ps.empty()) {
-        ::ShowLocalMap(ps, vTwc);
+        ::ShowLocalMap(ps, vTwc, window_.back());
         cout << "show " << window_.size() << " KFs map points" << endl;
     } else {
         cerr << "wait for local map..." << endl;

@@ -126,8 +126,7 @@ int main(int argc, char** argv){
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio
-            && NeedNewKF(win.back(), &curF)) || NeedNewKF(win.back(), &curF) ) {   
+        if(initDepthRatio < config->needNewKFMaxMatchEdgeRatio || NeedNewKF(win.back(), &curF) ) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
 
             // 同时未跟踪上landmark的边缘点生成新的landmark
