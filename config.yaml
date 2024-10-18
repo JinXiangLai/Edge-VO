@@ -23,7 +23,7 @@ maxDescriptorDist: 8 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
-maxDepthConvergeStd: 1000.5 # 深度收敛的标准差
+maxDepthConvergeStd: 0.5 # 深度收敛的标准差
 abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 5 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
@@ -33,7 +33,7 @@ needNewKFtrans: 0.5 # 选取新KF的条件
 needNewKFrot: 5 # deg
 needNewKFMaxMatchEdgeRatio: 0.6 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
-maxIteration: 100 # LM算法迭代次数
+maxIteration: 30 # LM算法迭代次数
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500

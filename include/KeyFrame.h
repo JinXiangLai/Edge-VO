@@ -37,6 +37,9 @@ public:
     ~KeyFrame() {
         //std::cout << "delete keyframe: " << this << std::endl;
     }
+    KeyFrame(){}
+    KeyFrame(const KeyFrame &f);
+
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
     void GenerateDTandDerivative();
@@ -50,6 +53,7 @@ public:
     void Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t);
     void SetTwc(const Pose &Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
+
     cv::Mat grayImg_;
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;
@@ -57,10 +61,10 @@ public:
     Pose Twc_;
     // TODO： 增加该字段，减小Inverse()次数
     Pose Tcw_;
-    const Pose priorTwc_;
+    Pose priorTwc_;
     int level_ = 1;
     std::vector<std::vector<Eigen::Vector2d> > unPx_; // 像素平面上的去畸变点
-    std::vector<Landmark* > landmark_;
+    std::vector<Landmark* > landmark_; // 成员变量内存在指针，需要手写拷贝构造函数
     // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
     std::vector<uint64_t> descriptor_; 
     static constexpr int descDim = 63;

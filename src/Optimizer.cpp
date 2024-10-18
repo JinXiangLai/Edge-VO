@@ -60,13 +60,10 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
             const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
             if(InRange(dist, px.cast<int>()) && pc1[j]->z_ > 0) {
                 // res[i*pc1.size()*resDim + j] = dist_.at<float>(px.y(), px.x());
-                const double r = BilinearInterpolate(dist, px);
-                // TODO: 增加异常值鲁棒核函数
-                if(r < config->abnormalProjectResidual) {
-                    res[i*pc1.size()*resDim + j] = r;
-                } else {
-                    res[i*pc1.size()*resDim + j] = 1;
-                }
+                double r = BilinearInterpolate(dist, px);
+                double J_huber_r = 0;
+                r = HuberLoss(r, J_huber_r);
+
                 cost += res[i*pc1.size()*resDim + j];
             } else {
                 ++noInrangeNum;
@@ -88,7 +85,6 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &pc1, const
     }
 
     cout << "residual noInrangeNum: " << noInrangeNum << endl;
-    cout << "true Cost: " << fixed << cost << endl;
     return res;
 }
 
@@ -300,6 +296,7 @@ bool Optimizer::ExecuteLMoptimize() {
     MarginalizeOldestKeyFrame();
 #else
     // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+    MarginalizeOldestKeyFrame();
 #endif
     // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
     // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
@@ -500,7 +497,7 @@ bool Optimizer::Optimize(vector<Landmark*> &_pc1, vector<Pose> &T12) {
 
         // 判断当前更新是否有效
         const double cost = CalculateResidual(pc1, T12).cwiseAbs().sum();
-        cout << fixed << "iterate " << i << " times, cost: " << lastCost << " &lambda: " << lambda_ << endl << endl;
+        cout << fixed << "iterate " << i << " times, lastCost | newCost: " << lastCost << " | " << cost << " &lambda: " << lambda_ << endl << endl;
 
         if(lastCost <= cost) {
             lambda_ *= 1.8;
@@ -628,6 +625,9 @@ void Optimizer::RemoveOldestKeyFrame() {
     // 所有观测到该帧的地图点要删除量测
     for(Landmark *p : oldest->landmark_) {
         p->target_.erase(oldest);
+        if(p->host_ == oldest) {
+            p->SetOutOfRange();
+        }
     }
     return;
 }
@@ -680,7 +680,7 @@ int Optimizer::SampleUsefulLandmark() {
         if(!(p->target_.size() == 1) ) {
             // 说明和其他帧有关联，可以构建残差
 #else
-        if(!(p->target_.size()==1 && p->target_.count(window_.back()))) {
+        if(1) {
             KeyFrame *target = window_.back();
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
@@ -703,10 +703,14 @@ int Optimizer::SampleUsefulLandmark() {
     }
 
     optLandmark_.clear();
+#ifndef USE_DT_RESIDUAL
     // 首帧的所有landmark由于要被边缘化，所以保留
     optLandmark_.insert(optLandmark_.end(), usefulLandmarkEachKF[0].begin(), usefulLandmarkEachKF[0].end());
     // 中间帧需要进行采样关键点，最新帧的不会添加landmark
     for(int i = 1; i < usefulLandmarkEachKF.size(); ++i) {
+#else
+    for(int i = 0; i < usefulLandmarkEachKF.size(); ++i) {
+#endif
         vector<Landmark*> &ps_i = usefulLandmarkEachKF[i];
         if(usefulLandmarkEachKF[i].size() < config->maxActiveLandmarkEachKF) {
             optLandmark_.insert(optLandmark_.end(), ps_i.begin(), ps_i.end());
@@ -765,7 +769,6 @@ double Optimizer::CalculateResidual() {
             cost += loss;
 #else
             double r = BilinearInterpolate(target->dist_[0], px2);
-
             //if(r > config->abnormalProjectResidual && firstCalculateResidual_) {
             //    // 残差值异常，判定为离群点，已经在采样过程判断了
             //    continue;
@@ -774,6 +777,7 @@ double Optimizer::CalculateResidual() {
             double J_huber_r = 0;
             r = HuberLoss(r, J_huber_r);
             cost += r;
+
 #endif
         }
     }
@@ -854,6 +858,7 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     const int poseDim = window_[0]->Twc_.Size();
     const int depthDim = 1;
     //const int margDim = poseDim + margLandmark.size() * depthDim;
+    // 这里我们直接将最老帧的landmark丢弃不用，只保留边缘化最老帧的信息
     const int margDim = poseDim;
     const int leftDim = H_.cols() - margDim;
     // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
@@ -1506,6 +1511,13 @@ bool Optimizer::UpdateCurrentFrame(KeyFrame *kf2){
             optLandmark_.push_back(kp);
         }
     }
+    const int maxOptNum = config->maxActiveLandmarkEachKF * 2;
+    if(optLandmark_.size() > maxOptNum) {
+        random_device rd;
+        shuffle(optLandmark_.begin(), optLandmark_.end(), mt19937(rd() ) );
+        optLandmark_.erase(optLandmark_.begin()+maxOptNum, optLandmark_.end());
+    }
+
     dist_.clear();
     dist_.push_back(kf2->dist_[0]);
     dx_.clear();
@@ -1515,33 +1527,44 @@ bool Optimizer::UpdateCurrentFrame(KeyFrame *kf2){
     Pose T12 = ref->Twc_.Inverse() * kf2->Twc_;
     vector<Pose> optPose{T12};
     Optimize(optLandmark_, optPose);
+    cout << "cur frame pose diff: " << T12.Inverse() * optPose[0] << endl;
     kf2->SetTwc(ref->Twc_ * optPose[0]);
     return true;
 }
 
 
 double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame *kf2) {
-    double initializeDepthRatio = 0;
     for(KeyFrame *kf1 : window_) {
-        initializeDepthRatio += ::TransformDepthMap2CurrentFrame(kf1, kf2, *cam_);
+        ::TransformDepthMap2CurrentFrame(kf1, kf2, *cam_);
     }
-    return initializeDepthRatio;
+
+    double convergeNum = 0;
+    for(Landmark *lk : kf2->landmark_) {
+        if(lk!=nullptr && lk->Converge()) {
+            convergeNum += 1;
+        }
+    }
+    return convergeNum / kf2->landmark_.size();
 }
 
 void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
+    vector<Pose> vTwc;
+
     for(int i = 0; i < window_.size(); ++i) {
         // 新插入的最后一个KF未成熟
         KeyFrame *kf = window_[i];
+        vTwc.push_back(kf->Twc_);
         for(Landmark *p : kf->landmark_) {
             if(p!=nullptr && !ps.count(p) && p->Converge()) {
                 ps.insert(p);
             }
         }
     }
-    if(ps.empty()) {
-        usleep(100 * 1000);
+    if(!ps.empty()) {
+        ::ShowLocalMap(ps, vTwc);
+        cout << "show " << window_.size() << " KFs map points" << endl;
     } else {
-        ShowPointCloud(ps);
+        cerr << "wait for local map..." << endl;
     }
 }

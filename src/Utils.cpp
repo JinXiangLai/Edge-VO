@@ -201,10 +201,10 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
     return im;
 }
 
-vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
-    const Eigen::Vector2d &kp1 = pc1.uv_;
+vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
+    const Eigen::Vector2d &kp1 = lk1.uv_;
     const Mat &edgeImg = kf2.edgeImg_[0];
-    const u_int64_t d1 = pc1.descriptor_;
+    const u_int64_t d1 = lk1.descriptor_;
 
     /******** 使用极线约束寻找匹配关键点 ********
     * R21 * s1 * Pc1_norm + t21 = s2 * Pc2_norm
@@ -271,7 +271,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, co
     };
 
     Eigen::Vector2i xRange, yRange;
-    GetProjectRange(pc1, T21, cam, xRange, yRange);
+    GetProjectRange(lk1, T21, cam, xRange, yRange);
     const int minCol = max(xRange[0], 0);
     const int maxCol = min(xRange[1], edgeImg.cols);
     const int minRow = max(yRange[0], 0);
@@ -428,25 +428,31 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &k
     return A.colPivHouseholderQr().solve(b);
 }
 
-bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const double z) {
-    // 进行深度滤波
+bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z) {
+    // case 1: 距离校验
+    if(z < lk1.depthRange_[0] || z > lk1.depthRange_[1]) {
+        return false;
+    }
+    // case 2: 进行视差角校验
     const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_.cast<int>(), 
         z);
     const Eigen::Vector3d v2 = v1 - T12.t_wb_;
     const double ang = acos(v1.dot(v2)/v1.norm()/v2.norm()) * kRad2Deg;
-    return z >= lk1.depthRange_[0] && 
-           z <= lk1.depthRange_[1] &&
-           ang > config->minGoodTriangulateAngle &&
-           ang < config->maxGoodTriangulateAngle &&
-           z > config->minDepth && 
-           z < config->maxDepth;
+    if(ang < config->minGoodTriangulateAngle || ang > config->maxGoodTriangulateAngle) {
+        return false;
+    }
+    // case 3: 进行重投影质量校验
+    const Eigen::Vector3d pc2 = T12.Inverse() * v1;
+    const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
+    const double projError = (p2-px2).norm();
+    return projError < max(3.0, 10.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
 }
 
-bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &landmark) {
+bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
     const Pose T12 = T21.Inverse();
 
-    const Eigen::Vector2d kp1 = landmark.uv_;
+    const Eigen::Vector2d kp1 = lk.uv_;
     vector<double> depth;
     // cout << "current triangulated depth: ";
     double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
@@ -455,7 +461,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
     //    cout << pc1.z() << " ";
-        if(CheckDepthQuality(landmark, T12, pc1.z()) ) {
+        if(CheckDepthQuality(lk, T12, p, pc1.z()) ) {
             depth.push_back(pc1.z());
             if(pc1.z() < minDepth) {
                 minDepth = pc1.z();
@@ -470,38 +476,43 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     // cout << endl;
 
     double u2 = -1, cov2 = -1;
+    constexpr double minCov = 0.01;
     if(depth.size() > 1) {
         // TODO: 这里应该如何更新呢？
         u2 = sumDepth / depth.size();
-        cov2 = pow(0.5 * (maxDepth - minDepth), 2);
+        cov2 = max(minCov, pow(0.5 * (maxDepth - minDepth), 2)) ;
+        // cout << "std-2 of [" << minDepth << ", " << maxDepth << "]: " << 0.5 * (maxDepth - minDepth) << endl;
     } else if(depth.size() == 1 ) {
         const double std = GetOnePixelUncertainty(T21.Inverse().t_wb_, 
-            cam.InverseProject(kp1.cast<int>(), depth[0]), cam.fx_);
-        u2 = depth[0], cov2 = pow(std, 2);
+            cam.InverseProject(kp1.cast<int>(), depth[0]), min(cam.fy_, cam.fx_) );
+        u2 = depth[0];
+        cov2 = max(minCov, pow(std, 2));
+        // cout << "std-1: " << std << endl;
     } else {
         return false;
     }
 
-    const double u1 = landmark.z_, cov1 = landmark.depthCov_; 
+    const double u1 = lk.z_, cov1 = lk.depthCov_; 
     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
     //     << depth.size() << " " << cov1 << endl;
     // 信息融合，标准差一直减小
-    landmark.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
-    landmark.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
+    lk.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
+    lk.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
     //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
     //     << " " << landmark.z_ << endl;
-    landmark.UpdateUncertainty();
+    lk.UpdateUncertainty();
 
     
     static ofstream unf;
-    static int num = 0;
-    if(!num) {
+    static bool first = 1;
+    if(first) {
         unf.open("depth_uncertainty.csv");
         unf.close();
+        first = false;
     }
     unf.open("depth_uncertainty.csv", ios::app);
-    unf << fixed << &landmark << " [" << landmark.depthRange_[0] << ", " << landmark.depthRange_[1] << "] std, depth: " 
-        << landmark.uncertainty_ << " " << landmark.z_ << endl;
+    unf << fixed << &lk << " [" << lk.depthRange_[0] << ", " << lk.depthRange_[1] << "] std, depth: " 
+        << lk.uncertainty_ << " " << lk.z_ << endl;
     unf.close();
     return true;
 }
@@ -909,25 +920,25 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
         kf2->InitializeLandmark();
     }
     for(int i = 0; i < kf1->landmark_.size(); ++i) {
-        Landmark *kp1 = kf1->landmark_[i];
-        if(kp1==nullptr || kp1->IsOutOfRange() || !kp1->Converge()) {
+        Landmark *lk1 = kf1->landmark_[i];
+        if(lk1==nullptr || lk1->IsOutOfRange() || !lk1->Converge()) {
             continue;
         }
 
         //  我们再次利用极线搜索来生成kf2的深度图
-        vector<Eigen::Vector2d> kp2s = kp1->FindMatches(*kf2);
+        vector<Eigen::Vector2d> kp2s = lk1->FindMatches(*kf2);
         for(Eigen::Vector2d &p2 : kp2s) {
             // 在find match时我们就已保证p2点一定对应像素点
             int id = kf2->pointMapId_.at({p2.x(), p2.y()});
             Landmark *lk2 = kf2->landmark_[id];
             
             // 恢复当前kp2的深度，注意：是在kf2相机坐标系下的
-            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_, kp1->uv_, T12, cam);
+            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_, lk1->uv_, T12, cam);
             // 进行深度值校验
-            if(CheckDepthQuality(*lk2, T21, pc2.z()) ) {
+            if(CheckDepthQuality(*lk2, T21, lk1->uv_, pc2.z()) ) {
                 lk2->z_ = pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->depthCov_ = kp1->depthCov_ * 4;
+                lk2->depthCov_ = lk1->depthCov_ * 4;
                 lk2->UpdateUncertainty();
                 ++initNum;
             }
@@ -1073,4 +1084,66 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     // 运行事件循环，使窗口响应用户输入
     // window.spinOnce(3000);
     window.spin();
+}
+
+void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
+    viz::Viz3d window("Local Map Viewer"); 
+    cv::Affine3d viewPose;
+    window.setViewerPose(viewPose);
+    vector<Point3d> points;
+    
+    for(Landmark *p : ps) {
+        if(p == nullptr || !p->Converge()) {
+            continue;
+        }
+        const Eigen::Vector3d pw = p->GetPw();
+        points.push_back({pw.x(), pw.y(), pw.z()});
+    }
+    vector<Vec3b> colors(points.size(), {0, 255, 0});
+
+    viz::WCloud cloud(points, colors);
+    // cloud.setColor(cv::viz::Color::green());
+    // cloud.setSize(5);
+
+    vector<Point3d> startEndCameraPos(2);
+    for(int i = 0; i < vTwc.size(); ++i) {
+        // Eigen默认列优先，这里先将其改为行优先以与Mat适配
+        Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Twc = vTwc[i].ToMatrix4d();
+        double *data = _Twc.data();
+        cv::Mat mat44(4, 4, CV_64F, data);
+        const cv::Affine3d Twc(mat44);
+        
+        if(i == 0 || i == vTwc.size()-1) {
+            const Eigen::Vector3d t = vTwc[i].t_wb_;
+            if(i == 0) {
+                startEndCameraPos[0] = {t.x(), t.y(), t.z()};
+            } else {
+                startEndCameraPos[1] = {t.x(), t.y(), t.z()};
+            }
+        }
+        // 显示坐标系
+        window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
+    }
+ 
+    // 创建一个球体
+    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 1, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 1, {0, 255, 255});
+
+    window.showWidget("PointCloud", cloud);
+    bool shutdownViz = false;
+    window.showWidget("S0", s0);
+    window.showWidget("S1", s1);
+
+    
+    window.registerKeyboardCallback(ShutdownViz, &shutdownViz);
+    // 运行事件循环，使窗口响应用户输入
+    while (!shutdownViz) {
+        window.spinOnce(1000);
+    }
+    // window.spin();
+    window.removeAllWidgets();
+    window.close();
+
+    // 保留现场
+    // viewPose = window.getViewerPose();
 }

@@ -52,7 +52,7 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track 
 
 int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
-std::vector<Eigen::Vector2d> FindMatches(const Landmark &pc1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
+std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
 
 std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const Eigen::Vector2d &kp1, const cv::Mat &edgeImg, 
     const Pose &T21, const Camera &cam);
@@ -61,7 +61,7 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp2, const Pose &T21, const C
 
 Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
 
-bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &landmark);
+bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk);
 
 Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d &rpy, const Eigen::Vector3d &t, const double deg2rad = kDeg2Rad);
 
@@ -112,6 +112,8 @@ void ShutdownViz(const cv::viz::KeyboardEvent &event, void *b);
 
 double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam);
 
-bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const double z);
+bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z);
+
+void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc);
 
 #endif

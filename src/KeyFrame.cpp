@@ -17,6 +17,32 @@ using namespace cv;
 
 class Landmark;
 
+KeyFrame::KeyFrame(const KeyFrame &f)
+    : grayImg_(f.grayImg_)
+    , edgeImg_(f.edgeImg_)
+    , dist_(f.dist_)
+    , dx_(f.dx_)
+    , dy_(f.dy_)
+    , cam_(f.cam_)
+    , Twc_(f.Twc_)
+    , Tcw_(f.Tcw_)
+    , priorTwc_(f.priorTwc_)
+    , level_(f.level_)
+    , unPx_(f.unPx_)
+    , descriptor_(f.descriptor_)
+    , pointMapId_(f.pointMapId_)
+    , outOfRange_(f.outOfRange_)
+    , convergeEdgeNum_(f.convergeEdgeNum_) {
+    landmark_.reserve(f.landmark_.size());
+    for(Landmark *lk : f.landmark_) {
+        landmark_.push_back(new Landmark(*lk));
+        // !!!Attention: 指针成员变量需要小心处理，因为如果其指向栈内存，由于栈内存会被系统回收，
+        // 因此可能产生意外情况
+        landmark_.back()->host_ = this;
+    }
+}
+
+
 void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     cv::Mat blurred;
