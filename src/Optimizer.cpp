@@ -305,8 +305,12 @@ bool Optimizer::ExecuteLMoptimize() {
     //ShowPointCloud(debugAllConvergeLandmark, optLandmark_, "All vs Opt");
 
     // 丢失追踪，重新进行
-    if (optLandmark_.size() < 10) {
+    if (optLandmark_.size() < 100) {
+        cerr << "optLandmark_ too small: " << optLandmark_.size() << endl;
         return false;
+    } else {
+        cerr << "before opt local map" << endl;
+        ShowLocalMap();
     }
 
 
@@ -426,6 +430,9 @@ bool Optimizer::ExecuteLMoptimize() {
     cout << "First cost | final cost | decrease ratio: " << firstCost << " | " << lastCost << " | "
          << (1. - lastCost/firstCost) * 100 << "%" << endl;
     cout << "Total Optimize spend " << spendTime << "s\n" << endl;
+
+    cerr << "after opt local map" << endl;
+    ShowLocalMap();
 
     return status;
 }
@@ -849,8 +856,11 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     cout << "total, marg, left landmars: " << optLandmark_.size() << " " << margLandmark.size() 
         << " " << (optLandmark_.size() - margLandmark.size()) << endl;
     // 这里可以实现将线性化点固定在Marginalization时刻
-    //ConstructJ_H_b_g();
+#ifndef USE_DT_RESIDUAL
     ConstructJ_H_b_g_byMatch();
+#else
+    ConstructJ_H_b_g();
+#endif
 
     //ShowPointCloud(sortMargOptLandmark, optLandmark_, "Marg left landmark");
 

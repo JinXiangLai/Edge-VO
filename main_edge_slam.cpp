@@ -15,6 +15,12 @@ using namespace std;
 using namespace cv;
 
 void Run(Optimizer *optimizer);
+char stepBystep = '0';
+void GetCharThread() {
+    while (1) {
+        cin >> stepBystep;
+    }
+} 
 
 int main(int argc, char** argv){
 
@@ -65,10 +71,15 @@ int main(int argc, char** argv){
     
     KeyFrame *initFrame = nullptr;
     KeyFrame lastF;
-    thread *viewerThread;
+    thread *viewerThread, *getChar;
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
+        if(stepBystep=='s' || stepBystep=='S') {
+            usleep(100 * 1000);
+            --i;
+            continue;
+        }
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
@@ -83,7 +94,8 @@ int main(int argc, char** argv){
             initFrame->SetTwc(Pose());
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
-            viewerThread = new thread(Run, &optimizer);
+            //viewerThread = new thread(Run, &optimizer);
+            //getChar = new thread(GetCharThread);
             continue; // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg"+to_string(i), showImg);
