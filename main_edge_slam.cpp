@@ -21,6 +21,7 @@ void GetCharThread() {
         cin >> stepBystep;
     }
 } 
+KeyFrame *visualCurF;
 
 int main(int argc, char** argv){
 
@@ -83,7 +84,11 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
+        //KeyFrame *temp = new KeyFrame (img, Twc, cam, 1);
+        //KeyFrame &curF = *temp;
         KeyFrame curF(img, Twc, cam, 1);
+        // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
+        visualCurF = &curF;
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
         if(!initFrame) {
@@ -94,7 +99,7 @@ int main(int argc, char** argv){
             initFrame->SetTwc(Pose());
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
-            //viewerThread = new thread(Run, &optimizer);
+            viewerThread = new thread(Run, &optimizer);
             //getChar = new thread(GetCharThread);
             continue; // 认为初始化完毕
         }
@@ -123,8 +128,10 @@ int main(int argc, char** argv){
         // 利用生成的深度图，对当前帧进行位姿图优化，优化当前帧pose，同时将深度图传递给它
         // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
         // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
-        optimizer.SetInitLambda(100.0);
-        // optimizer.UpdateCurrentFrame(curF);
+        optimizer.SetInitLambda(1e-3);
+        // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
+        // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
+        optimizer.UpdateCurrentFrame(&curF);
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
         
@@ -172,7 +179,12 @@ int main(int argc, char** argv){
 void Run(Optimizer *optimizer) {
     while(1) {
         // UpdatePointCloud(historicalKF);
-        optimizer->ShowLocalMap();
+        if(!optimizer->window_.empty()) {
+            optimizer->ShowLocalMap(optimizer->window_.back());
+            //optimizer->ShowLocalMap(visualCurF);
+        } else {
+            optimizer->ShowLocalMap(nullptr);
+        }
         usleep(100 * 1000);
     }
 }

@@ -39,17 +39,23 @@ Eigen::Vector3d Landmark::GetPw() const {
 int Landmark::Size() const {return 1;}
 
 void Landmark::Update(const double delta_z, const bool useInvDepth) {
+    double z = z_;
+    double invZ = invZ_;
     if(useInvDepth) {
-        invZ_ += delta_z;
-        z_ = 1/invZ_;
+        invZ += delta_z;
+        z = 1/invZ_;
     } else {
-        z_ += delta_z; 
-        invZ_ = 1/z_;
+        z += delta_z; 
+        invZ = 1/z_;
     }
 
-    // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
-    depthRange_[0] = max(config->minDepth, z_ - 2*uncertainty_);
-    depthRange_[1] = min(config->maxDepth, z_ + 2*uncertainty_);
+    if(z > depthRange_[0] && z < depthRange_[1]) {
+        z_ = z;
+        invZ_ = invZ;
+        // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
+        depthCov_ *= 0.9; 
+        UpdateUncertainty();
+    }
 }
 
 void Landmark::UpdateUncertainty() {

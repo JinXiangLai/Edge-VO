@@ -36,7 +36,7 @@ public:
 
     void RemoveOldestKeyFrame();
 
-    void ShowLocalMap();
+    void ShowLocalMap(KeyFrame *f);
 
     void AddOneKeyFeame(KeyFrame *kf);
 
@@ -86,7 +86,7 @@ private:
     std::vector<cv::Mat> dist_, dx_, dy_;
     int maxIte_ = 100;
     bool useInvDepth_ = false;
-    const bool onlyPoseUpdate_ = false; 
+    bool onlyPoseUpdate_ = false; 
     std::shared_ptr<Camera> cam_;
 
 public:
