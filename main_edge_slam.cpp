@@ -62,8 +62,8 @@ int main(int argc, char** argv){
         Assert(vTimeStamps[i]-vTimeStamps[i-1] > 0, "Check img timestamp error!!!");
     }
     for(int i = 1; i < vPriorPose.size(); ++i) {
-        Assert(vPriorPose[i][0] > vPriorPose[i-1][0], "Check odom timestamp error!!!");
-        // cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
+        //cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
+        Assert(vPriorPose[i][0] >= vPriorPose[i-1][0], "Check odom timestamp error!!!");
     }
 
     WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
@@ -84,9 +84,12 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
-        //KeyFrame *temp = new KeyFrame (img, Twc, cam, 1);
-        //KeyFrame &curF = *temp;
+#if 1
+        KeyFrame *temp = new KeyFrame (img, Twc, cam, 1);
+        KeyFrame &curF = *temp;
+#else
         KeyFrame curF(img, Twc, cam, 1);
+#endif
         // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
         visualCurF = &curF;
         curF.CannyEdgeDetect();
@@ -104,6 +107,10 @@ int main(int argc, char** argv){
             continue; // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg"+to_string(i), showImg);
+
+        //cv::imshow("cur f"+to_string(vTimeStamps[i]), curF.grayImg_);
+        //cv::waitKey(56);
+        //cv::destroyWindow("cur f"+to_string(vTimeStamps[i]));
         
         // 使用KF更新当前帧的pose
         const Pose Twc1 = win.back()->priorTwc_;
@@ -117,9 +124,10 @@ int main(int argc, char** argv){
             cout << "convergeEdgeRatio: " << convergeEdgeRatio << endl;
         
         if(!isInitialized) {
-            if(convergeEdgeRatio > 0.8) {
+            if(convergeEdgeRatio > 0.6) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
+                cout << "\n******\nInitialized!\n******\n";
             } else {
                 continue;
             }   
@@ -131,10 +139,11 @@ int main(int argc, char** argv){
         optimizer.SetInitLambda(1e-3);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        optimizer.UpdateCurrentFrame(&curF);
+        //optimizer.UpdateCurrentFrame(&curF);
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
         
+
         // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
         //     ShowPointCloud(curF.landmark_);
         //     // 只能赋值内容，不能赋值地址
@@ -153,14 +162,14 @@ int main(int argc, char** argv){
 
             // 可视化滑窗内点云
             // ShowPointCloud(curF.landmark_);
-            // optimizer.ShowLocalMap();
+            // optimizer.ShowLocalMap(nullptr);
 
 
             optimizer.AddOneKeyFeame(new KeyFrame(curF) );
 
             if(win.size() > 2) {
                 optimizer.SetInitLambda(1e-2);
-                optimizer.SlidingWindowOptimize();
+                //optimizer.SlidingWindowOptimize();
             }
 
         } else {
@@ -180,8 +189,9 @@ void Run(Optimizer *optimizer) {
     while(1) {
         // UpdatePointCloud(historicalKF);
         if(!optimizer->window_.empty()) {
-            optimizer->ShowLocalMap(optimizer->window_.back());
-            //optimizer->ShowLocalMap(visualCurF);
+            // optimizer->ShowLocalMap(optimizer->window_.back());
+            optimizer->ShowLocalMap(visualCurF);
+            cout << "optimizer.winsize: " << optimizer->window_.size() << endl;
         } else {
             optimizer->ShowLocalMap(nullptr);
         }

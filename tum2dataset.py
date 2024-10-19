@@ -3,7 +3,7 @@
 import os
 import shutil
 
-dataDir = "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg1_xyz"
+dataDir = "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg2_xyz"
 imgDir = dataDir + "/rgb"
 odomFile = dataDir + "/groundtruth.txt"
 
@@ -29,7 +29,7 @@ for root, dirs, files in os.walk(imgDir):
     for f in files:
         img = os.path.join(root, f)
         newImg = os.path.join(newImgDir, f)
-        #print(img)
+        print(img)
         if not os.path.exists(newImg):
             shutil.copy(img, newImg)
             sortTimestamp.append(float(f[:-4]))

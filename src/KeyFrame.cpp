@@ -67,9 +67,7 @@ void KeyFrame::CannyEdgeDetect() {
     for(int x = jump; x < edgeImg_[0].cols-jump; ++x) {
         for(int y = jump; y < edgeImg_[0].rows-jump; ++y) {
             if(edgeImg_[0].at<uchar>(y, x) == 255 && IsFastPoint(grayImg_, {x, y})) {
-                if(1 || IsFastPoint(grayImg_, {x, y})) {
-                    px.push_back({x, y});
-                }
+                px.push_back({x, y});
             }
         }
     }
@@ -169,7 +167,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
     if(Tc1c2.t_wb_.norm() < 0.01) {
         // 位移过小，不能进行更新
-        return 1;
+        return 0;
     }
 
     for(int i = 0; i < landmark_.size(); ++i) {

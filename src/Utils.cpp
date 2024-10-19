@@ -1115,6 +1115,7 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc, KeyFrame 
     vector<Vec3b> colors(points.size(), {0, 255, 0});
 
     viz::WCloud cloud(points, colors);
+    cout << "cloud.size: " << points.size() << endl;
     // cloud.setColor(cv::viz::Color::green());
     // cloud.setSize(5);
 
@@ -1135,12 +1136,13 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc, KeyFrame 
             }
         }
         // 显示坐标系
-        window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
+        //window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
     }
  
     // 创建一个球体
-    cv::viz::WSphere s0(startEndCameraPos[0], 0.1, 1, {255, 255, 255});
-    cv::viz::WSphere s1(startEndCameraPos[1], 0.1, 1, {0, 255, 255});
+    constexpr double radius = 0.01;
+    cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
 
     // 实时显示当前帧投影情况
     if(curkf!=nullptr) {
