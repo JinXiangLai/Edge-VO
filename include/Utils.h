@@ -108,12 +108,23 @@ Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R);
 
 Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d &v); // BCH近似使用
 
-void ShutdownViz(const cv::viz::KeyboardEvent &event, void *b);
+void VizInteraction(const cv::viz::KeyboardEvent &event, void *b);
 
 double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam);
 
 bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z);
 
-void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc, KeyFrame *curkf = nullptr);
+void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc);
 
+enum KeyboardEvent{Reset, StepByStep};
+
+class InteractionParam {
+public:
+    bool stepBystep = false;
+    KeyFrame *visualCurF = nullptr;
+    bool resetWindow = false;
+    cv::viz::Viz3d *window; // ("Local Map Viewer"); 
+    //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
+};
+extern InteractionParam *interaction;
 #endif

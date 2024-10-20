@@ -18,7 +18,8 @@ using namespace cv;
 class Landmark;
 
 KeyFrame::KeyFrame(const KeyFrame &f)
-    : grayImg_(f.grayImg_)
+    : id_(f.id_)
+    , grayImg_(f.grayImg_)
     , edgeImg_(f.edgeImg_)
     , dist_(f.dist_)
     , dx_(f.dx_)

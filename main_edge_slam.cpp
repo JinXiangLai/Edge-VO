@@ -15,13 +15,6 @@ using namespace std;
 using namespace cv;
 
 void Run(Optimizer *optimizer);
-char stepBystep = '0';
-void GetCharThread() {
-    while (1) {
-        cin >> stepBystep;
-    }
-} 
-KeyFrame *visualCurF;
 
 int main(int argc, char** argv){
 
@@ -39,6 +32,10 @@ int main(int argc, char** argv){
     
     Config _config(configFilePath);
     config = &_config;
+    InteractionParam _visualizeParam;
+    interaction = &_visualizeParam;
+    viz::Viz3d window("Local Map Viewer");
+    interaction->window = &window;
 
     const bool useInvZ = config->useInvZ;
     const bool showImg = config->showDebugImg;
@@ -72,11 +69,11 @@ int main(int argc, char** argv){
     
     KeyFrame *initFrame = nullptr;
     KeyFrame lastF;
-    thread *viewerThread, *getChar;
+    thread *viewerThread;
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
-        if(stepBystep=='s' || stepBystep=='S') {
+        if(interaction->stepBystep) {
             usleep(100 * 1000);
             --i;
             continue;
@@ -85,13 +82,13 @@ int main(int argc, char** argv){
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
 #if 1
-        KeyFrame *temp = new KeyFrame (img, Twc, cam, 1);
+        KeyFrame *temp = new KeyFrame (img, Twc, cam, i, 1);
         KeyFrame &curF = *temp;
 #else
-        KeyFrame curF(img, Twc, cam, 1);
+        KeyFrame curF(img, Twc, cam, i, 1);
 #endif
         // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
-        visualCurF = &curF;
+        interaction->visualCurF = &curF;
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
         if(!initFrame) {
@@ -103,7 +100,6 @@ int main(int argc, char** argv){
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             viewerThread = new thread(Run, &optimizer);
-            //getChar = new thread(GetCharThread);
             continue; // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg"+to_string(i), showImg);
@@ -189,12 +185,8 @@ void Run(Optimizer *optimizer) {
     while(1) {
         // UpdatePointCloud(historicalKF);
         if(!optimizer->window_.empty()) {
-            // optimizer->ShowLocalMap(optimizer->window_.back());
-            optimizer->ShowLocalMap(visualCurF);
-            cout << "optimizer.winsize: " << optimizer->window_.size() << endl;
-        } else {
-            optimizer->ShowLocalMap(nullptr);
+            optimizer->ShowLocalMap();
         }
-        usleep(100 * 1000);
+        usleep(10 * 1000);
     }
 }

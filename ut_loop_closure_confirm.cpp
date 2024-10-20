@@ -56,7 +56,7 @@ int main(int argc, char** argv){
     // 初始化关键帧
     vector<KeyFrame*> kfs;
     for(int i = 0; i < vTwc.size(); ++i) {
-        kfs.push_back(new KeyFrame(imgs[i], vTwc[i], cam, 1));
+        kfs.push_back(new KeyFrame(imgs[i], vTwc[i], cam, i, 1));
         kfs[i]->CannyEdgeDetect();
         kfs[i]->GenerateDTandDerivative();
         cout << "vTwc[" << i << "]: " << vTwc[i] << endl;

@@ -20,8 +20,9 @@ struct TupleHash {
 class KeyFrame {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    KeyFrame(const cv::Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int level = 1)
-    : grayImg_(img)
+    KeyFrame(const cv::Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int id, const int level = 1)
+    : id_(id)
+    , grayImg_(img)
     , cam_(cam)
     , Twc_ {Twc}
     , Tcw_(Twc.Inverse())
@@ -54,6 +55,7 @@ public:
     void SetTwc(const Pose &Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
 
+    unsigned int id_;
     cv::Mat grayImg_;
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;

@@ -36,7 +36,7 @@ public:
 
     void RemoveOldestKeyFrame();
 
-    void ShowLocalMap(KeyFrame *f);
+    void ShowLocalMap();
 
     void AddOneKeyFeame(KeyFrame *kf);
 

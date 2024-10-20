@@ -1586,7 +1586,7 @@ double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame *kf2) {
     return convergeNum / kf2->landmark_.size();
 }
 
-void Optimizer::ShowLocalMap(KeyFrame *f) {
+void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
     vector<Pose> vTwc;
 
@@ -1615,7 +1615,7 @@ void Optimizer::ShowLocalMap(KeyFrame *f) {
 #endif
 
     if(!ps.empty()) {
-        ::ShowLocalMap(ps, vTwc, f);
+        ::ShowLocalMap(ps, vTwc);
         cout << "show " << window_.size() << " KFs map points" << endl;
     } else {
         cerr << "wait for local map..." << endl;

@@ -8,6 +8,8 @@
 using namespace cv;
 using namespace std;
 
+InteractionParam *interaction = nullptr;
+
 Mat GetDistanceTransform(Mat img) {
     Mat res;
     // https://blog.csdn.net/kakiebu/article/details/82967085
@@ -903,12 +905,16 @@ int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
     return Px1.size();
 }
 
-void ShutdownViz(const cv::viz::KeyboardEvent &event, void *_b) {
+void VizInteraction(const cv::viz::KeyboardEvent &event, void *_b) {
     // 因为q or Q键是默认注册的按键，所以...
     // 如果使用它们，反应有延迟
     if (event.code == 'A' || event.code == 'a') {
-        bool *b = (bool*)_b;
-        *b = true;
+        interaction->resetWindow = true;
+        interaction->window->setViewerPose(cv::Affine3d::Identity());
+    } else if (event.code == 'S' || event.code == 's') {
+        interaction->stepBystep = true;
+    } else if (event.code == ' ') {
+        interaction->stepBystep = false;
     }
 }
 
@@ -1086,13 +1092,15 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     window.spin();
 }
 
-void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc, KeyFrame *curkf) {
-    viz::Viz3d window("Local Map Viewer"); 
-    cv::Affine3d viewPose;
-    window.setViewerPose(viewPose);
-    vector<Point3d> points;
+void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
+    viz::Viz3d &window = *interaction->window;
+    //cv::Affine3d &viewPose = *interaction->viewPose;
+    //window.setViewerPose(viewPose); // 使用默认的才是正确的
+    KeyFrame *curkf = interaction->visualCurF;
 
-    Mat curImg; 
+    vector<Point3d> points;
+    Mat curImg;
+    const unsigned int curId = curkf->id_;
     if(curkf!=nullptr) {
         cvtColor(curkf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
     }
@@ -1147,24 +1155,22 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc, KeyFrame 
     // 实时显示当前帧投影情况
     if(curkf!=nullptr) {
         // cv::viz::WImageOverlay img(curImg, );
-         window.showWidget("image", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, 960/2, 540/2)));
+        constexpr double ratio = 0.5;
+        const int w = curImg.cols * ratio, h = curImg.rows * ratio;
+        window.showWidget("image", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, w, h)));
     }
 
     window.showWidget("PointCloud", cloud);
-    bool shutdownViz = false;
     window.showWidget("S0", s0);
     window.showWidget("S1", s1);
 
-    
-    window.registerKeyboardCallback(ShutdownViz, &shutdownViz);
+    window.registerKeyboardCallback(VizInteraction);
     // 运行事件循环，使窗口响应用户输入
-    while (!shutdownViz) {
+    while (!interaction->resetWindow && curId == interaction->visualCurF->id_) {
         window.spinOnce(1000);
     }
     // window.spin();
+    interaction->resetWindow = false;
     window.removeAllWidgets();
-    window.close();
-
-    // 保留现场
-    // viewPose = window.getViewerPose();
+    //window.close();
 }
