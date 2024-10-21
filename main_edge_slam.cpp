@@ -115,12 +115,12 @@ int main(int argc, char** argv){
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
         
         // Step: 利用当前帧更新landmark depth，depth与host frame绑定
-        const double convergeEdgeRatio = win.back()->UpdateDepth(curF);
+        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
         if(config->messageLevel <= MessageLevel::Error)
-            cout << "convergeEdgeRatio: " << convergeEdgeRatio << endl;
+            cout << "kfConvergeEdgeRatio: " << kfConvergeEdgeRatio << endl;
         
         if(!isInitialized) {
-            if(convergeEdgeRatio > 0.6) {
+            if(kfConvergeEdgeRatio > 0.6) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
@@ -135,7 +135,7 @@ int main(int argc, char** argv){
         optimizer.SetInitLambda(1e-3);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        //optimizer.UpdateCurrentFrame(&curF);
+        // optimizer.UpdateCurrentFrame(&curF);
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
         
@@ -150,7 +150,7 @@ int main(int argc, char** argv){
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if(initDepthRatio < config->needNewKFMaxMatchEdgeRatio || NeedNewKF(win.back(), &curF) ) {   
+        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.5) || NeedNewKF(win.back(), &curF) ) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
 
             // 同时未跟踪上landmark的边缘点生成新的landmark
@@ -165,7 +165,7 @@ int main(int argc, char** argv){
 
             if(win.size() > 2) {
                 optimizer.SetInitLambda(1e-2);
-                //optimizer.SlidingWindowOptimize();
+                // optimizer.SlidingWindowOptimize();
             }
 
         } else {

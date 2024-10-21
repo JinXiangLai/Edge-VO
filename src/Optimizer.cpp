@@ -1590,7 +1590,9 @@ void Optimizer::ShowLocalMap() {
     set<Landmark*> ps;
     vector<Pose> vTwc;
 
-    for(int i = 0; i < window_.size(); ++i) {
+    const int maxKFid = window_.size() - 1;
+    const int minKFid = maxKFid - config->maxKFnumInWindow;
+    for(int i = maxKFid; i >= minKFid && i >= 0; --i) {
         // 新插入的最后一个KF未成熟
         KeyFrame *kf = window_[i];
         vTwc.push_back(kf->Twc_);
@@ -1603,7 +1605,7 @@ void Optimizer::ShowLocalMap() {
         }
     }
 #else
-    for(int i = 0; i < window_.size(); ++i) {
+    for(int i = maxKFid; i >= minKFid && i >= 0; --i) {
         // 新插入的最后一个KF未成熟
         KeyFrame *kf = window_[i];
          for(Landmark *p : kf->landmark_) {
@@ -1616,7 +1618,7 @@ void Optimizer::ShowLocalMap() {
 
     if(!ps.empty()) {
         ::ShowLocalMap(ps, vTwc);
-        cout << "show " << window_.size() << " KFs map points" << endl;
+        cout << "show " << vTwc.size() << " KFs map points" << endl;
     } else {
         cerr << "wait for local map..." << endl;
     }

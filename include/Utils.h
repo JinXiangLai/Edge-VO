@@ -114,6 +114,8 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
 
 bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z);
 
+double CalculatePatchSSD(const cv::Mat &im1, const cv::Mat &im2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2);
+
 void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc);
 
 enum KeyboardEvent{Reset, StepByStep};

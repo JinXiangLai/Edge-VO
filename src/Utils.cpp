@@ -239,7 +239,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
     // c[0]*x + c[1]*y + c[2] = 0
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
-    auto Kp2Useful = [&kf2, &d1](Eigen::Vector2i &p2, int &score) -> bool {
+    auto Kp2Useful = [&kf2, &d1, &lk1](Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
 
         if(!InRange(edgeImg, p2) ) {
@@ -266,9 +266,11 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
             return false;
         }
 
-        const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
-        const u_int64_t d2 = kf2.descriptor_[descId];
-        score = CalculateDescriptorScore(d1, d2);
+        // const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
+        // const u_int64_t d2 = kf2.descriptor_[descId];
+        // score = CalculateDescriptorScore(d1, d2);
+
+        score = CalculatePatchSSD(lk1.host_->grayImg_, kf2.grayImg_, lk1.uv_.cast<int>(), p2);
         return score < config->maxDescriptorDist;
     };
 
@@ -953,6 +955,18 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
     return double(initNum) / kf2->landmark_.size();
 }
 
+double CalculatePatchSSD(const Mat &im1, const Mat &im2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2) {
+    const int range = config->descriptorPatchLen/2;
+    const int x1 = px1.x(), y1 = px1.y(), x2 = px2.x(), y2 = px2.y();
+    double sum = 0;
+    for(int i = -range; i <= range; ++i) {
+        for(int j = -range; j <= range; ++j) {
+            sum += pow(im1.at<uchar>(y1+i, x1+j) - im2.at<uchar>(y2+i, x2+j), 2);
+        }
+    }
+    return sum;
+}
+
 void ShowPointCloud(const vector<Landmark*> &ps) {
     viz::Viz3d window("One Frame Point Cloud Viewer");
     cv::Affine3d viewPose;
@@ -1148,7 +1162,7 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     }
  
     // 创建一个球体
-    constexpr double radius = 0.01;
+    constexpr double radius = 0.001;
     cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
     cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
 

@@ -52,8 +52,8 @@ void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     const double imgScale = config->imageScale;
-    double lowerThreshold = max(40.0, 60 * imgScale); // 下限阈值
-    double upperThreshold = max(60.0, 90 * imgScale); // 上限阈值，越小提取边缘越多
+    double lowerThreshold = max(40.0, 40 * imgScale); // 下限阈值
+    double upperThreshold = max(60.0, 60 * imgScale); // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
     Canny(blurred, edgeImg_[0], lowerThreshold, upperThreshold, apertureSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
@@ -186,7 +186,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1) ) {
             // cout << "depth range, depth, std: [" << lk1->depthRange_[0] << " " << lk1->depthRange_[1] << "] "
             //  << lk1->z_ << " " << lk1->uncertainty_ << endl;
-            //DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+            // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
             ++lk1->obvTime_; // 对于KF有用，因其会多次更新depth
             if(lk1->Converge() ) {
                 matchEdgeNum += 1.0;
