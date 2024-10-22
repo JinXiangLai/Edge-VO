@@ -40,6 +40,7 @@ public:
     }
     KeyFrame(){}
     KeyFrame(const KeyFrame &f);
+    void operator =(const KeyFrame &f);
 
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
@@ -54,6 +55,7 @@ public:
     void Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t);
     void SetTwc(const Pose &Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
+    double CullingBadDepth(KeyFrame *kf2);
 
     unsigned int id_;
     cv::Mat grayImg_;

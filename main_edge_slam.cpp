@@ -72,6 +72,7 @@ int main(int argc, char** argv){
     thread *viewerThread;
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
+    double accDist = 0.;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         if(interaction->stepBystep) {
             usleep(100 * 1000);
@@ -81,16 +82,19 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
+        cout << "cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 #if 1
+        // TODO: 考虑内存泄漏问题
         KeyFrame *temp = new KeyFrame (img, Twc, cam, i, 1);
         KeyFrame &curF = *temp;
 #else
         KeyFrame curF(img, Twc, cam, i, 1);
 #endif
-        // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
-        interaction->visualCurF = &curF;
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
+        // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
+        interaction->visualCurF = &curF;
+
         if(!initFrame) {
             initFrame = new KeyFrame(curF);
             lastF = curF;
@@ -99,6 +103,7 @@ int main(int argc, char** argv){
             initFrame->SetTwc(Pose());
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
+            interaction->visualLastKF = win.back();
             viewerThread = new thread(Run, &optimizer);
             continue; // 认为初始化完毕
         }
@@ -114,63 +119,99 @@ int main(int argc, char** argv){
         const Pose Tc1c2 = Twc1.Inverse() * Twc2;
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
         
-        // Step: 利用当前帧更新landmark depth，depth与host frame绑定
-        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
-        if(config->messageLevel <= MessageLevel::Error)
-            cout << "kfConvergeEdgeRatio: " << kfConvergeEdgeRatio << endl;
-        
         if(!isInitialized) {
-            if(kfConvergeEdgeRatio > 0.6) {
+            // 初始化深度图
+            const double trans = (lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm();
+            accDist += trans;
+            lastF = curF;
+
+            const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+            if(config->messageLevel <= MessageLevel::Error)
+                cout << "kfConvergeEdgeRatio: " << kfConvergeEdgeRatio << endl;
+            if(kfConvergeEdgeRatio > 0.6 || (accDist > 1.0 && (curF.id_ - initFrame->id_ > 30) && kfConvergeEdgeRatio > 0.3) ) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
+                accDist = 0.;
                 cout << "\n******\nInitialized!\n******\n";
             } else {
                 continue;
             }   
         }
 
-        // 利用生成的深度图，对当前帧进行位姿图优化，优化当前帧pose，同时将深度图传递给它
-        // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
-        // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
+#if 0
+        // Step: 利用当前帧更新深度图
+        // step1: 优化当前帧pose
         optimizer.SetInitLambda(1e-3);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        // optimizer.UpdateCurrentFrame(&curF);
+        optimizer.UpdateCurrentFrame(&curF);
+        
+        // step2: 利用当前帧更新landmark depth，depth与host frame绑定
+        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+#else
+        // step1
+        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        // step2
+        optimizer.SetInitLambda(1e-3);
+        optimizer.UpdateCurrentFrame(&curF);
+#endif        
+        // step3: 将深度图传递给当前帧
+        // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
+        // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
         
-
+        const double trans = (lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm();
+        accDist += trans;
         // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
         //     ShowPointCloud(curF.landmark_);
         //     // 只能赋值内容，不能赋值地址
         //     lastF = curF;
         // }
+        lastF = curF;
         
         // 当跟踪成功的点数量少于一定比例且运动满足阈值时，生成新的KF
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.5) || NeedNewKF(win.back(), &curF) ) {   
+        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.5) || NeedNewKF(win.back(), &curF) 
+            || accDist > config->needNewKFtrans) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
+            if(curF.unPx_.size() < win.back()->unPx_.size() * 0.8) {
+                // TODO：显示线程会显示出异常的图像，需要检测并剔除异常图像
+                continue;
+            } else {
+                accDist = 0;
+            }
 
+#ifndef USE_DT_RESIDUAL      
             // 同时未跟踪上landmark的边缘点生成新的landmark
             curF.InitializeLandmark();
-
+#else
+            // nothing
+#endif
             // 可视化滑窗内点云
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
 
             optimizer.AddOneKeyFeame(new KeyFrame(curF) );
+            interaction->visualLastKF = win.back();
 
             if(win.size() > 2) {
                 optimizer.SetInitLambda(1e-2);
-                // optimizer.SlidingWindowOptimize();
+                optimizer.SlidingWindowOptimize();
             }
+            optimizer.CullingErrorLandmark();
 
         } else {
             // delete curF; // 释放非KF内存
-            usleep(1 * 1000);
+            usleep(10 * 1000);
+        }
+
+        while(interaction->stepBystep) {
+            // 当前循环跑完，不需要再修改i
+            usleep(100 * 1000);
         }
 
     }

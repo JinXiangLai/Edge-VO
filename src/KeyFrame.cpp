@@ -43,6 +43,11 @@ KeyFrame::KeyFrame(const KeyFrame &f)
     }
 }
 
+void KeyFrame::operator =(const KeyFrame &f) {
+    // 此时this还没构建完毕
+    new (this) KeyFrame(f);
+}
+
 
 void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
@@ -51,9 +56,8 @@ void KeyFrame::CannyEdgeDetect() {
     cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
-    const double imgScale = config->imageScale;
-    double lowerThreshold = max(40.0, 40 * imgScale); // 下限阈值
-    double upperThreshold = max(60.0, 60 * imgScale); // 上限阈值，越小提取边缘越多
+    const double lowerThreshold = config->cannyLowerTh; // 下限阈值
+    const double upperThreshold = config->cannyupperTh; // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
     Canny(blurred, edgeImg_[0], lowerThreshold, upperThreshold, apertureSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
@@ -345,4 +349,38 @@ void KeyFrame::Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &del
 void KeyFrame::SetTwc(const Pose &Twc) {
     Twc_ = Twc;
     Tcw_ = Twc.Inverse();
+}
+
+double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
+    int convergeNum = 0, badNum = 0;
+    const Pose T21 = kf2->Twc_.Inverse() * Twc_;
+    for(int i = 0; i < landmark_.size(); ++i) {
+        Landmark *lk1 = landmark_[i];
+        if(lk1==nullptr || lk1->IsOutOfRange() || !lk1->Converge() ) {
+            continue;
+        }
+
+        ++convergeNum;
+        const Eigen::Vector3d pc2 = T21 * lk1->GetPc();
+        const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
+        if(!InRange(kf2->grayImg_, px2)) {
+            // 投影点不在视野内是正常的
+            continue;
+        }
+        if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
+            lk1->SetOutOfRange();
+            ++badNum;
+            continue;
+        } 
+#ifdef USE_SSD
+        // 考虑到图像远近，似乎不能使用这个条件？
+        // if( CalculatePatchSSD(grayImg_, kf2->grayImg_, lk1->uv_.cast<int>(), px2) > config->maxSSDdist) {
+        //     lk1->SetOutOfRange();
+        //     ++badNum;
+        //     continue;  
+        // }
+#endif
+    }
+
+    return double(badNum) / convergeNum;
 }

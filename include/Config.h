@@ -30,7 +30,7 @@ public:
     double minTranslation;
     double minDepth, maxDepth;
     double minGoodTriangulateAngle, maxGoodTriangulateAngle;
-    double maxDescriptorDist;
+    double maxDescriptorDist, maxSSDdist;
     double goodDescriptorDistRatio, goodDescriptorDist;
     double nonMaximumSuppressionRatio;
     double maxTrackProjectPixelError;
@@ -54,6 +54,8 @@ public:
     int firstImgIdx;
     int loopClosureImgIdx;
     int fastNum;
+
+    double cannyLowerTh, cannyupperTh;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

@@ -60,6 +60,12 @@ Config::Config(const std::string &yamlFilePath) {
     firstImgIdx = f["firstImgIdx"].as<int>();
     loopClosureImgIdx = f["loopClosureImgIdx"].as<int>();
     fastNum = f["fastNum"].as<int>();
+    cannyLowerTh = f["cannyLowerTh"].as<double>();
+    cannyupperTh = f["cannyupperTh"].as<double>();
+
+
+    maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
+
 }
 
 Config *config = nullptr;

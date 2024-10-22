@@ -1571,6 +1571,19 @@ bool Optimizer::UpdateCurrentFrame(KeyFrame *kf2){
     return true;
 }
 
+void Optimizer::CullingErrorLandmark() {
+    // pose正确的前提下，如果是合理的深度，那么投影到当前帧的地图点必须要正常
+    // 首先按照id排序避免距离过远的KF进行重复投影
+    sort(window_.begin(), window_.end(), [](KeyFrame *a, KeyFrame *b) {return a->id_ < b->id_;});
+    
+    // 每个KF检查depth两次
+    const int checkNum = config->maxKFnumInWindow - 2; // 2;
+    for(int i = window_.size()-1 - checkNum; i < window_.size() - 1 && i >=0 ; ++i) {
+        const double badDepthRatio = window_[i]->CullingBadDepth(window_.back());
+        cout << i << " KF badDepthRatio: " << badDepthRatio << endl;
+    }
+}
+
 
 double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame *kf2) {
     for(KeyFrame *kf1 : window_) {
@@ -1609,7 +1622,7 @@ void Optimizer::ShowLocalMap() {
         // 新插入的最后一个KF未成熟
         KeyFrame *kf = window_[i];
          for(Landmark *p : kf->landmark_) {
-             if(p!=nullptr && !ps.count(p) && p->Converge()) {
+             if(p!=nullptr && !ps.count(p) && !p->IsOutOfRange() && p->Converge()) {
                  ps.insert(p);
              }
          }

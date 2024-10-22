@@ -19,6 +19,8 @@
 #include "Landmark.h"
 #include "KeyFrame.h"
 
+#define USE_SSD
+
 class KeyFrame;
 class Landmark;
 
@@ -124,6 +126,7 @@ class InteractionParam {
 public:
     bool stepBystep = false;
     KeyFrame *visualCurF = nullptr;
+    KeyFrame *visualLastKF = nullptr;
     bool resetWindow = false;
     cv::viz::Viz3d *window; // ("Local Map Viewer"); 
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场

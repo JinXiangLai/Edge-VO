@@ -206,7 +206,6 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
 vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
     const Eigen::Vector2d &kp1 = lk1.uv_;
     const Mat &edgeImg = kf2.edgeImg_[0];
-    const u_int64_t d1 = lk1.descriptor_;
 
     /******** 使用极线约束寻找匹配关键点 ********
     * R21 * s1 * Pc1_norm + t21 = s2 * Pc2_norm
@@ -239,7 +238,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
     // c[0]*x + c[1]*y + c[2] = 0
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
-    auto Kp2Useful = [&kf2, &d1, &lk1](Eigen::Vector2i &p2, int &score) -> bool {
+    auto Kp2Useful = [&kf2, &lk1](Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
 
         if(!InRange(edgeImg, p2) ) {
@@ -266,12 +265,16 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
             return false;
         }
 
-        // const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
-        // const u_int64_t d2 = kf2.descriptor_[descId];
-        // score = CalculateDescriptorScore(d1, d2);
-
-        score = CalculatePatchSSD(lk1.host_->grayImg_, kf2.grayImg_, lk1.uv_.cast<int>(), p2);
+#ifndef USE_SSD
+        const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
+        const u_int64_t d2 = kf2.descriptor_[descId];
+        score = CalculateDescriptorScore(lk1.descriptor_, d2);
         return score < config->maxDescriptorDist;
+#else
+        score = CalculatePatchSSD(lk1.host_->grayImg_, kf2.grayImg_, lk1.uv_.cast<int>(), p2);
+        return score < config->maxSSDdist;
+#endif
+
     };
 
     Eigen::Vector2i xRange, yRange;
@@ -910,13 +913,18 @@ int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
 void VizInteraction(const cv::viz::KeyboardEvent &event, void *_b) {
     // 因为q or Q键是默认注册的按键，所以...
     // 如果使用它们，反应有延迟
-    if (event.code == 'A' || event.code == 'a') {
+    if ( event.action == viz::KeyboardEvent::KEY_DOWN
+        && (event.code == 'A' || event.code == 'a') ) {
         interaction->resetWindow = true;
         interaction->window->setViewerPose(cv::Affine3d::Identity());
-    } else if (event.code == 'S' || event.code == 's') {
-        interaction->stepBystep = true;
-    } else if (event.code == ' ') {
-        interaction->stepBystep = false;
+
+    } else if (event.action == viz::KeyboardEvent::KEY_DOWN
+        && (event.code == 'S' || event.code == 's' || event.code == ' ') ) {
+
+        cout << "before interaction->stepBystep: " << interaction->stepBystep << endl;
+        interaction->stepBystep = !interaction->stepBystep;
+        cout << "after interaction->stepBystep: " << interaction->stepBystep << endl;
+
     }
 }
 
@@ -944,6 +952,14 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             const Eigen::Vector3d pc2 = Triangulate(lk2->uv_, lk1->uv_, T12, cam);
             // 进行深度值校验
             if(CheckDepthQuality(*lk2, T21, lk1->uv_, pc2.z()) ) {
+
+#ifdef USE_SSD
+                if( CalculatePatchSSD(lk2->host_->grayImg_, lk1->host_->grayImg_, lk2->uv_.cast<int>(), lk1->uv_.cast<int>()) >
+                    config->maxSSDdist * config->goodDescriptorDistRatio) {
+                    continue;
+                }
+#endif
+
                 lk2->z_ = pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
                 lk2->depthCov_ = lk1->depthCov_ * 4;
@@ -1110,27 +1126,40 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     viz::Viz3d &window = *interaction->window;
     //cv::Affine3d &viewPose = *interaction->viewPose;
     //window.setViewerPose(viewPose); // 使用默认的才是正确的
-    KeyFrame *curkf = interaction->visualCurF;
-
-    vector<Point3d> points;
-    Mat curImg;
-    const unsigned int curId = curkf->id_;
-    if(curkf!=nullptr) {
-        cvtColor(curkf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
+    KeyFrame *curf = interaction->visualCurF;
+    KeyFrame *curkf = interaction->visualLastKF;
+    if(curf->grayImg_.empty()) {
+        curf = nullptr;
     }
 
+    Mat curImg;
+    const unsigned int curId = curf->id_;
+    if(curf!=nullptr) {
+        cvtColor(curf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
+    }
+    Mat curKFimg;
+    cvtColor(curkf->edgeImg_[0], curKFimg, cv::COLOR_GRAY2BGR);
+
+
+    vector<Point3d> points;
     for(Landmark *p : ps) {
         if(p == nullptr || !p->Converge()) {
             continue;
         }
         const Eigen::Vector3d pw = p->GetPw();
         points.push_back({pw.x(), pw.y(), pw.z()});
-        if(curkf!=nullptr) {
-            const Eigen::Vector3d pc2 = curkf->Tcw_ * pw;
-            const Eigen::Vector2i px2 = curkf->cam_->Project2PixelPlane(pc2).cast<int>();
-            if(InRange(curkf->grayImg_, px2)) {
+        if(curf!=nullptr) {
+            const Eigen::Vector3d pc2 = curf->Tcw_ * pw;
+            const Eigen::Vector2i px2 = curf->cam_->Project2PixelPlane(pc2).cast<int>();
+            if(InRange(curf->grayImg_, px2) ) {
                 //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
                 cv::circle(curImg, {px2.x(), px2.y()}, 2, {0, 0, 255});
+            }
+
+            const Eigen::Vector3d pck = curkf->Tcw_ * pw;
+            const Eigen::Vector2i pxk = curkf->cam_->Project2PixelPlane(pck).cast<int>();
+            if(InRange(curKFimg, pxk) ) {
+                cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, {0, 0, 255});
             }
         }
     }
@@ -1167,12 +1196,13 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
 
     // 实时显示当前帧投影情况
-    if(curkf!=nullptr) {
-        // cv::viz::WImageOverlay img(curImg, );
-        constexpr double ratio = 0.5;
-        const int w = curImg.cols * ratio, h = curImg.rows * ratio;
-        window.showWidget("image", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, w, h)));
+    constexpr double ratio = 0.5;
+    const int w = curImg.cols * ratio, h = curImg.rows * ratio;
+    if(curf!=nullptr) {
+        window.showWidget("curImage", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, w, h)) );
+        // cv::imshow("curProjImg", curImg);
     }
+    window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(w+10, 0, w, h)) );
 
     window.showWidget("PointCloud", cloud);
     window.showWidget("S0", s0);
@@ -1181,7 +1211,8 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     window.registerKeyboardCallback(VizInteraction);
     // 运行事件循环，使窗口响应用户输入
     while (!interaction->resetWindow && curId == interaction->visualCurF->id_) {
-        window.spinOnce(1000);
+        window.spinOnce(100);
+        cv::waitKey(100);
     }
     // window.spin();
     interaction->resetWindow = false;

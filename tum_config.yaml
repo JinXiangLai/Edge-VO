@@ -24,17 +24,17 @@ wheelRadius: 0
 maxDepth: 5.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.2
 
-maxDescriptorDist: 10000 # or 使用光度残差时重新设置
+maxDescriptorDist: 10 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
 maxDepthConvergeStd: 0.1 # 深度收敛的标准差
-abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
+abnormalProjectResidual: 5 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 5 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 8
 imgTimeOffset: 0.0 # sec,时间同步误差
-needNewKFtrans: 0.2 # 选取新KF的条件
+needNewKFtrans: 1.0 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.2 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
@@ -56,6 +56,9 @@ useInvZ: false
 showDebugImg: false
 firstImgIdx: 20
 loopClosureImgIdx: 10
+
+cannyLowerTh: 120 # 150
+cannyupperTh: 150 # 160
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0
