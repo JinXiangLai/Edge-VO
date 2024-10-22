@@ -959,7 +959,6 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
                     continue;
                 }
 #endif
-
                 lk2->z_ = pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
                 lk2->depthCov_ = lk1->depthCov_ * 4;
@@ -975,9 +974,24 @@ double CalculatePatchSSD(const Mat &im1, const Mat &im2, const Eigen::Vector2i &
     const int range = config->descriptorPatchLen/2;
     const int x1 = px1.x(), y1 = px1.y(), x2 = px2.x(), y2 = px2.y();
     double sum = 0;
+
+#if 1
+    double sum1 = 0, sum2 = 0;
+    int count = 0;
     for(int i = -range; i <= range; ++i) {
         for(int j = -range; j <= range; ++j) {
-            sum += pow(im1.at<uchar>(y1+i, x1+j) - im2.at<uchar>(y2+i, x2+j), 2);
+            sum1 += double(im1.at<uchar>(y1+i, x1+j) );
+            sum2 += double(im2.at<uchar>(y2+i, x2+j) );
+            ++count;
+        }
+    }
+    double avg1 = sum1/count, avg2 = sum2/count;
+    double avg = avg1 - avg2;
+#endif
+
+    for(int i = -range; i <= range; ++i) {
+        for(int j = -range; j <= range; ++j) {
+            sum += pow(double(im1.at<uchar>(y1+i, x1+j)) - double(im2.at<uchar>(y2+i, x2+j)) - avg, 2);
         }
     }
     return sum;
@@ -1122,11 +1136,11 @@ void ShowPointCloud(const set<Landmark* > &ps) {
     window.spin();
 }
 
-void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
+void ShowLocalMap(const vector<Pose> &vTwc) {
     viz::Viz3d &window = *interaction->window;
     //cv::Affine3d &viewPose = *interaction->viewPose;
     //window.setViewerPose(viewPose); // 使用默认的才是正确的
-    KeyFrame *curf = interaction->visualCurF;
+    KeyFrame *curf = &interaction->visualCurF;
     KeyFrame *curkf = interaction->visualLastKF;
     if(curf->grayImg_.empty()) {
         curf = nullptr;
@@ -1140,36 +1154,58 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     Mat curKFimg;
     cvtColor(curkf->edgeImg_[0], curKFimg, cv::COLOR_GRAY2BGR);
 
+    // 可视化点云
+    auto GenerateCloud = [&curf, &curkf, &curImg, &curKFimg] (set<Landmark*> &ps, const cv::Vec3b &color,
+        vector<Point3d> &points) {
+        points.reserve(10000);
 
-    vector<Point3d> points;
-    for(Landmark *p : ps) {
-        if(p == nullptr || !p->Converge()) {
-            continue;
-        }
-        const Eigen::Vector3d pw = p->GetPw();
-        points.push_back({pw.x(), pw.y(), pw.z()});
-        if(curf!=nullptr) {
-            const Eigen::Vector3d pc2 = curf->Tcw_ * pw;
-            const Eigen::Vector2i px2 = curf->cam_->Project2PixelPlane(pc2).cast<int>();
-            if(InRange(curf->grayImg_, px2) ) {
-                //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
-                cv::circle(curImg, {px2.x(), px2.y()}, 2, {0, 0, 255});
+        for(Landmark *p : ps) {
+            if(p == nullptr || !p->Converge()) {
+                continue;
             }
+            const Eigen::Vector3d pw = p->GetPw();
+            points.push_back({pw.x(), pw.y(), pw.z()});
+            if(curf!=nullptr) {
+                const Eigen::Vector3d pc2 = curf->Tcw_ * pw;
+                const Eigen::Vector2i px2 = curf->cam_->Project2PixelPlane(pc2).cast<int>();
+                if(InRange(curf->grayImg_, px2) ) {
+                    //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
+                    cv::circle(curImg, {px2.x(), px2.y()}, 2, color);
+                }
 
-            const Eigen::Vector3d pck = curkf->Tcw_ * pw;
-            const Eigen::Vector2i pxk = curkf->cam_->Project2PixelPlane(pck).cast<int>();
-            if(InRange(curKFimg, pxk) ) {
-                cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, {0, 0, 255});
+                const Eigen::Vector3d pck = curkf->Tcw_ * pw;
+                const Eigen::Vector2i pxk = curkf->cam_->Project2PixelPlane(pck).cast<int>();
+                if(InRange(curKFimg, pxk) ) {
+                    cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, color);
+                }
             }
         }
+    };
+    constexpr double pointSize = 1.0;
+
+    vector<Point3d> localPoints;
+    cv::Vec3b color1{0, 255, 0};
+    GenerateCloud(interaction->localPoints, color1, localPoints);
+    if(!localPoints.empty()) {
+        viz::WCloud localCloud(localPoints);
+        localCloud.setColor({color1});
+        localCloud.setRenderingProperty(viz::POINT_SIZE, pointSize);
+        window.showWidget("localPointCloud", localCloud);
     }
-    vector<Vec3b> colors(points.size(), {0, 255, 0});
 
-    viz::WCloud cloud(points, colors);
-    cout << "cloud.size: " << points.size() << endl;
-    // cloud.setColor(cv::viz::Color::green());
-    // cloud.setSize(5);
+    vector<Point3d> activePoints;
+    cv::Vec3b color2{0, 0, 255};
+    GenerateCloud(interaction->activePoints, color2, activePoints);
+    if(!activePoints.empty()) {
+        viz::WCloud activeCloud(activePoints);
+        activeCloud.setColor({color2});
+        activeCloud.setRenderingProperty(viz::POINT_SIZE, pointSize * 2);
+        window.showWidget("activePointCloud", activeCloud);
+    }
+    cout << "local cloud size & active cloud size: " << localPoints.size() << " & " << activePoints.size() << endl;
 
+
+    // 可视化相机pose
     vector<Point3d> startEndCameraPos(2);
     for(int i = 0; i < vTwc.size(); ++i) {
         // Eigen默认列优先，这里先将其改为行优先以与Mat适配
@@ -1190,10 +1226,12 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
         //window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
     }
  
-    // 创建一个球体
+    // 创建一个球体表示起点和终点
     constexpr double radius = 0.001;
     cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
     cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
+    window.showWidget("S0", s0);
+    window.showWidget("S1", s1);
 
     // 实时显示当前帧投影情况
     constexpr double ratio = 0.5;
@@ -1204,13 +1242,10 @@ void ShowLocalMap(const set<Landmark* > &ps, const vector<Pose> &vTwc) {
     }
     window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(w+10, 0, w, h)) );
 
-    window.showWidget("PointCloud", cloud);
-    window.showWidget("S0", s0);
-    window.showWidget("S1", s1);
 
     window.registerKeyboardCallback(VizInteraction);
     // 运行事件循环，使窗口响应用户输入
-    while (!interaction->resetWindow && curId == interaction->visualCurF->id_) {
+    while (!interaction->resetWindow && curId == interaction->visualCurF.id_) {
         window.spinOnce(100);
         cv::waitKey(100);
     }

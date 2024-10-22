@@ -44,7 +44,6 @@ KeyFrame::KeyFrame(const KeyFrame &f)
 }
 
 void KeyFrame::operator =(const KeyFrame &f) {
-    // 此时this还没构建完毕
     new (this) KeyFrame(f);
 }
 

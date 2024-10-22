@@ -83,17 +83,10 @@ int main(int argc, char** argv){
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
         cout << "cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
-#if 1
-        // TODO: 考虑内存泄漏问题
-        KeyFrame *temp = new KeyFrame (img, Twc, cam, i, 1);
-        KeyFrame &curF = *temp;
-#else
+
         KeyFrame curF(img, Twc, cam, i, 1);
-#endif
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
-        // TODO：存在的风险是栈内存释放时，显示线程会core dump，不过这只是debug使用
-        interaction->visualCurF = &curF;
 
         if(!initFrame) {
             initFrame = new KeyFrame(curF);
@@ -118,6 +111,8 @@ int main(int argc, char** argv){
         const Pose Twc2 = curF.priorTwc_;
         const Pose Tc1c2 = Twc1.Inverse() * Twc2;
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
+        // 显示线程使用
+        interaction->visualCurF = curF;
         
         if(!isInitialized) {
             // 初始化深度图
@@ -144,7 +139,7 @@ int main(int argc, char** argv){
         optimizer.SetInitLambda(1e-3);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        optimizer.UpdateCurrentFrame(&curF);
+        optimizer.TrackLocalMap(&curF);
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
@@ -152,10 +147,15 @@ int main(int argc, char** argv){
         // step1
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
         // step2
-        optimizer.SetInitLambda(1e-3);
-        optimizer.UpdateCurrentFrame(&curF);
+        optimizer.SetInitLambda(0);
+        optimizer.TrackLocalMap(&curF);
 #endif        
-        // step3: 将深度图传递给当前帧
+        // 显示线程更新使用
+        interaction->visualCurF = curF;
+        // step3: 剔除地图外点
+        optimizer.CullingErrorLandmark(&curF);
+        
+        // step4: 将深度图传递给当前帧
         // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
         // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
@@ -174,10 +174,10 @@ int main(int argc, char** argv){
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.5) || NeedNewKF(win.back(), &curF) 
+        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.3) || NeedNewKF(win.back(), &curF) 
             || accDist > config->needNewKFtrans) {   
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-            if(curF.unPx_.size() < win.back()->unPx_.size() * 0.8) {
+            if(curF.unPx_.size() < win.back()->unPx_.size() * 0.6) {
                 // TODO：显示线程会显示出异常的图像，需要检测并剔除异常图像
                 continue;
             } else {
@@ -199,10 +199,10 @@ int main(int argc, char** argv){
             interaction->visualLastKF = win.back();
 
             if(win.size() > 2) {
-                optimizer.SetInitLambda(1e-2);
+                optimizer.SetInitLambda(1.0);
                 optimizer.SlidingWindowOptimize();
             }
-            optimizer.CullingErrorLandmark();
+            // optimizer.CullingErrorLandmark();
 
         } else {
             // delete curF; // 释放非KF内存

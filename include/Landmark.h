@@ -56,7 +56,11 @@ public:
     std::vector<Eigen::Matrix<double, 3, 6> > J_Pw_Twc1;
     void ResetFEJ() {J_Pc2_Twc2.clear(); J_Pc2_Pw.clear(); J_Pw_z.clear(); J_Pw_Twc1.clear();}
 
-    bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
+    mutable bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
+
+    // 跟踪一帧的FEJ
+    std::vector<Eigen::MatrixXd> J_Pc2_T12_;
+
 };
 
 #endif

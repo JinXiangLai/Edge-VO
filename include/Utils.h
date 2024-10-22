@@ -118,18 +118,20 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
 
 double CalculatePatchSSD(const cv::Mat &im1, const cv::Mat &im2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2);
 
-void ShowLocalMap(const std::set<Landmark* > &ps, const std::vector<Pose> &vTwc);
+void ShowLocalMap(const std::vector<Pose> &vTwc);
 
 enum KeyboardEvent{Reset, StepByStep};
 
 class InteractionParam {
 public:
     bool stepBystep = false;
-    KeyFrame *visualCurF = nullptr;
+    KeyFrame visualCurF;
     KeyFrame *visualLastKF = nullptr;
     bool resetWindow = false;
     cv::viz::Viz3d *window; // ("Local Map Viewer"); 
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
+    std::set<Landmark*> activePoints;
+    std::set<Landmark*> localPoints;
 };
 extern InteractionParam *interaction;
 #endif

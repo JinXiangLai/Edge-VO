@@ -20,13 +20,13 @@ public:
     Optimizer(std::shared_ptr<Camera> cam, const double lambda = 1.0, const int maxIte = 100, const bool useInvDepth = false, 
         const bool onlyPoseUpdate = false);
     
-    bool Optimize(std::vector<Landmark*> &_pc1, std::vector<Pose> &T12);
+    bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 
-    Eigen::VectorXd CalculateResidual(const std::vector<Landmark*> &pc1, 
+    Eigen::VectorXd CalculateResidual(const std::vector<Landmark*> &lk1s, 
         const std::vector<Pose> &T12);
 
-    Eigen::MatrixXd CalculateJacobian(const std::vector<Landmark* > &pc1, 
-        const std::vector<Pose> &T12, Eigen::MatrixXd &H, Eigen::VectorXd &b, Eigen::VectorXd &g);
+    void CalculateJacobian(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
+        Eigen::MatrixXd &H, Eigen::VectorXd &g);
 
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd &H, const Eigen::VectorXd &b, const int poseNum, const int pointNum, 
         const int poseDim = 6, const int pointDim = 1);
@@ -70,7 +70,7 @@ public:
 
     void ConstructRelativePoseConstraint(Eigen::MatrixXd &H, Eigen::VectorXd &g);
 
-    bool UpdateCurrentFrame(KeyFrame *kf2);
+    bool TrackLocalMap(KeyFrame *kf2);
 
     double TransformDepthMap2CurrentFrame(KeyFrame *kf2);
 
@@ -78,7 +78,7 @@ public:
         lambda_ = lambda;
     }
 
-    void CullingErrorLandmark();
+    void CullingErrorLandmark(KeyFrame *curF=nullptr);
 
 private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，

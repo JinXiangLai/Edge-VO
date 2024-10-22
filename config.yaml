@@ -19,11 +19,11 @@ wheelRadius: 0.376
 maxDepth: 100.0
 minDepth: 3.0
 
-maxDescriptorDist: 10 # or 使用光度残差时重新设置
+maxDescriptorDist: 3 # or 使用光度残差时重新设置, SSD匹配不准导致该数据集很难有正确的对应
 goodDescriptorDistRatio: 0.8 # 使用 ratio * maxDescriptorDist来判断跟踪效果
-maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
+maxTrackProjectPixelError: 3.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
-maxDepthConvergeStd: 0.5 # 深度收敛的标准差
+maxDepthConvergeStd: 0.1 # 深度收敛的标准差
 abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 5 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
@@ -59,4 +59,4 @@ cannyupperTh: 60
 maxGoodTriangulateAngle: 60.0
 minTranslation: 0.5 # m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
 nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优描述子的比值，暂未启用
-descriptorPatchLen: 5
+descriptorPatchLen: 3

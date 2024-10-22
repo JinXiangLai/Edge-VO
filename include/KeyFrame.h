@@ -36,7 +36,12 @@ public:
         unPx_.resize(level);
     }
     ~KeyFrame() {
-        //std::cout << "delete keyframe: " << this << std::endl;
+        for(Landmark *lk : landmark_) {
+            if(lk!=nullptr) {
+                delete lk;
+                lk = nullptr;
+            }
+        }
     }
     KeyFrame(){}
     KeyFrame(const KeyFrame &f);
@@ -56,6 +61,15 @@ public:
     void SetTwc(const Pose &Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
     double CullingBadDepth(KeyFrame *kf2);
+    void ReleaseMat() {
+        grayImg_.release();
+        for(int i = 0; i < edgeImg_.size(); ++i) {
+            edgeImg_[i].release();
+            dist_[i].release();
+            dx_[i].release();
+            dy_[i].release();
+        }
+    }
 
     unsigned int id_;
     cv::Mat grayImg_;
