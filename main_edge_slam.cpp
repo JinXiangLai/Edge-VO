@@ -1,3 +1,4 @@
+#include <fstream>
 #include <memory>
 #include <thread>
 #include <unistd.h>
@@ -174,8 +175,28 @@ int main(int argc, char** argv){
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        if((initDepthRatio < config->needNewKFMaxMatchEdgeRatio && kfConvergeEdgeRatio > 0.3) || NeedNewKF(win.back(), &curF) 
-            || accDist > config->needNewKFtrans) {   
+        const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
+        bool case1 = initDepthRatio < config->needNewKFMaxMatchEdgeRatio,
+             case2 = kfConvergeEdgeRatio > 0.3,
+             case3 = T12.t_wb_.norm() > config->needNewKFtrans,
+             case4 = Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot,
+             case5 = accDist > config->needNewKFtrans;
+        // 必须保证当前KF收敛足够多的点了
+        if((case1 || case3 || case4 || case5) && case2) {
+            {
+                static bool first = true;
+                ofstream f;
+                const string name = "generate_KF_case.csv";
+                if(first) {
+                    f.open(name.c_str(), ios::out);
+                    first = false;
+                    f.close();
+                }
+                f.open(name.c_str(), ios::app);
+                f << "(" <<case1 << " || " << case3 << " || " << case4 << " || " << case5 << ") && " << case2 << endl;
+                f.close();
+            
+            }
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
             if(curF.unPx_.size() < win.back()->unPx_.size() * 0.6) {
                 // TODO：显示线程会显示出异常的图像，需要检测并剔除异常图像
@@ -201,6 +222,7 @@ int main(int argc, char** argv){
             if(win.size() > 2) {
                 optimizer.SetInitLambda(1.0);
                 optimizer.SlidingWindowOptimize();
+                // optimizer.UpdateDepthInWindow();
             }
             // optimizer.CullingErrorLandmark();
 

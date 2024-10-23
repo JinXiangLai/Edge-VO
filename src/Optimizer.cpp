@@ -41,20 +41,13 @@ Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda, const int maxI
         maxIte_ = config->maxIteration;
     }
 
-Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &lk1s, const vector<Pose> &T12){
+double Optimizer::CalculateResidual(const vector<Landmark*> &lk1s, const vector<Pose> &T12){
     
     constexpr int resDim = 1;
-    Eigen::VectorXd res;
-    if(!onlyPoseUpdate_) {
-        res = Eigen::VectorXd (lk1s.size() * T12.size() * resDim + lk1s.size());
-    } else {
-        res = Eigen::VectorXd(lk1s.size() * T12.size() * resDim);
-    }
-    res.setZero();
+    double cost = 0;
 
     const Camera &cam = *cam_;
     int noInrangeNum = 0;
-    double cost = 0;
     for(int i = 0; i < T12.size(); ++i) {
         const Pose T21 = T12[i].Inverse();
         const Mat dist = dist_[i];
@@ -63,17 +56,16 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &lk1s, cons
             const Eigen::Vector3d pc = T21 * lk1s[j]->GetPw();
             const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
             if(InRange(dist, px.cast<int>()) && lk1s[j]->z_ > 0 && !lk1s[j]->IsOutOfRange() ) {
-                // res[i*pc1.size()*resDim + j] = dist_.at<float>(px.y(), px.x());
-                double &r = res[i*lk1s.size()*resDim + j];
-                r = BilinearInterpolate(dist, px);
-                if(r > config->abnormalProjectResidual) {
-                    // lk1s[j]->SetOutOfRange();
-                    continue;
-                }
+                // 必须与计算Jacobian的残差计算方式一致
+                double r = BilinearInterpolate(dist, px);
                 double J_huber_r = 0;
                 r = HuberLoss(r, J_huber_r);
                 cost += r;
             } else {
+                // ！！！注意：不能在迭代优化过程中删除异常值，
+                // 否则会导致cost异常变小，
+                // 应该在迭代算法外部剔除野值
+                cost += config->abnormalProjectResidual;
                 ++noInrangeNum;
                 continue;
             }
@@ -82,18 +74,17 @@ Eigen::VectorXd Optimizer::CalculateResidual(const vector<Landmark*> &lk1s, cons
 
     // 添加残差，避免深度值z为负
     if(!onlyPoseUpdate_) {
-        const int startRow = lk1s.size() * T12.size() * resDim;
         for(int i = 0; i < lk1s.size(); ++i) {
             if(useInvDepth_) {
-                res[startRow+i] = exp(-kPriorDepthWeight / lk1s[i]->invZ_);
+                cost += exp(-kPriorDepthWeight / lk1s[i]->invZ_);
                 continue;
             }
-            res[startRow+i] = exp(-kPriorDepthWeight * lk1s[i]->z_);
+            cost += exp(-kPriorDepthWeight * lk1s[i]->z_);
         }
     }
 
     cout << "noInrangeNum | cost: " << noInrangeNum << " | " << cost << endl;
-    return res;
+    return cost;
 }
 
 void Optimizer::CalculateJacobian(vector<Landmark*> &lk1s, const vector<Pose> &T12, Eigen::MatrixXd &H, Eigen::VectorXd &g) {
@@ -147,8 +138,9 @@ void Optimizer::CalculateJacobian(vector<Landmark*> &lk1s, const vector<Pose> &T
             // 直接操作H和g阵的好处是可以马上剔除异常匹配值，
             // 而Jacobian矩阵要求残差维度已知，故而不好计算
             if(r > config->abnormalProjectResidual) {
+                // 不能在迭代优化过程进行野值剔除，否则算法不对
                 // p.SetOutOfRange();
-                continue;
+                // continue;
             }
             double J_huber_r = 0;
             r = HuberLoss(r, J_huber_r);
@@ -416,12 +408,12 @@ bool Optimizer::ExecuteLMoptimize() {
         }
 
         // 判断当前更新是否有效
-        const double newCost = CalculateResidual();
+        double newCost = CalculateResidual();
         cout << fixed << "iterate " << i << " times, last_cost, new_cost: " << lastCost << " " << newCost 
             << " &lambda: " << lambda_ << endl;
 
         if(lambda_ != 0) {
-            // 使用LM方法
+            // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
             if(lastCost <= newCost) {
                 lambda_ *= 1.8;
                 for(int i = 0; i < pcBackup.size(); ++i) {
@@ -481,7 +473,7 @@ bool Optimizer::ExecuteLMoptimize() {
 }
 
 bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
-    double lastCost = CalculateResidual(lk1s, T12).cwiseAbs().sum();
+    double lastCost = CalculateResidual(lk1s, T12);
     double firstCost = lastCost;
     bool status = false;
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
@@ -533,7 +525,7 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
         }
 
         // 判断当前更新是否有效
-        const double cost = CalculateResidual(lk1s, T12).cwiseAbs().sum();
+        const double cost = CalculateResidual(lk1s, T12);
         cout << fixed << "iterate " << i << " times, lastCost | newCost: " << lastCost << " | " << cost << " &lambda: " << lambda_ << endl << endl;
 
         if(lambda_ != 0) {
@@ -781,6 +773,7 @@ int Optimizer::SampleUsefulLandmark() {
 }
 
 double Optimizer::CalculateResidual() {
+    // TODO: 考虑都无法投影到图像内的情况
     double cost = 0;
 
     vector<Landmark*> usefulLandmark; // 记录能够参与当前优化的边缘点
@@ -801,16 +794,14 @@ double Optimizer::CalculateResidual() {
             }
             KeyFrame *target = tar.first;
 #else
-        if(!p->host_->IsOutOfRange() || !p->IsOutOfRange()) {
+        // if(!p->host_->IsOutOfRange() || !p->IsOutOfRange()) { // landmark有效性必须在optimization外已知
+        if(1) {
             KeyFrame *target = window_.back();
 #endif
-
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-            if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
-                continue;
-            }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
             if(!InRange(target->dist_[0], px2.cast<int>()) ) {
+                cost += config->abnormalProjectResidual;
                 continue;
             }
 
@@ -821,11 +812,7 @@ double Optimizer::CalculateResidual() {
             cost += loss;
 #else
             double r = BilinearInterpolate(target->dist_[0], px2);
-            if(r > config->abnormalProjectResidual) {
-               // 残差值异常，判定为离群点
-               continue;
-            }
-            // 使用胡伯核函数剔除异常残差值
+            // 使用胡伯核函数减小异常残差值危害
             double J_huber_r = 0;
             r = HuberLoss(r, J_huber_r);
             cost += r;
@@ -1023,19 +1010,20 @@ double Optimizer::ConstructJ_H_b_g() {
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
                 ++depthErrorNum;
-                continue;
+                // 不能在迭代优化过程剔除变量，得在外部操作，以重新设置变量值
+                // continue;
             }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
             if(!InRange(target->dist_[0], px2.cast<int>()) ) {
                 ++noInrangeNum;
-                continue;
+                // continue;
             }
 
             // 经过校验，可以构建residual和jacobian
             double r = BilinearInterpolate(target->dist_[0], px2);
             if(r > config->abnormalProjectResidual) {
-               // 残差值异常大，认为是离群点
-               continue;
+                // 残差值异常大，认为是离群点，但必须在迭代算法外部剔除
+                //    continue;
             }
             // 使用胡伯核函数剔除异常残差值
             double J_huber_r = 0;
@@ -1249,7 +1237,7 @@ double Optimizer::ConstructJ_H_b_g_byMatch() {
             
             /******** 投影过程 ********
             * K.inv * (u1, v1, 1) --> Pc1_norm * z1 --> Twc1 * Pc1 --> Twc2.inv * Pw -->  
-            *  Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
+            * Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
             *
             * res w.r.t (u2, v2) [1x2]
             * (u2, v2) w.r.t Pc2_norm [2x3]
@@ -1531,7 +1519,7 @@ int Optimizer::SelectOneKF2Marginalization() {
             const Eigen::Vector3d pc2 = window_.back()->Tcw_ * p->GetPw();
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
             if(InRange(window_.back()->dist_[0], px2.cast<int>()) && 
-                window_.back()->dist_[0].at<float>(px2.y(), px2.x()) < config->goodDescriptorDist) {
+                window_.back()->dist_[0].at<float>(px2.y(), px2.x()) < config->maxTrackProjectPixelError) {
                 seenByNewestNum += 1;
             }
 #endif

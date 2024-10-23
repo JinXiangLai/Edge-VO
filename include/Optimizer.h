@@ -22,8 +22,7 @@ public:
     
     bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 
-    Eigen::VectorXd CalculateResidual(const std::vector<Landmark*> &lk1s, 
-        const std::vector<Pose> &T12);
+    double CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12);
 
     void CalculateJacobian(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
         Eigen::MatrixXd &H, Eigen::VectorXd &g);
@@ -79,6 +78,13 @@ public:
     }
 
     void CullingErrorLandmark(KeyFrame *curF=nullptr);
+
+    void UpdateDepthInWindow() {
+        // 使用之前的KF对新的KF进行深度滤波
+        for(int i = 0; i < int(window_.size() ) - 1; ++i) {
+            window_.back()->UpdateDepth(*window_[i]);
+        }
+    }
 
 private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
