@@ -32,6 +32,16 @@ Optimizer::Optimizer(const vector<Mat> &dist, const vector<Mat> &dx, const vecto
         maxIte_ = config->maxIteration;
     }
 
+Optimizer::~Optimizer() {
+    // 排查内存泄漏
+    for(KeyFrame *kf : window_) {
+        if(kf!=nullptr) {
+            delete kf;
+            kf = nullptr;
+        }
+    }
+}
+
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda, const int maxIte, const bool useInvDepth, const bool onlyPoseUpdate)
     : lambda_(lambda)
     , maxIte_(maxIte)
@@ -662,7 +672,7 @@ void Optimizer::RemoveOldestKeyFrame() {
     cout << "[WARNING] kf: " << oldest << " Set out of range flag" << endl;
     // delete oldest; // 不能直接释放，因为其余指向该位置的指针并不会变成nullptr
     oldest->SetOutOfRange();
-    historicalKF_.push_back(oldest);
+    historicalKF_.push_back(oldest); // TODO: 排查内存泄漏，关闭
     cout << "historicalKF_.size: " << historicalKF_.size() << endl;
 
     // 所有观测到该帧的地图点要删除量测
@@ -673,6 +683,8 @@ void Optimizer::RemoveOldestKeyFrame() {
         }
     }
     oldest->ReleaseMat();
+    // 删除老帧看看是否会有影响
+    // delete oldest;
     return;
 }
 
@@ -868,15 +880,20 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     KeyFrame *oldestKF = window_[0];
     for(int i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
+#ifndef USE_DT_RESIDUAL
         if(p->target_.empty() || (p->target_.size()==1 && p->target_.count(oldestKF))) {
+#else
+        if(p->host_->id_ == window_[0]->id_) {
+#endif
             margLandmark.insert(p);
         }
     }
+
     vector<Landmark*> sortMargOptLandmark;
-    //for(Landmark *p : margLandmark) {
-    //    // OK, 这样就实现了将边缘化地图点移到左上角的目的啦！！！
-    //    sortMargOptLandmark.push_back(p);
-    //}
+    for(Landmark *p : margLandmark) {
+       // OK, 这样就实现了将边缘化地图点移到左上角的目的啦！！！
+       sortMargOptLandmark.push_back(p);
+    }
     for(Landmark *p : optLandmark_) {
         if(!margLandmark.count(p)) {
             sortMargOptLandmark.push_back(p);
@@ -931,6 +948,9 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
     // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
     g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
+
+    // 虽然我们只保留了最老帧的信息，但是这里仍要从optLandmark中删除掉以最老帧为host的landmark
+    optLandmark_.erase(optLandmark_.begin(), optLandmark_.begin() + margLandmark.size());
 
     // 易知，先验残差为： |Jp*X - b_p|^2. 其中，Hp_=Jp'*Jp，因此可以得到Jp，g_p_=Jp'*b_p，因此可以得到先验残差b_p(VINS-MONO)
     // 根据G-N方法，展开先验残差项得:
@@ -1003,7 +1023,7 @@ double Optimizer::ConstructJ_H_b_g() {
             }
             KeyFrame *target = tar.first;
 #else
-        if(host != window_.back() && !host->IsOutOfRange()) {
+        if(host->id_ != window_.back()->id_) {
             // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
             KeyFrame *target = window_.back();
 #endif

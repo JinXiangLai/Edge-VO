@@ -17,6 +17,21 @@ using namespace cv;
 
 class Landmark;
 
+KeyFrame::KeyFrame(const Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int id, const int level)
+    : id_(id)
+    , grayImg_(img)
+    , cam_(cam)
+    , Twc_ {Twc}
+    , Tcw_(Twc.Inverse())
+    , priorTwc_(Twc)
+    , level_(level) {
+        edgeImg_.resize(level);
+        dist_.resize(level);
+        dx_.resize(level);
+        dy_.resize(level);
+        unPx_.resize(level);
+}
+
 KeyFrame::KeyFrame(const KeyFrame &f)
     : id_(f.id_)
     , grayImg_(f.grayImg_)
@@ -34,6 +49,15 @@ KeyFrame::KeyFrame(const KeyFrame &f)
     , pointMapId_(f.pointMapId_)
     , outOfRange_(f.outOfRange_)
     , convergeEdgeNum_(f.convergeEdgeNum_) {
+    // vector内的堆内存需要先释放
+    // 不能这样子，这是构造函数，默认的内存应该是干净的，
+    // 否则你应该调用赋值构造
+    for(Landmark *lk : landmark_) {
+        if(lk != nullptr) {
+            delete lk;
+        }
+    }
+    landmark_.clear();
     landmark_.reserve(f.landmark_.size());
     for(Landmark *lk : f.landmark_) {
         landmark_.push_back(new Landmark(*lk));
@@ -43,8 +67,54 @@ KeyFrame::KeyFrame(const KeyFrame &f)
     }
 }
 
+KeyFrame::~KeyFrame() {
+    // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
+    for(Landmark *lk : landmark_) {
+        if(lk!=nullptr) {
+            delete lk;
+            lk = nullptr;
+        }
+    }
+    // ReleaseMat(); // 不需要手动释放
+    std::cout << this << " Releasw KF id: " << id_ << std::endl;
+}
+
 void KeyFrame::operator =(const KeyFrame &f) {
+#if 1
+    id_ = f.id_;
+    grayImg_ = f.grayImg_;
+    edgeImg_ = f.edgeImg_;
+    dist_ = f.dist_;
+    dx_ = f.dx_;
+    dy_ = f.dy_;
+    cam_ = f.cam_;
+    Twc_ = f.Twc_;
+    Tcw_ = f.Tcw_;
+    priorTwc_ = f.priorTwc_;
+    level_ = f.level_;
+    unPx_ = f.unPx_;
+    descriptor_ = f.descriptor_;
+    pointMapId_ = f.pointMapId_;
+    outOfRange_ = f.outOfRange_;
+    convergeEdgeNum_ = f.convergeEdgeNum_;
+    for(Landmark *lk : landmark_) {
+        if(lk != nullptr) {
+            delete lk;
+        }
+    }
+    landmark_.clear();
+    landmark_.reserve(f.landmark_.size());
+    for(Landmark *lk : f.landmark_) {
+        landmark_.push_back(new Landmark(*lk));
+        // !!!Attention: 指针成员变量需要小心处理，因为如果其指向栈内存，由于栈内存会被系统回收，
+        // 因此可能产生意外情况
+        landmark_.back()->host_ = this;
+    }
+#else
+    ReleaseMat();
+    // 这样会导致cv::Mat等堆内存无法释放
     new (this) KeyFrame(f);
+#endif
 }
 
 
@@ -158,7 +228,7 @@ size_t KeyFrame::InitializeLandmark() {
         // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
         landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor_[i], 1.0);
         // host帧也要增加与landmark的相互观测
-        landmark_[i]->target_.insert({this, unPx_[0][i]});
+        landmark_[i]->target_.insert({this, unPx_[0][i]}); 
     }
 
     return landmark_.size();

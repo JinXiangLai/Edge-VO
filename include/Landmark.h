@@ -12,7 +12,7 @@ class KeyFrame;
 
 class Landmark {
 public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     Landmark(const Eigen::Vector2d &px, KeyFrame *host, const std::shared_ptr<Camera> cam, 
         const uint64_t desc, const double z);
@@ -54,12 +54,12 @@ public:
     std::map<KeyFrame*, Eigen::Matrix3d> J_Pc2_Pw;
     std::vector<Eigen::Matrix<double, 3, 1> > J_Pw_z;
     std::vector<Eigen::Matrix<double, 3, 6> > J_Pw_Twc1;
-    void ResetFEJ() {J_Pc2_Twc2.clear(); J_Pc2_Pw.clear(); J_Pw_z.clear(); J_Pw_Twc1.clear();}
+    void ResetFEJ() {J_Pc2_Twc2.clear(); J_Pc2_Pw.clear(); J_Pw_z.clear(); J_Pw_Twc1.clear(); J_Pc2_T12_.clear();}
 
     mutable bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
 
     // 跟踪一帧的FEJ
-    std::vector<Eigen::MatrixXd> J_Pc2_T12_;
+    std::vector<Eigen::Matrix<double, 3, 6>> J_Pc2_T12_;
 
 };
 

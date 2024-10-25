@@ -83,7 +83,7 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
-        cout << "cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
+        cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 
         KeyFrame curF(img, Twc, cam, i, 1);
         curF.CannyEdgeDetect();
@@ -131,7 +131,7 @@ int main(int argc, char** argv){
                 cout << "\n******\nInitialized!\n******\n";
             } else {
                 continue;
-            }   
+            } 
         }
 
 #if 0
@@ -195,7 +195,7 @@ int main(int argc, char** argv){
                 f.open(name.c_str(), ios::app);
                 f << "(" <<case1 << " || " << case3 << " || " << case4 << " || " << case5 << ") && " << case2 << endl;
                 f.close();
-            
+                
             }
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
             if(curF.unPx_.size() < win.back()->unPx_.size() * 0.6) {

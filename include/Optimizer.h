@@ -19,6 +19,8 @@ public:
 
     Optimizer(std::shared_ptr<Camera> cam, const double lambda = 1.0, const int maxIte = 100, const bool useInvDepth = false, 
         const bool onlyPoseUpdate = false);
+
+    ~Optimizer();
     
     bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 

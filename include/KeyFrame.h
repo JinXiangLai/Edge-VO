@@ -19,30 +19,9 @@ struct TupleHash {
 
 class KeyFrame {
 public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    KeyFrame(const cv::Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int id, const int level = 1)
-    : id_(id)
-    , grayImg_(img)
-    , cam_(cam)
-    , Twc_ {Twc}
-    , Tcw_(Twc.Inverse())
-    , priorTwc_(Twc)
-    , level_(level)
-     {
-        edgeImg_.resize(level);
-        dist_.resize(level);
-        dx_.resize(level);
-        dy_.resize(level);
-        unPx_.resize(level);
-    }
-    ~KeyFrame() {
-        for(Landmark *lk : landmark_) {
-            if(lk!=nullptr) {
-                delete lk;
-                lk = nullptr;
-            }
-        }
-    }
+    // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    KeyFrame(const cv::Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int id, const int level = 1);
+    ~KeyFrame();
     KeyFrame(){}
     KeyFrame(const KeyFrame &f);
     void operator =(const KeyFrame &f);
