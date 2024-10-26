@@ -290,21 +290,42 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     const Eigen::MatrixXd &D = H.block(poseSize, poseSize, pointSize, pointSize);
     // cout << "B - C.T:\n" << B-C.transpose() <<endl;
     Eigen::MatrixXd Dinv(D.rows(), D.cols());
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     for(int i = 0; i < pointSize; i+=pointDim) {
-        Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
+        //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
+        Dinv.row(i)[i] = 1.0/D.row(i)[i];
     }
-    const Eigen::MatrixXd E = -B * Dinv;
-    Eigen::MatrixXd leftMatrix(H.rows(), H.cols());
-    leftMatrix.block(0, 0, poseSize, poseSize).setIdentity();
-    leftMatrix.block(0, poseSize, poseSize, pointSize) = E;
-    leftMatrix.block(poseSize, 0, pointSize, poseSize).setZero();
-    leftMatrix.block(poseSize, poseSize, pointSize, pointSize).setIdentity();
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    //const Eigen::MatrixXd E = -B * Dinv;
+    // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
+    Eigen::MatrixXd E(B.rows(), Dinv.cols());
+    for(int i = 0; i < B.rows(); ++i) {
+        for(int j = 0; j < B.cols(); ++j)
+            E.row(i)[j] = -B.row(i)[j] * Dinv.row(j)[j];
+    }
+    chrono::steady_clock::time_point t1_1 = chrono::steady_clock::now();
+
+    // 这是个稀疏矩阵，可以优化掉
+    //Eigen::MatrixXd leftMatrix(H.rows(), H.cols());
+    //leftMatrix.setIdentity();
+    //leftMatrix.block(0, 0, poseSize, poseSize).setIdentity();
+    //leftMatrix.block(0, poseSize, poseSize, pointSize).noalias() = E;
+    //leftMatrix.block(poseSize, 0, pointSize, poseSize).setZero();
+    //leftMatrix.block(poseSize, poseSize, pointSize, pointSize).setIdentity();
+    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+
 
     // 求pose增量
     Eigen::MatrixXd newA = A + E * C;
-    Eigen::VectorXd new_b = leftMatrix * b;
+    // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
+    //Eigen::VectorXd new_b = leftMatrix * b;
+    // | I  E|
+    // | 0  I| * b
+    Eigen::VectorXd new_b = b;
+    new_b.middleRows(0, poseSize).noalias() = b.middleRows(0, poseSize) + E * b.tail(b.rows() - poseSize);
     Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
-    cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << endl;
+    chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+
 
 
     // 求point增量
@@ -312,11 +333,23 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
     Eigen::VectorXd deltaPoint = Dinv * (new_b.middleRows(poseSize, pointSize) - C * deltaPose);
+    chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+
     // cout << setprecision(3) << "deltaPoint: "<< deltaPoint.transpose() << endl;
 
     Eigen::VectorXd deltaX(deltaPose.rows() + deltaPoint.rows());
     deltaX.middleRows(0, poseSize) = deltaPose;
     deltaX.middleRows(poseSize, pointSize) = deltaPoint;
+    chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+    
+    cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << endl;
+
+    cout << "calculate D.inv spend: " << to_string(chrono::duration<double>(t1 - t0).count() ) << endl;
+    cout << "calculate E mat spend: " << to_string(chrono::duration<double>(t1_1 - t1).count() ) << endl;
+    cout << "calculate left mat spend: " << to_string(chrono::duration<double>(t2 - t1_1).count() ) << endl;
+    cout << "calculate dPose spend: " << to_string(chrono::duration<double>(t3 - t2).count() ) << endl;
+    cout << "calculate dPoint spend: " << to_string(chrono::duration<double>(t4 - t3).count() ) << endl;
+    cout << "construct dX spend: " << to_string(chrono::duration<double>(t5 - t4).count() ) << endl;
     return deltaX;
 }
 
