@@ -443,7 +443,7 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
         } 
 #ifdef USE_SSD
         // 考虑到图像远近，似乎不能使用这个条件？
-        // if( CalculatePatchSSD(grayImg_, kf2->grayImg_, lk1->uv_.cast<int>(), px2) > config->maxSSDdist) {
+        // if( CalculatePatchSSD(this, kf2, lk1->uv_.cast<int>(), px2) > config->maxSSDdist) {
         //     lk1->SetOutOfRange();
         //     ++badNum;
         //     continue;  

@@ -24,8 +24,10 @@ public:
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty();
     bool Converge() const {
+        // 这个标准差是很不准的，所以不能用其判断
         return uncertainty_ < config->maxDepthConvergeStd && 
             z_ > config->minDepth && z_ < config->maxDepth;
+        // return obvTime_ > 2;
     }
     void SetOutOfRange() {outOfRange_ = true;}
     bool IsOutOfRange() const {return outOfRange_;}
@@ -54,13 +56,14 @@ public:
     std::map<KeyFrame*, Eigen::Matrix3d> J_Pc2_Pw;
     std::vector<Eigen::Matrix<double, 3, 1> > J_Pw_z;
     std::vector<Eigen::Matrix<double, 3, 6> > J_Pw_Twc1;
-    void ResetFEJ() {J_Pc2_Twc2.clear(); J_Pc2_Pw.clear(); J_Pw_z.clear(); J_Pw_Twc1.clear(); J_Pc2_T12_.clear();}
+    void ResetFEJ();
 
     mutable bool outOfRange_ = false; // 多处涉及到同一指针操作，不能直接释放指针
 
     // 跟踪一帧的FEJ
     std::vector<Eigen::Matrix<double, 3, 6>> J_Pc2_T12_;
 
+    bool noUsed_ = false;
 };
 
 #endif

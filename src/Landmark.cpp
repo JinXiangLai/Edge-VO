@@ -63,6 +63,7 @@ void Landmark::UpdateUncertainty() {
     invZ_ = 1.0 / z_;
     depthRange_[0] = max(config->minDepth, z_ - 3 * uncertainty_);
     depthRange_[1] = min(config->maxDepth, z_ + 3 * uncertainty_);
+    ++obvTime_;
 }
 
 vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
@@ -72,4 +73,14 @@ vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
     vector<Eigen::Vector2d> kp2 = ::FindMatches(*this, kf2, T21, *cam_);
     return kp2;
 }
+
+void Landmark::ResetFEJ() {
+    J_Pc2_Twc2.clear(); 
+    J_Pc2_Pw.clear(); 
+    J_Pw_z.clear(); 
+    J_Pw_Twc1.clear(); 
+    J_Pc2_T12_.clear(); 
+    noUsed_ = false;
+}
+
 

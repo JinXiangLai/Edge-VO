@@ -56,8 +56,8 @@ bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
     //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
     const double imgScale = config->imageScale;
-    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
-            p.y() >= 6*imgScale && p.y() < img.rows-10*imgScale; // 把车头像素滤掉
+    return p.x() >= 16*imgScale && p.x() < img.cols-16*imgScale && 
+            p.y() >= 16*imgScale && p.y() < img.rows-20*imgScale; // 把车头像素滤掉
 }
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
@@ -265,14 +265,16 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
             return false;
         }
 
+        const Eigen::Vector2i p1 = lk1.uv_.cast<int>();
+
 #ifndef USE_SSD
         const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
         const u_int64_t d2 = kf2.descriptor_[descId];
         score = CalculateDescriptorScore(lk1.descriptor_, d2);
         return score < config->maxDescriptorDist;
 #else
-        score = CalculatePatchSSD(lk1.host_->grayImg_, kf2.grayImg_, lk1.uv_.cast<int>(), p2);
-        return score < config->maxSSDdist;
+        score = CalculatePatchSSD(lk1.host_, &kf2, p1, p2);
+        return score < config->maxSSDdist; // 是否应该保证极线搜索范围不能过大呢？前后像素应该差不多吧
 #endif
 
     };
@@ -954,7 +956,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             if(CheckDepthQuality(*lk2, T21, lk1->uv_, pc2.z()) ) {
 
 #ifdef USE_SSD
-                if( CalculatePatchSSD(lk2->host_->grayImg_, lk1->host_->grayImg_, lk2->uv_.cast<int>(), lk1->uv_.cast<int>()) >
+                if( CalculatePatchSSD(lk2->host_, lk1->host_, lk2->uv_.cast<int>(), lk1->uv_.cast<int>()) >
                     config->maxSSDdist * config->goodDescriptorDistRatio) {
                     continue;
                 }
@@ -970,7 +972,9 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
     return double(initNum) / kf2->landmark_.size();
 }
 
-double CalculatePatchSSD(const Mat &im1, const Mat &im2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2) {
+double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2) {
+    const Mat &im1 = kf1->grayImg_;
+    const Mat &im2 = kf2->grayImg_;
     const int range = config->descriptorPatchLen/2;
     const int x1 = px1.x(), y1 = px1.y(), x2 = px2.x(), y2 = px2.y();
     double sum = 0;

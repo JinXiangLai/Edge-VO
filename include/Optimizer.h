@@ -21,12 +21,17 @@ public:
         const bool onlyPoseUpdate = false);
 
     ~Optimizer();
+
+    struct ResidualInfo{
+        double cost = 0;
+        int usefulNum = 0;
+    };
     
     bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 
-    double CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12);
+    ResidualInfo CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12, const bool allowSetLandmark = false);
 
-    void CalculateJacobian(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
+    ResidualInfo CalculateJacobianAndCost(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
         Eigen::MatrixXd &H, Eigen::VectorXd &g);
 
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd &H, const Eigen::VectorXd &b, const int poseNum, const int pointNum, 
@@ -41,7 +46,7 @@ public:
 
     void AddOneKeyFeame(KeyFrame *kf);
 
-    double ConstructJ_H_b_g();
+    ResidualInfo ConstructJ_H_b_g();
 
     double ConstructJ_H_b_g_byMatch();
 
@@ -49,7 +54,7 @@ public:
 
     bool ExecuteLMoptimize();
 
-    double CalculateResidual();
+    ResidualInfo CalculateResidual(const std::vector<Landmark*> &optLandmark, const std::vector<KeyFrame*> &win, const bool allowSetLandmark = false);
 
     bool SlidingWindowOptimize();
 
