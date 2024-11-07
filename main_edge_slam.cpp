@@ -69,32 +69,31 @@ int main(int argc, char** argv){
     Optimizer optimizer(cam);
     
     KeyFrame *initFrame = nullptr;
-    KeyFrame lastF;
+    KeyFrame lastF, lastLastF;
     thread *viewerThread;
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
     double accDist = 0.;
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
-        if(interaction->stepBystep) {
-            usleep(100 * 1000);
-            --i;
-            continue;
-        }
+        // if(interaction->stepBystep) {
+        //     usleep(100 * 1000);
+        //     --i;
+        //     continue;
+        // }
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
         cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 
-        KeyFrame curF(img, Twc, cam, i, 1);
+        KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
 
         if(!initFrame) {
             initFrame = new KeyFrame(curF);
-            lastF = curF;
-
             // 首帧设置为单位矩阵
             initFrame->SetTwc(Pose());
+            lastF = *initFrame;
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
@@ -108,23 +107,58 @@ int main(int argc, char** argv){
         //cv::destroyWindow("cur f"+to_string(vTimeStamps[i]));
         
         // 使用KF更新当前帧的pose
-        const Pose Twc1 = win.back()->priorTwc_;
         const Pose Twc2 = curF.priorTwc_;
-        const Pose Tc1c2 = Twc1.Inverse() * Twc2;
-        curF.SetTwc(win.back()->Twc_ * Tc1c2);
+        Pose Twc1, Tc1c2;
+        if(!isInitialized || 1) {
+            Twc1 = win.back()->priorTwc_;
+            Tc1c2 = Twc1.Inverse() * Twc2;
+            Pose noise;
+            if(isInitialized) {
+                // noise = ConvertRPYandPostion2Pose({0.1, 0.2, 0}, {0.01, 0.02, 0}, kDeg2Rad);
+            }
+            curF.SetTwc(win.back()->Twc_ * Tc1c2 * noise);
+            
+        } else {
+            // 使用这里就无法估计准pose，排查优化
+            // 初步排查是角度没估计准，这里是为什么，又应该如何做呢？
+#if 0
+            const Pose Twc1 = lastF.priorTwc_;
+            Tc1c2 = Twc1.Inverse() * Twc2;
+            // noise
+            //Pose noise()
+#else
+            // 使用匀速模型，即上上帧的pose与上一帧的pose之间的位姿估计
+            Tc1c2 = lastLastF.priorTwc_.Inverse() * lastF.priorTwc_;
+            Pose _Tc1c2 = lastLastF.Twc_.Inverse() * lastF.Twc_; 
+            //_Tc1c2.q_wb_ = Eigen::Quaterniond::Identity();
+            //Tc1c2.q_wb_ = Eigen::Quaterniond::Identity(); // 变成这里也能差不多跑一下，难道是我关于平移的雅可比球错？？？
+            // _Tc1c2.q_wb_ = Tc1c2.q_wb_;
+            // _Tc1c2.t_wb_ = Tc1c2.t_wb_;
+            cout << "_Tc1c2 * Tc1c2: " << _Tc1c2.Inverse() * Tc1c2 << endl;
+
+            // TODO: 插值运动，选择最小值的运动假设
+
+            // 这里可以调通，前提是使用在CalculateResiduals时，不使用胡伯核评估
+            // 所以问题应该定位在TrackLocalMap函数里看需要怎么修改
+#endif
+            curF.SetTwc(lastF.Twc_ * Tc1c2);
+        }
+
+        const double trans = (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
+        accDist += trans;
+
         // 显示线程使用
         interaction->visualCurF = curF;
+        interaction->visualCurFinit = curF;
         
         if(!isInitialized) {
             // 初始化深度图
-            const double trans = (lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm();
-            accDist += trans;
+            lastLastF = lastF;
             lastF = curF;
-
             const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
             if(config->messageLevel <= MessageLevel::Error)
-                cout << "kfConvergeEdgeRatio: " << kfConvergeEdgeRatio << endl;
-            if(kfConvergeEdgeRatio > 0.6 || (accDist > 1.0 && (curF.id_ - initFrame->id_ > 30) && kfConvergeEdgeRatio > 0.3) ) {
+                cout << "kfConvergeEdgeRatio, accDist: " << kfConvergeEdgeRatio << ", " << accDist << endl;
+            if(kfConvergeEdgeRatio > 0.6 || (accDist > 0.5 && (curF.id_ - initFrame->id_ > 30) && kfConvergeEdgeRatio > 0.3) ) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;
@@ -134,13 +168,13 @@ int main(int argc, char** argv){
             } 
         }
 
-#if 0
+#if 1
         // Step: 利用当前帧更新深度图
         // step1: 优化当前帧pose
-        optimizer.SetInitLambda(1e-3);
+        optimizer.SetInitLambda(1);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        optimizer.TrackLocalMap(&curF);
+        // optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准，卒
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
@@ -153,7 +187,7 @@ int main(int argc, char** argv){
 #endif        
         // 显示线程更新使用
         interaction->visualCurF = curF;
-        // step3: 剔除地图外点
+        // step3: 剔除地图外点, TODO: 应该使用融合而不是剔除策略！！！
         optimizer.CullingErrorLandmark(&curF);
         
         // step4: 将深度图传递给当前帧
@@ -162,26 +196,24 @@ int main(int argc, char** argv){
         double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
         
-        const double trans = (lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm();
-        accDist += trans;
         // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
         //     ShowPointCloud(curF.landmark_);
         //     // 只能赋值内容，不能赋值地址
         //     lastF = curF;
         // }
-        lastF = curF;
         
         // 当跟踪成功的点数量少于一定比例且运动满足阈值时，生成新的KF
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
         const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
-        bool case1 = initDepthRatio < config->needNewKFMaxMatchEdgeRatio,
-             case2 = kfConvergeEdgeRatio > 0.3,
+        bool case1 = false, // initDepthRatio < config->needNewKFMaxMatchEdgeRatio,
+             case2 = true, // kfConvergeEdgeRatio > 0.3,
              case3 = T12.t_wb_.norm() > config->needNewKFtrans,
              case4 = Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot,
              case5 = accDist > config->needNewKFtrans;
         // 必须保证当前KF收敛足够多的点了
+        cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " " << case4 << " " << case5 << " accdist: " << accDist << endl;
         if((case1 || case3 || case4 || case5) && case2) {
             {
                 static bool first = true;
@@ -200,7 +232,7 @@ int main(int argc, char** argv){
             // 重叠度低，需要将当前帧选为KF，更新它的Landmark
             if(curF.unPx_.size() < win.back()->unPx_.size() * 0.6) {
                 // TODO：显示线程会显示出异常的图像，需要检测并剔除异常图像
-                continue;
+                //continue;
             } else {
                 accDist = 0;
             }
@@ -230,6 +262,9 @@ int main(int argc, char** argv){
             // delete curF; // 释放非KF内存
             usleep(10 * 1000);
         }
+
+        lastLastF = lastF;
+        lastF = curF;
 
         while(interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i

@@ -37,6 +37,7 @@ Config::Config(const std::string &yamlFilePath) {
 
     abnormalProjectResidual = f["abnormalProjectResidual"].as<double>();
     huberDelta = f["huberDelta"].as<double>();
+    huberDelta2 = huberDelta * huberDelta;
     keepLastKFnumInWindow = f["keepLastKFnumInWindow"].as<int>();
     maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
     imgTimeOffset = f["imgTimeOffset"].as<double>();
@@ -63,9 +64,13 @@ Config::Config(const std::string &yamlFilePath) {
     cannyLowerTh = f["cannyLowerTh"].as<double>();
     cannyupperTh = f["cannyupperTh"].as<double>();
 
+    minEpipolarLength = f["minEpipolarLength"].as<int>();
+    minSearchStep = f["minSearchStep"].as<int>();
+    bestMatchRatio = f["bestMatchRatio"].as<double>();
 
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
 
+    pyrLevel = f["pyrLevel"].as<int>();
 }
 
 Config *config = nullptr;

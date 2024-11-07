@@ -1,7 +1,7 @@
 
 %YAML: 1.0
 
-dataDir: /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg2_xyz # "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg2_xyz" # /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg1_desk2 # 
+dataDir:  /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg2_xyz # /home/laijinxiang/edge-slam/rgbd_dataset_freiburg2_xyz # /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg1_desk2 # 
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -24,17 +24,17 @@ wheelRadius: 0
 maxDepth: 5.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.2
 
-maxDescriptorDist: 5 # or 使用光度残差时重新设置
+maxDescriptorDist: 20 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 4.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
 maxDepthConvergeStd: 0.1 # 深度收敛的标准差
 abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
-huberDelta: 5 # 胡伯核函数参数
+huberDelta: 4 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 8
+maxKFnumInWindow: 5
 imgTimeOffset: 0.0 # sec,时间同步误差
-needNewKFtrans: 1.0 # 选取新KF的条件
+needNewKFtrans: 0.2 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.2 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
@@ -54,14 +54,23 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 20
+firstImgIdx: 50
 loopClosureImgIdx: 10
 
-cannyLowerTh: 60 # 150
-cannyupperTh: 80 # 160
+cannyLowerTh: 20 # 150
+cannyupperTh: 30 # 160
+
+# 设定一些极线搜索立体匹配需要的参数，单位均在像素坐标系下
+minEpipolarLength: 30 # 我们需要在多次观测中看到深度收敛，所以即便设置该值，观测多次后，理论上深度会收敛到真值
+# 存在相邻边缘像素被匹配的情况
+minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
+bestMatchRatio: 0.9 # 比次优匹配小0.95
+minDepthCompareRatio: 0.7
+maxDepthCompareRatio: 1.4
+pyrLevel: 3
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0
 minTranslation: 0.5 # m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
 nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优描述子的比值，暂未启用
-descriptorPatchLen: 7
+descriptorPatchLen: 5

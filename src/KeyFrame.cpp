@@ -132,6 +132,86 @@ void KeyFrame::CannyEdgeDetect() {
     const double lowerThreshold = config->cannyLowerTh; // 下限阈值
     const double upperThreshold = config->cannyupperTh; // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
+
+    for(int i = 0; i < level_; ++i) {
+        Mat blur_i;
+        double ratio = 1./pow(2, i);
+        if(i > 0)
+            cv::resize(blurred, blur_i, cv::Size(ratio * blurred.cols, ratio * blurred.rows));
+        else
+            blur_i = blurred;
+
+        Canny(blur_i, edgeImg_[i], lowerThreshold, upperThreshold, apertureSize);
+        // cv::Mat er = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+        cv::Mat di = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(8, 8));
+        // cv::erode(blur_i, blur_i, er);
+        cv::dilate(blur_i, blur_i, di);
+        
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+        
+        if(config->messageLevel == MessageLevel::Debug)
+            cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
+                    << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
+
+        vector<Point2i> px;
+        // 取出边缘像素点
+        constexpr int jump = 6;
+        for(int x = jump; x < edgeImg_[i].cols-jump; ++x) {
+            for(int y = jump; y < edgeImg_[i].rows-jump; ++y) {
+                if(edgeImg_[i].at<uchar>(y, x) != 0 ) {
+                    px.push_back({x, y});
+                }
+            }
+        }
+
+        // cv::imshow("distor", edgeImg_[i]);
+        // cv::waitKey(0);
+
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+        unPx_[i] = cam_->UndistortPoints(px); // 去畸变后的像素平面上的点
+        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+        if(config->messageLevel == MessageLevel::Debug)
+            cout << "Undistort " << px.size() << "points spend " 
+                << chrono::duration<double>(t5 - t4).count() << "s" << endl;
+
+        edgeImg_[i] = Mat::ones(edgeImg_[i].rows, edgeImg_[i].cols, CV_8UC1) * 255;
+        vector<Eigen::Vector2d>::iterator it = unPx_[i].begin();
+        int id = -1;
+        while(it != unPx_[i].end()) {
+            ++id;
+            const Eigen::Vector2d &p = *it;
+            // 边缘点置为黑色
+            if(InRange(edgeImg_[i], {p.x(), p.y()}) ) {
+                edgeImg_[i].at<uchar>(int(p.y()), int(p.x()) ) = 0;
+                
+                // 使用未去畸变像素邻域
+                const int x = px[id].x, y = px[id].y;
+                
+                // 计算描述子
+                // const Mat &m = grayImg_;
+                // Eigen::Matrix<float, kDescriptorPatchSize, 1> d;
+                // d << m.at<uchar>(y-1, x-1), m.at<uchar>(y-1, x), m.at<uchar>(y-1, x+1),
+                //      m.at<uchar>(y, x-1), m.at<uchar>(y, x), m.at<uchar>(y, x+1), 
+                //      m.at<uchar>(y+1, x-1), m.at<uchar>(y+1, x), m.at<uchar>(y+1, x+1);
+                // descriptor_.emplace_back(d);
+
+                // 只保留第0层金字塔
+                if(i == 0) {
+                    descriptor_.push_back(CalculateDescriptor(grayImg_, {x, y}) );
+                    pointMapId_.insert({ {p.x(), p.y()}, descriptor_.size()-1});
+
+                }
+                ++it;
+            } else {
+                it = unPx_[i].erase(it);
+            }
+        }
+
+        //cv::imshow("undistor", edgeImg_[i]);
+        //cv::waitKey(0);
+
+    }
+/*
     Canny(blurred, edgeImg_[0], lowerThreshold, upperThreshold, apertureSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     
@@ -191,11 +271,14 @@ void KeyFrame::CannyEdgeDetect() {
 
     //cv::imshow("undistor", edgeImg_[0]);
     //cv::waitKey(0);
+*/
 }
 
 void KeyFrame::GenerateDTandDerivative() {
-    dist_[0] = GetDistanceTransform(edgeImg_[0]);
-    CaculateDerivative(dist_[0], dx_[0], dy_[0]);
+    for(int i = 0; i < level_; ++i) {
+        dist_[i] = GetDistanceTransform(edgeImg_[i]);
+        CaculateDerivative(dist_[i], dx_[i], dy_[i]);
+    }
 }
 
 size_t KeyFrame::GenerateLandmark(KeyFrame &kf2, vector<vector<Eigen::Vector2d> > &debugGoodKp1, vector<vector<Eigen::Vector2d> >&debugGoodKp2,
@@ -230,7 +313,8 @@ size_t KeyFrame::InitializeLandmark() {
         // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
         // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
         // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
-        landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor_[i], 1.0);
+        const uint64_t descriptor = 0;
+        landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
         // host帧也要增加与landmark的相互观测
         landmark_[i]->target_.insert({this, unPx_[0][i]}); 
     }
@@ -259,12 +343,19 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         //const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
         const vector<Eigen::Vector2d> kp2 = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1);
+        if(kp2.empty()) {
+            continue;
+        }
         // 更新的是host帧下的深度
         const Pose T21 = kf2.Tcw_ * lk1->host_->Twc_;
         if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1) ) {
             // cout << "depth range, depth, std: [" << lk1->depthRange_[0] << " " << lk1->depthRange_[1] << "] "
             //  << lk1->z_ << " " << lk1->uncertainty_ << endl;
-            // DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+            // if(i%10 == 0) {
+            //     DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
+            //     DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, {kp2[0]}, "BEST matche", 1, 1);
+
+            // }
             ++lk1->obvTime_; // 对于KF有用，因其会多次更新depth
             if(lk1->Converge() ) {
                 matchEdgeNum += 1.0;
@@ -276,10 +367,6 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
             << " " << convergeEdgeNum_ << endl;
 
-    if(convergeEdgeNum_ < landmark_.size() * 0.2) {
-        // 有效路标点数量过低，需要继续进行深度滤波
-        return 0.;
-    }
     return double(convergeEdgeNum_) / landmark_.size();
 }
 
@@ -442,7 +529,10 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
             continue;
         }
         if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
-            lk1->SetOutOfRange();
+            // lk1->SetOutOfRange();
+            lk1->depthCov_ = pow(5.0, 2);
+            lk1->UpdateUncertainty(false);
+            lk1->obvTime_ = 0;
             ++badNum;
             continue;
         } 
@@ -502,7 +592,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
             px1[0] = cam_->fx_ * xyNorm[0] + cam_->cx_;
             px1[1] = cam_->fy_ * xyNorm[1] + cam_->cy_;
             ep1 = px1 - lk1->uv_;
-            cout << "px1 | l1: " << px1.transpose() << " | " << l1 << endl;
+            cout << "px1 | ep1 length: " << px1.transpose() << " | " << ep1.norm() << endl;
             cout<< lk1 << "  " << "ep1-1: " << ep1.transpose() << endl;
 
         } else {
