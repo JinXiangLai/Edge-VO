@@ -36,7 +36,43 @@ bool InRange(const cv::Mat &img, const Eigen::Vector2i &p);
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
 
-double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p);
+template<typename T>
+    double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p);
+
+template<typename T>
+    double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
+        if(!InRange(img, p.cast<int>())) {
+            return 0;
+        }
+        
+        const int col = img.cols;
+        const int row = img.rows;
+        const int x = int(p.x());
+        const int y = int(p.y());
+        if(x == col-1 || x == 0 || y == row-1 || y == 0) {
+            return img.at<T>(y, x);
+        }
+
+        /****** 双线性插值 ******
+        * +---+---+
+        * + v1+ v2+
+        * +---+---+
+        * + v3+ v4+
+        * +---+---+
+        ***********************/
+        float v1 = img.at<T>(y, x);
+        float v2 = img.at<T>(y, x+1);
+        float v3 = img.at<T>(y+1, x);
+        float v4 = img.at<T>(y+1, x+1);
+        const double wx = p.x() - x;
+        const double wy = p.y() - y;
+        const double w1 = (1-wx) * (1-wy);
+        const double w2 = wx * (1-wy);
+        const double w3 = (1-wx) * wy;
+        const double w4 = wx * wy;
+        // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
+        return w1*v1 + w2*v2 + w3*v3 + w4*v4;
+    }
 
 void Assert(bool a, const std::string &s);
 
@@ -55,6 +91,8 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track 
 int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
 std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
+
+std::vector<Eigen::Vector2d> FindMatchesAlongEpipolar(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
 
 std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const Eigen::Vector2d &kp1, const cv::Mat &edgeImg, 
     const Pose &T21, const Camera &cam);
@@ -126,6 +164,7 @@ class InteractionParam {
 public:
     bool stepBystep = false;
     KeyFrame visualCurF;
+    KeyFrame visualCurFinit;
     KeyFrame *visualLastKF = nullptr;
     bool resetWindow = false;
     cv::viz::Viz3d *window; // ("Local Map Viewer"); 

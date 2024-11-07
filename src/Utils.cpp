@@ -56,8 +56,8 @@ bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
     //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
     const double imgScale = config->imageScale;
-    return p.x() >= 16*imgScale && p.x() < img.cols-16*imgScale && 
-            p.y() >= 16*imgScale && p.y() < img.rows-20*imgScale; // 把车头像素滤掉
+    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
+            p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
 }
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
@@ -70,39 +70,40 @@ Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
 }
 
 // TODO: 可以预先对每个像素进行10等分，然后通过查表获得值
-double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
-    if(!InRange(img, p.cast<int>())) {
-        return 0;
-    }
-    
-    const int col = img.cols;
-    const int row = img.rows;
-    const int x = int(p.x());
-    const int y = int(p.y());
-    if(x == col-1 || x == 0 || y == row-1 || y == 0) {
-        return img.at<float>(y, x);
-    }
 
-    /****** 双线性插值 ******
-    * +---+---+
-    * + v1+ v2+
-    * +---+---+
-    * + v3+ v4+
-    * +---+---+
-    ***********************/
-    float v1 = img.at<float>(y, x);
-    float v2 = img.at<float>(y, x+1);
-    float v3 = img.at<float>(y+1, x);
-    float v4 = img.at<float>(y+1, x+1);
-    const double wx = p.x() - x;
-    const double wy = p.y() - y;
-    const double w1 = (1-wx) * (1-wy);
-    const double w2 = wx * (1-wy);
-    const double w3 = (1-wx) * wy;
-    const double w4 = wx * wy;
-    // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
-    return w1*v1 + w2*v2 + w3*v3 + w4*v4;
-}
+//double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
+//    if(!InRange(img, p.cast<int>())) {
+//        return 0;
+//    }
+    
+//    const int col = img.cols;
+//    const int row = img.rows;
+//    const int x = int(p.x());
+//    const int y = int(p.y());
+//    if(x == col-1 || x == 0 || y == row-1 || y == 0) {
+//        return img.at<float>(y, x);
+//    }
+
+//    /****** 双线性插值 ******
+//    * +---+---+
+//    * + v1+ v2+
+//    * +---+---+
+//    * + v3+ v4+
+//    * +---+---+
+//    ***********************/
+//    float v1 = img.at<float>(y, x);
+//    float v2 = img.at<float>(y, x+1);
+//    float v3 = img.at<float>(y+1, x);
+//    float v4 = img.at<float>(y+1, x+1);
+//    const double wx = p.x() - x;
+//    const double wy = p.y() - y;
+//    const double w1 = (1-wx) * (1-wy);
+//    const double w2 = wx * (1-wy);
+//    const double w3 = (1-wx) * wy;
+//    const double w4 = wx * wy;
+//    // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
+//    return w1*v1 + w2*v2 + w3*v3 + w4*v4;
+//}
 
 void Assert(bool a, const string &s) {
     if(!a) {
@@ -164,7 +165,7 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
              << "kp1 & kp2 size: " << kp1.size() << " & " << kp2.size() << endl;
         exit(-1);
     }
-    Assert(kp1.size()==kp2.size() || kp1.size() == 1 || kp1.size() < kp2.size(), "match point size error!");
+    //Assert(kp1.size()==kp2.size() || kp1.size() == 1 || kp1.size() < kp2.size(), "match point size error!");
     Mat im(max(img1.rows, img2.rows), (img1.cols+img2.cols), CV_8UC3, cv::Scalar{0, 0, 0});
     Mat im1, im2;
     cvtColor(img1, im1, COLOR_GRAY2BGR);
@@ -177,6 +178,14 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
     cv::Scalar pColor = cv::Scalar(0, 0, 255);
     int radius = 1;
     cv::Scalar lColor = cv::Scalar(0, 255, 0);
+    cv::Scalar startColor = cv::Scalar(255, 255, 255);
+    cv::Scalar endColor = cv::Scalar(0, 255, 255);
+
+    // 查看 KF2上(x, y)是否与KF1上(x, y)在同一极平面上
+    // 实践证明，不会
+    cv::Point matchPxKF1 = cv::Point(kp1[0].x()*ratio, kp1[0].y()*ratio);
+    cv::Point pxKF1inKF2 = cv::Point (sCol+kp1[0].x()*ratio, kp1[0].y()*ratio);
+    cv::line(im, matchPxKF1, pxKF1inKF2, lColor, 1);
 
     for(int i = 0; i < kp2.size(); ++i) {
         if(!InRange(img2, kp2[i].cast<int>())) {
@@ -190,11 +199,21 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
 
         cv::Point c2(sCol+kp2[i].x()*ratio, kp2[i].y()*ratio);
         // if((kp1.size() == 1 || 1) && i%10 == 0) {
-        if( i%jump == 0 ) {
-            cv::line(im, c1, c2, lColor, 1);
-        }
+        //if( i%jump == 0 ) {
+        //    cv::line(im, c1, c2, lColor, 1);
+        //}
         cv::circle(im, c1, radius, pColor, 1);
         cv::circle(im, c2, radius, pColor, 1);
+        if(i == int(kp1.size() - 1)) {
+            cv::circle(im, c1, radius*2, endColor, 2);
+        }
+        if(i == int(kp2.size() - 1)) {
+            cv::circle(im, c2, radius*2, endColor, 2);
+        }
+        if(i == 0) {
+            cv::circle(im, c1, radius*2, startColor, 2);
+            cv::circle(im, c2, radius*2, startColor, 2);
+        }
     }
     cv::namedWindow(name);
     cv::imshow(name, im);
@@ -707,6 +726,7 @@ void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vect
     };
 
     img = cv::imread(vstrImages[idx], IMREAD_GRAYSCALE);
+    cv::imshow("src gray", img);
     const double imgScale = config->imageScale;
     const int newW = img.cols * imgScale, newH = img.rows * imgScale;
     cv::resize(img, img, cv::Size(newW, newH) );

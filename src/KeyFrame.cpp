@@ -120,9 +120,13 @@ void KeyFrame::operator =(const KeyFrame &f) {
 
 void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+#if 0
     cv::Mat blurred;
     // 应用高斯滤波来平滑边缘
     cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
+#else
+    Mat blurred = grayImg_;
+#endif
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     const double lowerThreshold = config->cannyLowerTh; // 下限阈值
@@ -245,7 +249,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     }
 
     for(int i = 0; i < landmark_.size(); ++i) {
-        if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
+        if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange() || i%20 != 0) {
             continue;
         }
         Landmark *lk1 = landmark_[i];
@@ -253,7 +257,8 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
             convergeEdgeNum_ += 1;
         }
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
-        const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
+        //const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
+        const vector<Eigen::Vector2d> kp2 = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1);
         // 更新的是host帧下的深度
         const Pose T21 = kf2.Tcw_ * lk1->host_->Twc_;
         if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1) ) {
@@ -452,4 +457,187 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
     }
 
     return double(badNum) / convergeNum;
+}
+
+
+vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1) {
+    const Pose T21 = kf2->Twc_.Inverse() * Twc_;
+    const Pose T12 = T21.Inverse();
+    const Mat &edgeImg2 = kf2->edgeImg_[0];
+
+    // for(int i = 0; i < landmark_.size(); ++i) {
+    //     Landmark *lk1 = landmark_[i];
+        if(lk1 == nullptr || lk1->IsOutOfRange()) {
+            // continue;
+            return {};
+        }
+
+        double maxZ1 = lk1->z_+3*lk1->uncertainty_;
+        double minZ1 = max(0.1, lk1->z_-3*lk1->uncertainty_); 
+        const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), maxZ1);
+        const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), minZ1);
+        const Eigen::Vector3d farPc2 = T21 * farPc1;
+        if(farPc2.z() < 0.1) {
+            return {};
+        }
+        const Eigen::Vector3d nearPc2 = T21 * nearPc1;
+        if(nearPc2.z() < 0.1) {
+            return {};
+        }
+        Eigen::Vector2d farPx2 = cam_->Project2PixelPlane(farPc2),
+                              nearPx2 = cam_->Project2PixelPlane(nearPc2);
+        // 从 far->near 的方向向量
+        Eigen::Vector2d ep2 = nearPx2 - farPx2; // 我们从最远到最近深度进行遍历
+        // TODO： 保证一定的极线长度
+        // 这里很简单我们就获得了KF2上的极线端点和极线单位向量{1px}
+        ep2 /= ep2.norm();
+
+        // OK，接下来求KF1像素平面上对应极线
+        // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
+        const Eigen::Vector3d P12 = T12.t_wb_;
+        Eigen::Vector2d ep1;
+        Eigen::Vector2d px1; // debug极点显示
+        if(P12[2] != 0) {
+            const Eigen::Vector2d xyNorm = (P12/P12[2]).head(2);
+            px1[0] = cam_->fx_ * xyNorm[0] + cam_->cx_;
+            px1[1] = cam_->fy_ * xyNorm[1] + cam_->cy_;
+            ep1 = px1 - lk1->uv_;
+            cout << "px1 | l1: " << px1.transpose() << " | " << l1 << endl;
+            cout<< lk1 << "  " << "ep1-1: " << ep1.transpose() << endl;
+
+        } else {
+            // 两光心的连线O1O2在一条直线上，所以， KF1上的极线在哪里呢？
+            // 答：将KF1画称右手OXYZ世界系，再画其上的z=1平面，由于OXY平面平行于z=1平面，
+            // 意味着，KF1归一化平面上e1Pe2与极平面O1PO2是相似的，因为 e1P、e2P分别与O1P、O2P重叠，
+            // 且e1、e2都在KF1的归一化平面上{事实上，像素平面可以认为它与归一化平面重叠，只是要使用焦距fx、fy缩放, cx、cy平移而已}
+            // 那么, e1e2必然平行于O1O2, 那么极线方向我们自然可以写出来：
+            ep1.x() = P12.x() * cam_->fx_; // 乘以焦距缩放到像素坐标
+            ep1.y() = P12.y() * cam_->fy_;
+            cout<< lk1 << "  " << "ep1-2: " << ep1.transpose() << endl;
+
+        }
+        ep1/=ep1.norm();
+        // 这里我们使用双线性插值来获取光度，这样就不用担心四舍五入的问题了
+        Eigen::Vector2d p1 = lk1->uv_;
+        Eigen::Vector2d p1m1 = p1 - ep1, p1m2 = p1 - 2*ep1,
+                        p1p1 = p1 + ep1, p1p2 = p1 + 2*ep1;
+        //ep1 = {1, 1};
+        //        Eigen::Vector2d p1m1 = p1 - ep1, p1m2 = p1 - 2*ep1,
+        //                p1p1 = p1 + ep1, p1p2 = p1 + 2*ep1;
+        vector<Eigen::Vector2d> debugPx1{p1, p1m1, p1m2, p1p1, p1p2};
+        cout << "(p1p2-p1m2).norm: " << (p1p2-p1m2).norm() << endl;
+        
+        if(!InRange(grayImg_, p1m2.cast<int>()) || !InRange(grayImg_, p1p2.cast<int>())) {
+            cout << "ERROR p1m2, p1p2: " << p1m2.transpose() << " | " << p1p2.transpose() << endl;
+            return {};
+        }
+        // OK，接下来在对极线上等距取5个点，据此来计算SSD
+        double v1[5];
+        v1[2] = BilinearInterpolate<uchar>(grayImg_, p1),
+            v1[1] = BilinearInterpolate<uchar>(grayImg_, p1m1),
+            v1[0] = BilinearInterpolate<uchar>(grayImg_, p1m2),
+            v1[3] = BilinearInterpolate<uchar>(grayImg_, p1p1),
+            v1[4] = BilinearInterpolate<uchar>(grayImg_, p1p2);
+        double s1 = 0;
+        double avg1 = 0;
+        for(int i = 0; i < 5; ++i) {
+            s1 += v1[i];
+        }
+        avg1 = s1/5;
+
+        auto px2IsEdge = [&edgeImg2] (const Eigen::Vector2d px2) -> bool{
+            bool isEdge = edgeImg2.at<uchar>(px2.y(), px2.x()) == 0;
+            if(!isEdge) {
+                // 允许小的像素偏差
+                const int ix = px2.x(), iy = px2.y();
+                vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
+                for(const Eigen::Vector2i &dp : xy) {
+                    Point2i p(ix+dp.x(), iy+dp.y());
+                    if(edgeImg2.at<uchar>(p) == 0) {
+                        isEdge = true;
+                        break;
+                    }
+                }
+            }
+            return isEdge || 1;
+        };
+
+
+
+        double bestScore = DBL_MAX, secondBestScore = DBL_MAX;
+        Eigen::Vector2d bestP2{1000, 1000}, secondBestP2{1000, 1000};
+
+        Eigen::Vector2d &p2 = farPx2;
+        cout << "farPx2, ep2: " << p2.transpose() << " | " << ep2.transpose() << endl;
+        Eigen::Vector2d p2m1 = p2 - ep2, p2m2 = p2 - 2*ep2,
+                        p2p1 = p2 + ep2, p2p2 = p2 + 2*ep2;
+        vector<Eigen::Vector2d> debugPx2{p2, p2m1, p2m2, p2p1, p2p2};
+        //double v2, v2m1, v2m2, v2p1, v2p2;
+        double v2[5];
+        //double s2 = 0, avg2 = 0; // 可以使用滑窗计算
+        const Mat &img2 = kf2->grayImg_;
+        while ((p2 - nearPx2).norm() > 1) {
+            //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
+            if (InRange(kf2->grayImg_, p2m2.cast<int>()) && InRange(kf2->grayImg_, p2p2.cast<int>()) && px2IsEdge(p2)) {
+                    v2[2] = BilinearInterpolate<uchar>(img2, p2);
+                    v2[1] = BilinearInterpolate<uchar>(img2, p2m1),
+                    v2[0] = BilinearInterpolate<uchar>(img2, p2m2),
+                    v2[3] = BilinearInterpolate<uchar>(img2, p2p1),
+                    v2[4] = BilinearInterpolate<uchar>(img2, p2p2);
+
+                    double s2 = 0, avg2 = 0;
+                    for(int i = 0; i < 5; ++i) {
+                        s2 += v2[i];
+                    }
+                    avg2 = s2/5;
+
+                //cout << "v2m2, v2, v2p2: " << v2m2 << ", " << v2 << ", " << v2p2 << endl;
+                const double score = CalculateSSD(v1, v2, avg1, avg2);
+                
+                if(score < bestScore) {
+                    secondBestScore = bestScore;
+                    secondBestP2 = bestP2;
+                    bestScore = score;
+                    bestP2 = p2;
+                } else if(score < secondBestScore) {
+                    secondBestScore = score;
+                    secondBestP2 = p2;
+                }
+            }
+
+            p2m2 = p2m1,
+            p2m1 = p2,
+            p2 = p2p1,
+            p2p1 = p2p2,
+            p2p2 += ep2;
+            debugPx2.push_back(p2p2);
+            debugPx1.push_back(p1);
+            p1 += ep1;
+        }
+
+        //if(InRange(edgeImg2, bestP2.cast<int>())) {
+        //    cout << "best, second score mean: " << bestScore/5 << " " << secondBestScore/5 << endl;
+        //    debugPx2.push_back(bestP2);
+
+        //}
+        //debugPx1.push_back(lk1->uv_);
+
+        cout << "debugPx1, debugPx2 size: " << debugPx1.size() << ", " << debugPx2.size() << endl;
+        cout << "lk1->uv_: " << lk1->uv_.transpose() << endl;
+        cout << "p1m2, p1p2: " << p1m2.transpose() << " | " << p1p2.transpose() << endl;
+        cout << "bestP2: " << bestP2.transpose() << endl;
+        //DrawMatch(grayImg_, kf2->grayImg_, debugPx1, debugPx2, "current point 2 all Epipolar constraint matches", 1, 1000000);
+
+        const bool smallScore = bestScore < config->maxDescriptorDist * 5;
+        if(!smallScore) {
+            return {};
+        }
+        const bool goodScore = bestScore< 1.0 * secondBestScore;
+        const double badDist = (bestP2 - secondBestP2).norm() > 10;
+        if(goodScore || (!badDist && !goodScore )) {
+            return {bestP2};
+        }
+
+        return {};
+    // }
 }

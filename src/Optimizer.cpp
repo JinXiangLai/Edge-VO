@@ -71,7 +71,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidual(const vector<Landmark*> &lk
             const bool inRange = InRange(dist, px.cast<int>());
             if(inRange) {
                 // 必须与计算Jacobian的残差计算方式一致
-                double r = BilinearInterpolate(dist, px);
+                double r = BilinearInterpolate<float>(dist, px);
                 double J_huber_r = 0;
                 r = HuberLoss(r, J_huber_r);
                 info.cost += r;
@@ -155,10 +155,10 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(vector<Landmark*> &l
                 p.noUsed_ = true;
                 continue;
             }
-            const double dx = BilinearInterpolate(dxMat, px2);
-            const double dy = BilinearInterpolate(dyMat, px2);
+            const double dx = BilinearInterpolate<float>(dxMat, px2);
+            const double dy = BilinearInterpolate<float>(dyMat, px2);
             
-            double r = BilinearInterpolate(dist, px2);
+            double r = BilinearInterpolate<float>(dist, px2);
             // 直接操作H和g阵的好处是可以马上剔除异常匹配值，
             // 而Jacobian矩阵要求残差维度已知，故而不好计算
             if(r > config->abnormalProjectResidual) {
@@ -810,7 +810,7 @@ int Optimizer::SampleUsefulLandmark() {
             continue;
         }
 
-        double r = BilinearInterpolate(target->dist_[0], px2);
+        double r = BilinearInterpolate<float>(target->dist_[0], px2);
         if(r > config->abnormalProjectResidual) {
             // 残差值异常，判定为离群点
             continue;
@@ -870,7 +870,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidual(const std::vector<Landmark*
             p->noUsed_ = true;
             continue;
         } else if(inRange) {
-            double r = BilinearInterpolate(target->dist_[0], px2);
+            double r = BilinearInterpolate<float>(target->dist_[0], px2);
             // 使用胡伯核函数减小异常残差值危害
             double J_huber_r = 0;
             r = HuberLoss(r, J_huber_r);
@@ -1085,7 +1085,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
             }
 
             // 经过校验，可以构建residual和jacobian
-            double r = BilinearInterpolate(target->dist_[0], px2);
+            double r = BilinearInterpolate<float>(target->dist_[0], px2);
             if(r > config->abnormalProjectResidual) {
                 // 残差值异常大，认为是离群点，但必须在迭代算法外部剔除
                 p->noUsed_ = true;
@@ -1098,8 +1098,8 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
             info.cost += r;
             debugKFMapResidualNum[target] += 1;
             resNum += resDim;
-            const double dx = BilinearInterpolate(target->dx_[0], px2);
-            const double dy = BilinearInterpolate(target->dy_[0], px2);
+            const double dx = BilinearInterpolate<float>(target->dx_[0], px2);
+            const double dy = BilinearInterpolate<float>(target->dy_[0], px2);
             /******** 投影过程 ********
             * K.inv * (u1, v1, 1) --> Pc1_norm * z1 --> Twc1 * Pc1 --> Twc2.inv * Pw -->  
             *  Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
@@ -1756,6 +1756,6 @@ void Optimizer::ShowLocalMap() {
         ::ShowLocalMap(vTwc);
         cout << "show " << vTwc.size() << " KFs map points" << endl;
     } else {
-        cerr << "wait for local map..." << endl;
+        //cerr << "wait for local map..." << endl;
     }
 }

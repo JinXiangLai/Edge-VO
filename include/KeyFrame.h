@@ -40,6 +40,14 @@ public:
     void SetTwc(const Pose &Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
     double CullingBadDepth(KeyFrame *kf2);
+    double CalculateSSD(double *v1, double *v2, double avg1, double avg2) {
+        double sum = 0;
+        double avg = avg1 - avg2;
+        for(int i = 0; i < 5; ++i) {
+            sum += abs(v1[i] - avg - v2[i]);
+        }
+        return sum;
+    }
     void ReleaseMat() {
         grayImg_.release();
         for(int i = 0; i < edgeImg_.size(); ++i) {
@@ -49,6 +57,8 @@ public:
             dy_[i].release();
         }
     }
+
+    std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1);
 
     unsigned int id_;
     cv::Mat grayImg_;
