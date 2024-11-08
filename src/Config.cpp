@@ -62,10 +62,11 @@ Config::Config(const std::string &yamlFilePath) {
     fastNum = f["fastNum"].as<int>();
     cannyLowerTh = f["cannyLowerTh"].as<double>();
     cannyupperTh = f["cannyupperTh"].as<double>();
-
+    maxEpipolarSearchLine = f["maxEpipolarSearchLine"].as<double>();
+    minEpipolarSearchLine = f["minEpipolarSearchLine"].as<double>();
+    best2SecondRatio = f["best2SecondRatio"].as<double>();
 
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
-
 }
 
 Config *config = nullptr;

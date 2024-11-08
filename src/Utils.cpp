@@ -180,41 +180,110 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
     cv::Scalar lColor = cv::Scalar(0, 255, 0);
     cv::Scalar startColor = cv::Scalar(255, 255, 255);
     cv::Scalar endColor = cv::Scalar(0, 255, 255);
+    cv::Scalar matchColor = cv::Scalar(255, 0, 255);
 
     // 查看 KF2上(x, y)是否与KF1上(x, y)在同一极平面上
     // 实践证明，不会
-    cv::Point matchPxKF1 = cv::Point(kp1[0].x()*ratio, kp1[0].y()*ratio);
-    cv::Point pxKF1inKF2 = cv::Point (sCol+kp1[0].x()*ratio, kp1[0].y()*ratio);
-    cv::line(im, matchPxKF1, pxKF1inKF2, lColor, 1);
+    // cv::Point matchPxKF1 = cv::Point(kp1[0].x()*ratio, kp1[0].y()*ratio);
+    // cv::Point pxKF1inKF2 = cv::Point (sCol+kp1[0].x()*ratio, kp1[0].y()*ratio);
+    // cv::line(im, matchPxKF1, pxKF1inKF2, lColor, 1);
 
-    for(int i = 0; i < kp2.size(); ++i) {
+    const int maxSize = max(kp2.size(), kp1.size());
+    for(int i = 0; i < maxSize; ++i) {
         if(!InRange(img2, kp2[i].cast<int>())) {
             continue;
         }
         
         cv::Point c1(kp1[0].x()*ratio, kp1[0].y()*ratio);
-        if(kp1.size() == kp2.size()) {
-            c1 = cv::Point (kp1[i].x()*ratio, kp1[i].y()*ratio);
+        cv::Point c2(sCol+kp2[0].x()*ratio, kp2[0].y()*ratio);
+
+        if(i < kp1.size()) {
+            c1 = cv::Point(kp1[i].x()*ratio, kp1[i].y()*ratio);
         }
 
-        cv::Point c2(sCol+kp2[i].x()*ratio, kp2[i].y()*ratio);
+        if(i < kp2.size()) {
+            c2 = cv::Point(sCol+kp2[i].x()*ratio, kp2[i].y()*ratio);
+        }
         // if((kp1.size() == 1 || 1) && i%10 == 0) {
         //if( i%jump == 0 ) {
         //    cv::line(im, c1, c2, lColor, 1);
         //}
         cv::circle(im, c1, radius, pColor, 1);
         cv::circle(im, c2, radius, pColor, 1);
+
         if(i == int(kp1.size() - 1)) {
             cv::circle(im, c1, radius*2, endColor, 2);
+            cout << "draw end p1" << kp1.back().transpose() << endl;;
         }
         if(i == int(kp2.size() - 1)) {
             cv::circle(im, c2, radius*2, endColor, 2);
         }
+
         if(i == 0) {
             cv::circle(im, c1, radius*2, startColor, 2);
             cv::circle(im, c2, radius*2, startColor, 2);
         }
     }
+
+    cv::Point matchPxKF1 = cv::Point(kp1.back().x()*ratio, kp1.back().y()*ratio);
+    cv::Point pxKF1inKF2 = cv::Point (sCol+kp2.back().x()*ratio, kp2.back().y()*ratio);
+    cv::line(im, matchPxKF1, pxKF1inKF2, lColor, 1);
+
+    cv::namedWindow(name);
+    cv::imshow(name, im);
+    cv::imwrite(name+".png", im);
+    cv::waitKey(0);
+    return im;
+}
+
+cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
+    const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
+    const std::string &name, const int ratio, const int jump) {
+    if(trajKp1.empty() || trajKp2.empty()) {
+        cerr << "{"+name << "} Error!" << endl
+             << "kp1 & kp2 size: " << trajKp1.size() << " & " << trajKp2.size() << endl;
+        exit(-1);
+    }
+    Mat im(max(img1.rows, img2.rows), (img1.cols+img2.cols), CV_8UC3, cv::Scalar{0, 0, 0});
+    Mat im1, im2;
+    cvtColor(img1, im1, COLOR_GRAY2BGR);
+    cvtColor(img2, im2, COLOR_GRAY2BGR);
+    im1.copyTo(im.colRange(0, img1.cols));
+    im2.copyTo(im.colRange(img1.cols, im.cols));
+    cv::resize(im, im, cv::Size(ratio * im.cols, ratio * im.rows));
+
+    const int sCol = img1.cols * ratio;
+    cv::Scalar pColor = cv::Scalar(255, 0, 0);
+    int radius = 1;
+    cv::Scalar lColor = cv::Scalar(0, 255, 0);
+    cv::Scalar startColor = cv::Scalar(0, 0, 255);
+    cv::Scalar bestMatchColor = cv::Scalar(0, 255, 255);
+    cv::Scalar secondMatchColor = cv::Scalar(0, 255, 0);
+
+    cv::Point c1(trajKp1[0].x()*ratio, trajKp1[0].y()*ratio);
+    cv::circle(im, c1, radius*2, startColor, 2);
+    for(int i = 1; i < trajKp1.size(); ++i) {
+        cv::Point c1(trajKp1[i].x()*ratio, trajKp1[i].y()*ratio);
+        cv::circle(im, c1, radius, pColor, 1);
+    }
+
+    cv::Point c2(sCol+trajKp2[0].x()*ratio, trajKp2[0].y()*ratio);
+    cv::circle(im, c2, radius*2, startColor, 2);
+    for(int i = 1; i < trajKp2.size(); ++i) {
+        cv::Point c2(sCol+trajKp2[i].x()*ratio, trajKp2[i].y()*ratio);
+        cv::circle(im, c2, radius, pColor, 1);
+    }
+
+    if(goodKp2.size() > 0) {
+        cv::Point bestMatchP2 = cv::Point (sCol+goodKp2[0].x()*ratio, goodKp2[0].y()*ratio);
+        cv::circle(im, bestMatchP2, radius*2, bestMatchColor, 2);
+        //cv::line(im, c1, bestMatchP2, lColor, 1);
+    }
+    if(goodKp2.size() > 1) {
+        cv::Point goodMatchP2 = cv::Point (sCol+goodKp2[1].x()*ratio, goodKp2[1].y()*ratio);
+        cv::circle(im, goodMatchP2, radius*2, secondMatchColor, 2);
+    }
+
     cv::namedWindow(name);
     cv::imshow(name, im);
     cv::imwrite(name+".png", im);
@@ -481,46 +550,20 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     const Pose T12 = T21.Inverse();
 
     const Eigen::Vector2d kp1 = lk.uv_;
-    vector<double> depth;
-    // cout << "current triangulated depth: ";
-    double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
-    Eigen::Vector2d specialPc2;
-    for(const Eigen::Vector2d &p : kp2) {
 
-       const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
-    //    cout << pc1.z() << " ";
-        if(CheckDepthQuality(lk, T12, p, pc1.z()) ) {
-            depth.push_back(pc1.z());
-            if(pc1.z() < minDepth) {
-                minDepth = pc1.z();
-            }
-            if(pc1.z() > maxDepth) {
-                maxDepth = pc1.z();
-            }
-            sumDepth += pc1.z();
-            specialPc2 = p;
-        }
-    }
-    // cout << endl;
-
-    double u2 = -1, cov2 = -1;
-    constexpr double minCov = 0.01;
-    if(depth.size() > 1) {
-        // TODO: 这里应该如何更新呢？
-        u2 = sumDepth / depth.size();
-        cov2 = max(minCov, pow(0.5 * (maxDepth - minDepth), 2)) ;
-        // cout << "std-2 of [" << minDepth << ", " << maxDepth << "]: " << 0.5 * (maxDepth - minDepth) << endl;
-    } else if(depth.size() == 1 ) {
-        const double std = GetOnePixelUncertainty(T21.Inverse().t_wb_, 
-            cam.InverseProject(kp1.cast<int>(), depth[0]), min(cam.fy_, cam.fx_) );
-        u2 = depth[0];
-        cov2 = max(minCov, pow(std, 2));
-        // cout << "std-1: " << std << endl;
-    } else {
+    const Eigen::Vector3d pc1 = Triangulate(kp1, kp2[0], T21, cam);
+    if(!CheckDepthQuality(lk, T12, kp2[0], pc1.z()) ){
         return false;
     }
 
-    const double u1 = lk.z_, cov1 = lk.depthCov_; 
+
+    // TODO: 重新给定方差值
+    const double u2 = pc1.z(), cov2 = 50 * max(0.1, 1-double(lk.obvTime_)/5);
+    double u1 = lk.z_, cov1 = lk.depthCov_; 
+    if(lk.obvTime_ == 0) {
+        // 首次初始化
+        u1 = u2;
+    }
     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
     //     << depth.size() << " " << cov1 << endl;
     // 信息融合，标准差一直减小
@@ -726,7 +769,7 @@ void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vect
     };
 
     img = cv::imread(vstrImages[idx], IMREAD_GRAYSCALE);
-    cv::imshow("src gray", img);
+    // cv::imshow("src gray", img);
     const double imgScale = config->imageScale;
     const int newW = img.cols * imgScale, newH = img.rows * imgScale;
     cv::resize(img, img, cv::Size(newW, newH) );

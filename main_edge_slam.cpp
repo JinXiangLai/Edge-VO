@@ -74,6 +74,7 @@ int main(int argc, char** argv){
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
     double accDist = 0.;
+    vector<KeyFrame> unmappedFrame; // 新KF与过去的F匹配来产生新的深度估计
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         if(interaction->stepBystep) {
             usleep(100 * 1000);
@@ -124,7 +125,7 @@ int main(int argc, char** argv){
             const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
             if(config->messageLevel <= MessageLevel::Error)
                 cout << "kfConvergeEdgeRatio: " << kfConvergeEdgeRatio << endl;
-            if(kfConvergeEdgeRatio > 0.6 || (accDist > 1.0 && (curF.id_ - initFrame->id_ > 30) && kfConvergeEdgeRatio > 0.3) ) {
+            if(kfConvergeEdgeRatio > 0.6 || (accDist > 0.5 && (curF.id_ - initFrame->id_ > 30)) ) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;

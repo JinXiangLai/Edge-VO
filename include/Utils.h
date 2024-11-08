@@ -90,6 +90,10 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track 
 
 int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
+cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
+    const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
+    const std::string &name = "epipolar matches", const int ratio = 1, const int jump = 10);
+
 std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
 
 std::vector<Eigen::Vector2d> FindMatchesAlongEpipolar(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);

@@ -25,9 +25,9 @@ public:
     void UpdateUncertainty();
     bool Converge() const {
         // 这个标准差是很不准的，所以不能用其判断
-        return uncertainty_ < config->maxDepthConvergeStd && 
-            z_ > config->minDepth && z_ < config->maxDepth;
-        // return obvTime_ > 2;
+        // return uncertainty_ < config->maxDepthConvergeStd && 
+        //     z_ > config->minDepth && z_ < config->maxDepth;
+        return obvTime_ > 0;
     }
     void SetOutOfRange() {outOfRange_ = true;}
     bool IsOutOfRange() const {return outOfRange_;}
