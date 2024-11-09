@@ -68,6 +68,7 @@ Config::Config(const std::string &yamlFilePath) {
     best2SecondRatio = f["best2SecondRatio"].as<double>();
     minSearchStep = f["minSearchStep"].as<int>();
     pyrLevel = f["pyrLevel"].as<int>();
+    SimErrorRatio = f["SimErrorRatio"].as<double>();
 
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
 }

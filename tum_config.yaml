@@ -32,7 +32,7 @@ maxDepthConvergeStd: 0.1 # 深度收敛的标准差
 abnormalProjectResidual: 5 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 4 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 5
+maxKFnumInWindow: 1
 imgTimeOffset: 0.0 # sec,时间同步误差
 needNewKFtrans: 0.5 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
@@ -62,8 +62,8 @@ cannyupperTh: 60 # 160
 
 # 存在相邻边缘像素被匹配的情况
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
-minDepthCompareRatio: 0.7
-maxDepthCompareRatio: 1.4
+minDepthCompareRatio: 0.4
+maxDepthCompareRatio: 1.8
 pyrLevel: 1
 
 # 暂未启用项
@@ -75,3 +75,4 @@ minEpipolarSearchLine: 3
 maxEpipolarSearchLine: 60 # most import item for triangulation
 best2SecondRatio: 0.99
 best2SecondDist: 5 # pixels
+SimErrorRatio: 0.01 # 千分之5

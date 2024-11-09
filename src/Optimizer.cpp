@@ -233,7 +233,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(vector<Landmark*> &l
             const int diffItensity = int(p.host_->grayImg_.at<uchar>( p.uv_.y(), p.uv_.x()) 
                                             - grayImg_.at<uchar>(px2.y() * ratio, px2.x() * ratio) );
             double w = 1.0; // / p.depthCov_;
-            if( abs(diffItensity) > 10) {
+            if( abs(diffItensity) > 10 && 0) {
                w = 10.0/abs(diffItensity);
             }
             H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w * rho[1];
@@ -1587,6 +1587,10 @@ bool Optimizer::SlidingWindowOptimize() {
 }
 
 double Optimizer::HuberLoss(const double chi2, Eigen::Vector2d &rho, const int lvl) {
+#if 0
+    rho << chi2,1.0;
+#else
+
     const double scale = 1.0/pow(2, lvl);
     const double huberDelta = config->huberDelta * scale;
 
@@ -1637,6 +1641,7 @@ double Optimizer::HuberLoss(const double chi2, Eigen::Vector2d &rho, const int l
         rho[0] = chi2;
         rho[1] = 1;
     }
+#endif
     // TODO:不要这么写，因为对于残差是向量时，这里仍是返回残差值
     return sqrt(chi2);
 }
@@ -1694,7 +1699,7 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
     optLandmark_.clear();
     optLandmark_.reserve(config->maxActiveLandmarkEachKF * needLandmarkRatio);
 
-#if 1
+#if 0
     // 由于最新的KF更新次数不够，且还未进行外点剔除，所以这里选择跟踪局部地图
     for(int i = 0; i < ref->landmark_.size(); ++i) {
         Landmark *kp = ref->landmark_[i];
@@ -1708,7 +1713,7 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
         }
     }
 #else
-    for(int i = window_.size()-1; i < window_.size(); ++i) {
+    for(int i = 0; i < window_.size(); ++i) {
         ref = window_[i];
         // 最新KF帧未进行外点滤除
         //if(window_.size() > 1 && ref == window_.back()) {

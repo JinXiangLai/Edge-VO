@@ -112,10 +112,10 @@ int main(int argc, char** argv){
         // 使用KF更新当前帧的pose
         const Pose Twc2 = curF.priorTwc_;
         Pose Twc1, Tc1c2;
+        Pose noise;
         if(!isInitialized) {
             Twc1 = win.back()->priorTwc_;
             Tc1c2 = Twc1.Inverse() * Twc2;
-            Pose noise;
             if(isInitialized) {
                 // noise = ConvertRPYandPostion2Pose({0.1, 0.2, 0}, {0.01, 0.02, 0}, kDeg2Rad);
             }
@@ -132,7 +132,15 @@ int main(int argc, char** argv){
 #else
             // 使用匀速模型，即上上帧的pose与上一帧的pose之间的位姿估计
             Tc1c2 = lastLastF.priorTwc_.Inverse() * lastF.priorTwc_;
-            Pose _Tc1c2 = lastLastF.Twc_.Inverse() * lastF.Twc_; 
+            //Pose _Tc1c2 = lastLastF.Twc_.Inverse() * lastF.Twc_; 
+            // TODO：基于边缘的残差和基于图像光度的残差有很大区别，首先位姿优化不会在图像光度投影中使其集中到一小块地方，因为这不会是残差显著变小
+            // 但是基于边缘的却有可能，一旦pose估计不准，那么就会使得相机pose远离场景，使得其想尽量让投影集中到一小块区域，
+            // 解决办法是：1、在重投影点新加一个距离残差项，使得Landmark只能在一段有效的范围内搜索，
+            // 2、 或者，约束投影边缘点之间重投影点的相对距离，看起来方案1比较好实现一点，但会有一种情况，就是会让优化算法只顾减小投影距离了
+            // 3、可否用一块patch投影？其实初衷还是想说，最终优化点的位置不能离原来的投影点太远了，但是这样真能解决吗？
+            // 因为现象是：上一帧重投影残差很小，到这一帧时，一下子就产生了大的投影残差，这样肯定优化不到正确位置了。
+            // 所以，解决方案还是只能说：初始估计要够准吗？
+            Pose _Tc1c2 = lastF.priorTwc_.Inverse() * Twc2;
             //_Tc1c2.q_wb_ = Eigen::Quaterniond::Identity();
             //Tc1c2.q_wb_ = Eigen::Quaterniond::Identity(); // 变成这里也能差不多跑一下，难道是我关于平移的雅可比球错？？？
             // _Tc1c2.q_wb_ = Tc1c2.q_wb_;
@@ -144,7 +152,14 @@ int main(int argc, char** argv){
             // 这里可以调通，前提是使用在CalculateResiduals时，不使用胡伯核评估
             // 所以问题应该定位在TrackLocalMap函数里看需要怎么修改
 #endif
-            curF.SetTwc(lastF.Twc_ * Tc1c2);
+            // 增加相对pose噪声，若噪声太大，则初始边缘都对不齐
+            const double orientationNorm = Quat2RPY(_Tc1c2.q_wb_).norm(),
+                transNorm = _Tc1c2.t_wb_.norm();
+            const double ang = orientationNorm/3 * config->SimErrorRatio, 
+                t = transNorm/3 * config->SimErrorRatio;
+            cout << "add noise ang, trans: " << ang * kRad2Deg << "deg, " << t << "m." << endl;
+            noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
+            curF.SetTwc(lastF.Twc_ * _Tc1c2 * noise);
         }
 
         const double trans = (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
