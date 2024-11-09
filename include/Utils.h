@@ -96,8 +96,6 @@ cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Ei
 
 std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
 
-std::vector<Eigen::Vector2d> FindMatchesAlongEpipolar(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
-
 std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const Eigen::Vector2d &kp1, const cv::Mat &edgeImg, 
     const Pose &T21, const Camera &cam);
 

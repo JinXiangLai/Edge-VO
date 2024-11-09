@@ -36,7 +36,7 @@ public:
     double maxTrackProjectPixelError;
     double maxDepthConvergeStd, maxDepthConvergeVariance;
     double abnormalProjectResidual;
-    double huberDelta;
+    double huberDelta, huberDelta2;
     int keepLastKFnumInWindow, maxKFnumInWindow;
     double imgTimeOffset;
     double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio;
@@ -58,6 +58,9 @@ public:
     double cannyLowerTh, cannyupperTh;
     double minEpipolarSearchLine, maxEpipolarSearchLine;
     double best2SecondRatio;
+
+    int minSearchStep;
+    int pyrLevel;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

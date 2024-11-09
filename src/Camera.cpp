@@ -19,18 +19,25 @@ Camera::Camera(Config* config)
     , yStart_(-cy_/fy_)
     , xEnd_(-xStart_)
     , yEnd_(-yStart_) {
-        K_ << fx_, 0, cx_,
-              0,  fy_, cy_,
-              0, 0, 1;
-        K_inv_ = K_.inverse();
+    const int level = config->pyrLevel;
+    K_.resize(level);
+    Kinv_.resize(level);
+    for(int i = 0; i < level; ++i) {
+        const double ratio = 1.0/pow(2, i);
+        K_[i] << fx_*ratio, 0, cx_*ratio,
+                 0, fy_*ratio, cy_*ratio,
+                 0, 0, 1;
+        Kinv_[i] = K_[i].inverse();
+    }
     if(config->model == "pinhole") {
         k5_ = config->distortion[4];
     }
 }
 
-Eigen::Vector2d Camera::Project2PixelPlane(const Eigen::Vector3d &Pc) const {
+Eigen::Vector2d Camera::Project2PixelPlane(const Eigen::Vector3d &Pc, const int level) const {
     const Eigen::Vector3d p_norm = Pc/Pc.z();
-    Eigen::Vector2d res{fx_ * p_norm[0] + cx_, fy_ * p_norm[1] + cy_};
+    Eigen::Vector2d res{K_[level].row(0)[0] * p_norm[0] + K_[level].row(0)[2], 
+                        K_[level].row(1)[1] * p_norm[1] + K_[level].row(1)[2]};
     return res;
 }
 
@@ -39,7 +46,7 @@ Eigen::Vector2d Camera::Project2PixelPlane(const Eigen::Vector3d &Pc) const {
 // OK，我们将所有的一切都转到归一化平面上并去畸变，
 // 然后就可以生成一个新的无畸变的边缘图像了
 // 归一化平面上，X轴分辨率为1/fx米、Y轴分辨率为1/fy米
-vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px) const {
+vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px, const int level) const {
     Mat D;
     if(config->model == "fisheye") {
         D = (cv::Mat_<float>(4, 1) << k1_, k2_, k3_, k4_);
@@ -47,7 +54,8 @@ vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px) const {
         D = (cv::Mat_<float>(5, 1) << k1_, k2_, k3_, k4_, k5_);
     }
     Mat R = cv::Mat::eye(3, 3, CV_32F);
-    Mat K = (cv::Mat_<float>(3, 3) << fx_, 0, cx_, 0, fy_, cy_, 0, 0, 1);
+    const double ratio = 1/pow(2, level);
+    Mat K = (cv::Mat_<float>(3, 3) << fx_ * ratio, 0, cx_ * ratio, 0, fy_ * ratio, cy_ * ratio, 0, 0, 1);
     
     vector<Point2f> pxs;
     for(const Point2i &p : px) {
@@ -68,14 +76,16 @@ vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px) const {
     return res;
 }
 
-Eigen::Vector3d Camera::InverseProject(const Eigen::Vector2i &uv, const double &z) const{
+Eigen::Vector3d Camera::InverseProject(const Eigen::Vector2i &uv, const double &z, const int level) const{
     Eigen::Vector3d p(uv[0], uv[1], 1.0);
-    p = K_inv_ * p;
+    // {(x-cx)/fx, (y-cy)/fy}
+    p = Kinv_[level] * p;
     // cout << "K.inv * p: " << p.transpose() << endl;
     return p * z;
 }
 
-bool Camera::InImagePlaneRange(const Eigen::Vector2d &p) const{
+// 暂时无用
+bool Camera::InImagePlaneRange(const Eigen::Vector2d &p, const int level) const{
     return p.x() > (xStart_ + xStep_) && p.x() < (xEnd_ - xStep_)
             && p.y() > (yStart_ + yStep_) && p.y() < (yEnd_ - yStep_);
 }

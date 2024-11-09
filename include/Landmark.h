@@ -22,7 +22,7 @@ public:
     Eigen::Vector3d GetPw() const;
     int Size() const; // 优化变量的维度
     void Update(const double delta_z, const bool useInvDepth);
-    void UpdateUncertainty();
+    void UpdateUncertainty(const bool updateObv = true);
     bool Converge() const {
         // 这个标准差是很不准的，所以不能用其判断
         // return uncertainty_ < config->maxDepthConvergeStd && 

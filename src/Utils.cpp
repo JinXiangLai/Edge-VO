@@ -153,7 +153,7 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond &_q){
 }
 
 ostream& operator<<(ostream &cout, const Pose& T){
-    cout << setprecision(2) << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg 
+    cout << setprecision(3) << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg 
          << " | " << T.t_wb_.transpose();
     return cout;
 }
@@ -316,7 +316,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
     //                                (k01*c0 + k11*c1 + k21*c2)*y +
     //                                (k02*c0 + k12*c1 + k22*c2)
     // 像素平面上极线约束的参数
-    const Eigen::Matrix3d Ki = cam.K_inv_;
+    const Eigen::Matrix3d Ki = cam.Kinv_[0];
     const double k00 = Ki.row(0)[0], k01 = Ki.row(0)[1], k02 = Ki.row(0)[2],
                  k10 = Ki.row(1)[0], k11 = Ki.row(1)[1], k12 = Ki.row(1)[2],
                  k20 = Ki.row(2)[0], k21 = Ki.row(2)[1], k22 = Ki.row(2)[2];
@@ -335,20 +335,20 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
         
         int x=p2[0], y=p2[1];
         bool isEdge = edgeImg.at<uchar>(y, x) == 0;
-        if(!isEdge) {
-            // 允许小的像素偏差
-            vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
-            for(const Eigen::Vector2i &dp : xy) {
-                Point2i p(x+dp.x(), y+dp.y());
-                if(edgeImg.at<uchar>(p) == 0) {
-                    isEdge = true;
-                    // 赋值边缘像素点
-                    p2.x() = p.x;
-                    p2.y() = p.y;
-                    break;
-                }
-            }
-        }
+        // if(!isEdge) {
+        //     // 允许小的像素偏差
+        //     vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
+        //     for(const Eigen::Vector2i &dp : xy) {
+        //         Point2i p(x+dp.x(), y+dp.y());
+        //         if(edgeImg.at<uchar>(p) == 0) {
+        //             isEdge = true;
+        //             // 赋值边缘像素点
+        //             p2.x() = p.x;
+        //             p2.y() = p.y;
+        //             break;
+        //         }
+        //     }
+        // }
         if(!isEdge) {
             return false;
         }
@@ -408,17 +408,40 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
             const int y = a*x + b + roundOff;
             Eigen::Vector2i px{x, y};
             int score = INT_MAX;
+            // TODO：如果是合法的，那么下一步就跳过几个像素，以提高搜索效率
             if(Kp2Useful(px, score) ) {
                 scoreKp2.push_back(make_pair(score, px));
             }
         }
     }
 
+#if 0
+    // 找到最匹配的
+    if(scoreKp2.size() > 1) {
+        sort(scoreKp2.begin(), scoreKp2.end(), [](const pair<int, Eigen::Vector2i> &p1, 
+            const pair<int, Eigen::Vector2i> &p2) -> bool {return p1.first < p2.first;} );
+        // cout << "scoreKp2[0].first, scoreKp2[1].first: " << scoreKp2[0].first << ", " << scoreKp2[1].first << ", " << int(config->bestMatchRatio * scoreKp2[1].first) << endl;
+        // // 这里存在相邻像边缘像素的ssd差距很小的情况，所以直接取第一个就好了
+        // if(scoreKp2[0].first < int(config->bestMatchRatio * scoreKp2[1].first) ) {
+        //     // 这个条件可能过于苛刻，会影响结果？不是苛刻的原因
+        //     kp2.push_back(scoreKp2[0].second.cast<double>());
+        // }
+        const double goodScore = scoreKp2[0].first < int(config->bestMatchRatio * scoreKp2[1].first);
+        const double badDist = (scoreKp2[0].second - scoreKp2[1].second).norm() > 5;
+        if(goodScore || (!goodScore && !badDist) )
+            kp2.push_back(scoreKp2[0].second.cast<double>());
+    } else if(scoreKp2.size() == 1) {
+        kp2.push_back(scoreKp2[0].second.cast<double>());
+    }
+
+#else
+    // for(int i = 0; i < config->maxKeepEpilorMatchPointNum && i < scoreKp2.size(); ++i) {
     sort(scoreKp2.begin(), scoreKp2.end(), [](const pair<int, Eigen::Vector2i> &p1, 
             const pair<int, Eigen::Vector2i> &p2) -> bool {return p1.first < p2.first;} );
-    for(int i = 0; i < config->maxKeepEpilorMatchPointNum && i < scoreKp2.size(); ++i) {
-        kp2.emplace_back(scoreKp2[i].second.cast<double>());
+    for(int i = 0; i < scoreKp2.size(); ++i) {
+        kp2.push_back(scoreKp2[i].second.cast<double>());
     }
+#endif
     return kp2;
 }
 
@@ -540,10 +563,83 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     }
     // case 3: 进行重投影质量校验
     const Eigen::Vector3d pc2 = T12.Inverse() * v1;
+    if(pc2.z() / z <0.7 || pc2.z() / z > 1.4) {
+        return false;
+    }
     const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
     const double projError = (p2-px2).norm();
     return projError < max(3.0, 10.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
 }
+
+// bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
+//     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
+//     const Pose T12 = T21.Inverse();
+
+//     const Eigen::Vector2d kp1 = lk.uv_;
+//     vector<double> depth;
+//     // cout << "current triangulated depth: ";
+//     double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
+//     Eigen::Vector2d specialPc2;
+//     for(const Eigen::Vector2d &p : kp2) {
+
+//        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
+//     //    cout << pc1.z() << " ";
+//         if(CheckDepthQuality(lk, T12, p, pc1.z()) ) {
+//             depth.push_back(pc1.z());
+//             if(pc1.z() < minDepth) {
+//                 minDepth = pc1.z();
+//             }
+//             if(pc1.z() > maxDepth) {
+//                 maxDepth = pc1.z();
+//             }
+//             sumDepth += pc1.z();
+//             specialPc2 = p;
+//         }
+//     }
+//     // cout << endl;
+
+//     double u2 = -1, cov2 = -1;
+//     constexpr double minCov = 0.01;
+//     if(depth.size() > 1) {
+//         // TODO: 这里应该如何更新呢？
+//         u2 = sumDepth / depth.size();
+//         cov2 = max(minCov, pow(0.5 * (maxDepth - minDepth), 2)) ;
+//         // cout << "std-2 of [" << minDepth << ", " << maxDepth << "]: " << 0.5 * (maxDepth - minDepth) << endl;
+//     } else if(depth.size() == 1 ) {
+//         const double std = GetOnePixelUncertainty(T21.Inverse().t_wb_, 
+//             cam.InverseProject(kp1.cast<int>(), depth[0]), min(cam.fy_, cam.fx_) );
+//         u2 = depth[0];
+//         cov2 = max(minCov, pow(std, 2));
+//         // cout << "std-1: " << std << endl;
+//     } else {
+//         return false;
+//     }
+
+//     const double u1 = lk.z_, cov1 = lk.depthCov_; 
+//     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
+//     //     << depth.size() << " " << cov1 << endl;
+//     // 信息融合，标准差一直减小
+//     lk.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
+//     lk.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
+//     //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+//     //     << " " << landmark.z_ << endl;
+//     lk.UpdateUncertainty();
+
+    
+//     static ofstream unf;
+//     static bool first = 1;
+//     if(first) {
+//         unf.open("depth_uncertainty.csv");
+//         unf.close();
+//         first = false;
+//     }
+//     unf.open("depth_uncertainty.csv", ios::app);
+//     unf << fixed << &lk << " [" << lk.depthRange_[0] << ", " << lk.depthRange_[1] << "] std, depth: " 
+//         << lk.uncertainty_ << " " << lk.z_ << endl;
+//     unf.close();
+//     return true;
+// }
+
 
 bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
@@ -557,7 +653,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     }
 
 
-    // TODO: 重新给定方差值
+    // TODO: 重新给定方差值，按照返回值的像素偏差给定
     const double u2 = pc1.z(), cov2 = 50 * max(0.1, 1-double(lk.obvTime_)/5);
     double u1 = lk.z_, cov1 = lk.depthCov_; 
     if(lk.obvTime_ == 0) {
@@ -571,7 +667,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     lk.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
     //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
     //     << " " << landmark.z_ << endl;
-    lk.UpdateUncertainty();
+    lk.UpdateUncertainty(true);
 
     
     static ofstream unf;
@@ -834,6 +930,7 @@ int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2) {
     return sum;
 }
 
+// No used any more
 void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eigen::Vector2i &xRange, 
     Eigen::Vector2i &yRange) {
     const Eigen::Vector3d pc1_1 = cam.InverseProject(lp.uv_.cast<int>(), lp.depthRange_[0]);
@@ -850,12 +947,26 @@ void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eig
         xRange[1] = uv2[0];
     }
 
+    int xLen = xRange[1] - xRange[0];
+    if(xLen < config->minEpipolarSearchLine) {
+        const int diff = config->minEpipolarSearchLine - xLen;
+        xRange[0] = max(6, xRange[0] - diff/2);
+        xRange[1] = min(lp.host_->edgeImg_[0].cols - 6, xRange[1] + diff/2);
+    }
+
     if(uv1[1] > uv2[1]) {
         yRange[0] = uv2[1];
         yRange[1] = uv1[1];
     } else {
         yRange[0] = uv1[1];
         yRange[1] = uv2[1];
+    }
+
+    int yLen = yRange[1] - yRange[0];
+    if(yLen < config->minEpipolarSearchLine) {
+        const int diff = config->minEpipolarSearchLine - yLen;
+        yRange[0] = max(6, yRange[0] - diff/2);
+        yRange[1] = min(lp.host_->edgeImg_[0].rows - 6, yRange[1] + diff/2);
     }
 }
 
@@ -1027,7 +1138,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
                 lk2->z_ = pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
                 lk2->depthCov_ = lk1->depthCov_ * 4;
-                lk2->UpdateUncertainty();
+                lk2->UpdateUncertainty(false);
                 ++initNum;
             }
         }
@@ -1041,8 +1152,8 @@ double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::
     const int range = config->descriptorPatchLen/2;
     const int x1 = px1.x(), y1 = px1.y(), x2 = px2.x(), y2 = px2.y();
     double sum = 0;
-
-#if 1
+    double avg = 0;
+#if 0
     double sum1 = 0, sum2 = 0;
     int count = 0;
     for(int i = -range; i <= range; ++i) {
@@ -1208,21 +1319,23 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     //cv::Affine3d &viewPose = *interaction->viewPose;
     //window.setViewerPose(viewPose); // 使用默认的才是正确的
     KeyFrame *curf = &interaction->visualCurF;
+    KeyFrame *curfInit = &interaction->visualCurFinit;
     KeyFrame *curkf = interaction->visualLastKF;
     if(curf->grayImg_.empty()) {
         curf = nullptr;
     }
 
-    Mat curImg;
+    Mat curImg, curInitImg;
     const unsigned int curId = curf->id_;
     if(curf!=nullptr) {
         cvtColor(curf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
+        cvtColor(curfInit->edgeImg_[0], curInitImg, cv::COLOR_GRAY2BGR);
     }
     Mat curKFimg;
     cvtColor(curkf->edgeImg_[0], curKFimg, cv::COLOR_GRAY2BGR);
 
     // 可视化点云
-    auto GenerateCloud = [&curf, &curkf, &curImg, &curKFimg] (set<Landmark*> &ps, const cv::Vec3b &color,
+    auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg, &curKFimg] (set<Landmark*> &ps, const cv::Vec3b &color,
         vector<Point3d> &points) {
         points.reserve(10000);
 
@@ -1238,6 +1351,13 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
                 if(InRange(curf->grayImg_, px2) ) {
                     //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
                     cv::circle(curImg, {px2.x(), px2.y()}, 2, color);
+                }
+
+                const Eigen::Vector3d pc3 = curfInit->Tcw_ * pw;
+                const Eigen::Vector2i px3 = curfInit->cam_->Project2PixelPlane(pc3).cast<int>();
+                if(InRange(curfInit->grayImg_, px3) ) {
+                    //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
+                    cv::circle(curInitImg, {px3.x(), px3.y()}, 2, color);
                 }
 
                 const Eigen::Vector3d pck = curkf->Tcw_ * pw;
@@ -1304,10 +1424,12 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     constexpr double ratio = 0.5;
     const int w = curImg.cols * ratio, h = curImg.rows * ratio;
     if(curf!=nullptr) {
-        window.showWidget("curImage", cv::viz::WImageOverlay(curImg, cv::Rect(0, 0, w, h)) );
+        window.showWidget("curInitImage", cv::viz::WImageOverlay(curInitImg, cv::Rect(0, 0, w, h)) );
+        window.showWidget("curImage", cv::viz::WImageOverlay(curImg, cv::Rect(w+10, 0, w, h)) );
+
         // cv::imshow("curProjImg", curImg);
     }
-    window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(w+10, 0, w, h)) );
+    window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(2*w+20, 0, w, h)) );
 
 
     window.registerKeyboardCallback(VizInteraction);

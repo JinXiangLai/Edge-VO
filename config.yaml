@@ -52,8 +52,15 @@ showDebugImg: false
 firstImgIdx: 2650
 loopClosureImgIdx: 2630
 
-cannyLowerTh: 40
-cannyupperTh: 60
+cannyLowerTh: 30
+cannyupperTh: 40
+
+# 设定一些极线搜索立体匹配需要的参数，单位均在像素坐标系下
+# 存在相邻边缘像素被匹配的情况
+minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
+minDepthCompareRatio: 0.7
+maxDepthCompareRatio: 1.4
+pyrLevel: 3
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0

@@ -49,21 +49,23 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
         invZ = 1/z_;
     }
 
-    if(z > depthRange_[0] && z < depthRange_[1]) {
+    // 为了保证优化算法的连续性，这里必须要修改
+    if(z > depthRange_[0] && z < depthRange_[1] || 1) {
         z_ = z;
         invZ_ = invZ;
         // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
         depthCov_ *= 0.9; 
-        UpdateUncertainty();
+        UpdateUncertainty(false);
     }
 }
 
-void Landmark::UpdateUncertainty() {
+void Landmark::UpdateUncertainty(const bool updateObv) {
     uncertainty_ = sqrt(depthCov_);
     invZ_ = 1.0 / z_;
     depthRange_[0] = max(config->minDepth, z_ - 3 * uncertainty_);
     depthRange_[1] = min(config->maxDepth, z_ + 3 * uncertainty_);
-    ++obvTime_;
+    if(updateObv)
+        ++obvTime_;
 }
 
 vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {

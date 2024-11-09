@@ -24,17 +24,17 @@ wheelRadius: 0
 maxDepth: 150.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.1
 
-maxDescriptorDist: 5 # or 使用光度残差时重新设置
+maxDescriptorDist: 30 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 4.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
 maxDepthConvergeStd: 0.1 # 深度收敛的标准差
-abnormalProjectResidual: 8 # 15个像素距离为异常残差值，不能参与优化步骤
-huberDelta: 5 # 胡伯核函数参数
+abnormalProjectResidual: 5 # 15个像素距离为异常残差值，不能参与优化步骤
+huberDelta: 4 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 8
+maxKFnumInWindow: 5
 imgTimeOffset: 0.0 # sec,时间同步误差
-needNewKFtrans: 1.0 # 选取新KF的条件
+needNewKFtrans: 0.5 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.2 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
@@ -54,11 +54,17 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 200
+firstImgIdx: 50
 loopClosureImgIdx: 10
 
 cannyLowerTh: 40 # 150
 cannyupperTh: 60 # 160
+
+# 存在相邻边缘像素被匹配的情况
+minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
+minDepthCompareRatio: 0.7
+maxDepthCompareRatio: 1.4
+pyrLevel: 1
 
 # 暂未启用项
 maxGoodTriangulateAngle: 60.0
@@ -68,3 +74,4 @@ descriptorPatchLen: 5
 minEpipolarSearchLine: 3
 maxEpipolarSearchLine: 60 # most import item for triangulation
 best2SecondRatio: 0.99
+best2SecondDist: 5 # pixels

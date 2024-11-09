@@ -37,6 +37,7 @@ Config::Config(const std::string &yamlFilePath) {
 
     abnormalProjectResidual = f["abnormalProjectResidual"].as<double>();
     huberDelta = f["huberDelta"].as<double>();
+    huberDelta2 = huberDelta * huberDelta;
     keepLastKFnumInWindow = f["keepLastKFnumInWindow"].as<int>();
     maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
     imgTimeOffset = f["imgTimeOffset"].as<double>();
@@ -65,6 +66,8 @@ Config::Config(const std::string &yamlFilePath) {
     maxEpipolarSearchLine = f["maxEpipolarSearchLine"].as<double>();
     minEpipolarSearchLine = f["minEpipolarSearchLine"].as<double>();
     best2SecondRatio = f["best2SecondRatio"].as<double>();
+    minSearchStep = f["minSearchStep"].as<int>();
+    pyrLevel = f["pyrLevel"].as<int>();
 
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
 }

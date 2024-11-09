@@ -29,10 +29,11 @@ public:
     
     bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 
-    ResidualInfo CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12, const bool allowSetLandmark = false);
+    ResidualInfo CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12, const bool allowSetLandmark = false,
+        const int lvl = 0);
 
     ResidualInfo CalculateJacobianAndCost(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
-        Eigen::MatrixXd &H, Eigen::VectorXd &g);
+        Eigen::MatrixXd &H, Eigen::VectorXd &g, const int lvl);
 
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd &H, const Eigen::VectorXd &b, const int poseNum, const int pointNum, 
         const int poseDim = 6, const int pointDim = 1);
@@ -60,9 +61,9 @@ public:
 
     bool SetOptimizeVariables();
 
-    double HuberLoss(const double residual, double &J_huber_r);
-
-    double HuberLoss(const Eigen::Vector2d &residual, Eigen::Matrix<double, 1, 2> &J_huber_r);
+    // rho[0]经胡伯核的损失函数值，rho[1]胡伯核关于chi2的一阶导数
+    // 注意：胡伯核函数只能处理标量
+    double HuberLoss(const double chi2, Eigen::Vector2d &rho, const int lvl = 0);
 
     int SelectOneKF2Marginalization();
 
@@ -98,7 +99,8 @@ private:
     // 因此，λ越大，ΔX须越小
     double lambda_ = 1.0;
     // 普通帧位姿优化使用
-    std::vector<cv::Mat> dist_, dx_, dy_;
+    std::vector<std::vector<cv::Mat> > dist_, dx_, dy_;
+    cv::Mat grayImg_;
     int maxIte_ = 100;
     bool useInvDepth_ = false;
     bool onlyPoseUpdate_ = false; 
