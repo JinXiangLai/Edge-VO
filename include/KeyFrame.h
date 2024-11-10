@@ -52,7 +52,7 @@ public:
         }
     }
 
-    std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1);
+    std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d &deltaPx2);
 
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;

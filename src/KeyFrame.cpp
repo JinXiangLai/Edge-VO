@@ -331,7 +331,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     convergeEdgeNum_ = 0; // 重新统计当前KF的收敛边缘点集
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.05) {
+    if(Tc1c2.t_wb_.norm() < 0.01) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -346,13 +346,14 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         }
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         //const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        const vector<Eigen::Vector2d> kp2 = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1);
+        Eigen::Vector2d deltaPx2;
+        const vector<Eigen::Vector2d> kp2 = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1, deltaPx2);
         if(kp2.empty()) {
             continue;
         }
         // 更新的是host帧下的深度
         const Pose T21 = kf2.Tcw_ * lk1->host_->Twc_;
-        if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1) ) {
+        if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1, deltaPx2) ) {
             // cout << "depth range, depth, std: [" << lk1->depthRange_[0] << " " << lk1->depthRange_[1] << "] "
             //  << lk1->z_ << " " << lk1->uncertainty_ << endl;
             // if(i%10 == 0) {
@@ -555,7 +556,7 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
 }
 
 
-vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1) {
+vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d &deltaPx2) {
     const Pose T21 = kf2->Twc_.Inverse() * Twc_;
     const Pose T12 = T21.Inverse();
     const Mat &edgeImg2 = kf2->edgeImg_[0];
@@ -735,17 +736,33 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     if(!smallScore) {
         return {};
     }
+
+#if 1
+    // TODO: 这里返回不确定度就行了
     const bool goodScore = bestScore < config->best2SecondRatio * secondBestScore;
     const double badDist = (bestP2 - secondBestP2).norm() > 5;
     if(goodScore || (!badDist && !goodScore )) {
     //if(goodScore) {
         //DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
         //    "current point 2 all Epipolar constraint matches", 1, 1000000);
+        if(InRange(edgeImg2, secondBestP2.cast<int>()) ) {
+            deltaPx2 = bestP2 - secondBestP2;
+        } else {
+            deltaPx2 = ep2;
+        }
         return {bestP2};
     }
-
     return {};
-    // }
+#else
+    //if(InRange(edgeImg2, secondBestP2.cast<int>()) ) {
+    //    // TODO: 建模成深度高斯分布，容易过收敛？
+    //    deltaPx2 = bestP2 - secondBestP2;
+    //} else {
+    //    deltaPx2 = ep2 * 3;
+    //}
+    deltaPx2 = ep2 * config->filterPixelError;
+    return {bestP2};
+#endif
 }
 
 vector<double> KeyFrame::CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2d &px, const Eigen::Vector2d &epNorm, const int len) {

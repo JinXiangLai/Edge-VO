@@ -103,7 +103,8 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp2, const Pose &T21, const C
 
 Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
 
-bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk);
+bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk,
+    const Eigen::Vector2d &deltaPx2);
 
 Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d &rpy, const Eigen::Vector3d &t, const double deg2rad = kDeg2Rad);
 
@@ -139,6 +140,8 @@ void ShowPointCloud(const std::vector<Landmark*> &ps1, const std::vector<Landmar
     const std::string &windowName = "Point cloud", const double zOffset = 0.0);
 
 double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
+
+double GetDepthUncertainty(const Eigen::Vector2d &px2, const Eigen::Vector2d &deltaPix2, const double d,  const Camera &cam);
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
 

@@ -641,7 +641,8 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
 // }
 
 
-bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
+bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk,
+    const Eigen::Vector2d &deltaPx2) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
     const Pose T12 = T21.Inverse();
 
@@ -653,12 +654,20 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     }
 
 
-    // TODO: 重新给定方差值，按照返回值的像素偏差给定
+#if 0
+    // 这样计算不确定度感觉效果很差
+    //const double deltaDepth = GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
+    const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
+    const double u2 = pc1.z(), cov2 = deltaDepth * deltaDepth;
+#else
+    // 这样反而结果正常，why?建模不准
     const double u2 = pc1.z(), cov2 = 50 * max(0.1, 1-double(lk.obvTime_)/5);
+#endif
     double u1 = lk.z_, cov1 = lk.depthCov_; 
     if(lk.obvTime_ == 0) {
         // 首次初始化
         u1 = u2;
+        //cov1 = cov2;
     }
     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
     //     << depth.size() << " " << cov1 << endl;
@@ -976,13 +985,67 @@ double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d 
         d1 = pc1Norm * t12Norm, d2 = pc2.norm() * t12Norm;
     const double alpha = acos(pc1.dot(t12)/d1);
     const double belta = acos(pc2.dot(-t12)/d2);
-    const double deltaBelta = atan2(config->filterPixelError, f);
+#if 0
+     const double deltaBelta = atan2(config->filterPixelError, f);
+#else
+    const double deltaBelta = config->filterPixelError * kDeg2Rad;
+#endif
 
     const double belta2 = belta + deltaBelta;
     const double gamma = M_PI - alpha - belta2;
-    const double newDepth = t12Norm * sin(belta2) / sin(gamma);
+    const double newPc1Norm = t12Norm * sin(belta2) / sin(gamma);
+    {
+        static bool first = true;
+        ofstream f;
+        const string depthUncertainty("get_one_pixel_depth_uncertainty.csv");
+        if(first) {
+            first = false;
+            f.open(depthUncertainty, ios::out);
+            f << "#oldDepth, obvDepth, deltaDepth" << endl;
+            f.close();
+        }
+        f.open(depthUncertainty, ios::app);
+        f << pc1.z() << " " << newPc1Norm << " " << abs(pc1.z() - newPc1Norm) << endl;
+        f.close();
+    }
+    return abs(pc1.z() - newPc1Norm);
+}
 
-    return abs(pc1Norm - newDepth);
+double GetDepthUncertainty(const Eigen::Vector2d &px2, const Eigen::Vector2d &deltaPix2, const double d,  const Camera &cam) {
+    // 在极平面上{假设已经进行极线矫正}, 设右视图沿着极线方向产生了Δx个像素偏移，真实值为x2
+    // 那么，O2P2{归一化平面上对应x2的点}与O1O2的夹角为：
+    // β2 = 1/{(x2-cx)/fx} = fx/(x2-cx)，同理，产生偏移后，有：
+    // β2' = fx/(x2-Δx-cx)
+    // 设深度方向与O1O2垂足为H，令 b2 = O1O2-O1H
+    // 那么，深度d由三角函数计算式有：
+    // tanβ2 = d/b2
+    // tanβ2' = d'/b2
+    // ==> d/d' = tanβ2/tanβ2'
+    // Δd = |d - d'| = | (tanβ2/tanβ2' - 1) * d'|
+    // 或者 Δd = | (tanβ2'/tanβ2 - 1) * d |
+    const Eigen::Vector2d px2_ = px2 + deltaPix2,
+          p2Norm = cam.InverseProject(px2.cast<int>()).head(2),
+          p2Norm_ = cam.InverseProject(px2_.cast<int>()).head(2);
+    
+    const double tanBelta2 = 1.0/p2Norm.norm();
+    const double tanBelta2_ = 1.0/p2Norm_.norm(); // > 0的实数
+    const double deltaDepth = abs(tanBelta2_/tanBelta2 - 1) * d;
+    {
+        static bool first = true;
+        ofstream f;
+        const string depthUncertainty("get_depth_uncertainty.csv");
+        if(first) {
+            first = false;
+            f.open(depthUncertainty, ios::out);
+            f << "#deltaPixLen, belta2, delta2_, p2Norm, p2Norm_, depth, deltaDepth" << endl;
+            f.close();
+        }
+        f.open(depthUncertainty, ios::app);
+        f << deltaPix2.norm() << " " << atan(tanBelta2) * kRad2Deg << " " << atan(tanBelta2_) * kRad2Deg << " " 
+          << p2Norm.norm() << " " << p2Norm_.norm() << " " << d << " " << deltaDepth << endl;
+        f.close();
+    }
+    return deltaDepth;
 }
 
 bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
