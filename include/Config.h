@@ -62,6 +62,9 @@ public:
     int minSearchStep;
     int pyrLevel;
     double SimErrorRatio;
+    bool drawGoddEpipolarMatch;
+    double best2SecondDist;
+    bool drawAllEpipolarMatch;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

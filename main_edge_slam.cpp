@@ -288,7 +288,11 @@ int main(int argc, char** argv){
 
         lastLastF = lastF;
         lastF = curF;
-        unmappedFrame.push(curF);
+        if(unmappedFrame.empty()) {
+            unmappedFrame.push(curF);
+        } else if((unmappedFrame.top().Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.05){
+            unmappedFrame.push(curF);
+        }
 
         while(interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i

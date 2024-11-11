@@ -122,7 +122,7 @@ void KeyFrame::operator =(const KeyFrame &f) {
 void KeyFrame::CannyEdgeDetect() {
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 #if 1
-    cv::Mat blurred = grayImg_;
+    cv::Mat blurred = grayImg_.clone();
     // 应用高斯滤波来平滑边缘
     cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
 #else
@@ -187,7 +187,9 @@ void KeyFrame::CannyEdgeDetect() {
             // 边缘点置为黑色
             if(InRange(edgeImg_[lvl], {p.x(), p.y()}) ) {
                 edgeImg_[lvl].at<uchar>(int(p.y()), int(p.x()) ) = 0;
-                
+                if(lvl == 0) {
+                    debugGrayImg_.at<uchar>(int(p.y()), int(p.x()) ) = 255;
+                }
                 // 使用未去畸变像素邻域
                 const int x = px[id].x, y = px[id].y;
                 
@@ -573,13 +575,25 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;
+    int ep1Direction = 1;
     if(farPc2.z() < 0.1) {
+        // cout << "farPc2.z() " << farPc2.z() << endl;
         return {};
     }
     const Eigen::Vector3d nearPc2 = T21 * nearPc1;
     if(nearPc2.z() < 0.1) {
-        return {};
+        // cout << "nearPc2.z() " << nearPc2.z() << endl;
+        // ep1Direction = -1;
+        // return {};
     }
+
+    const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
+    const double depthScale = priorPc2.z() / lk1->z_;
+    if(!(depthScale > 0.7 && depthScale < 1.4 )) {
+        cout << "depthScale error: " << depthScale << endl;
+        // return {};
+    }
+
     Eigen::Vector2d farPx2 = cam_->Project2PixelPlane(farPc2),
                             nearPx2 = cam_->Project2PixelPlane(nearPc2);
     // 从 far->near 的方向向量
@@ -592,12 +606,13 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
     const Eigen::Vector3d P12 = T12.t_wb_;
     Eigen::Vector2d ep1;
-    Eigen::Vector2d px1; // debug极点显示
+    Eigen::Vector2d epipolarPoint1; // debug极点显示
+
     if(P12[2] != 0) {
         const Eigen::Vector2d xyNorm = (P12/P12[2]).head(2);
-        px1[0] = cam_->fx_ * xyNorm[0] + cam_->cx_;
-        px1[1] = cam_->fy_ * xyNorm[1] + cam_->cy_;
-        ep1 = px1 - lk1->uv_;
+        epipolarPoint1[0] = cam_->fx_ * xyNorm[0] + cam_->cx_;
+        epipolarPoint1[1] = cam_->fy_ * xyNorm[1] + cam_->cy_;
+        ep1 = epipolarPoint1 - lk1->uv_;
         //cout << "px1 | l1: " << px1.transpose() << " | " << ep1.norm() << endl;
         //cout<< lk1 << "  " << "ep1-1: " << ep1.transpose() << endl;
 
@@ -607,12 +622,17 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         // 意味着，KF1归一化平面上e1Pe2与极平面O1PO2是相似的，因为 e1P、e2P分别与O1P、O2P重叠，
         // 且e1、e2都在KF1的归一化平面上{事实上，像素平面可以认为它与归一化平面重叠，只是要使用焦距fx、fy缩放, cx、cy平移而已}
         // 那么, e1e2必然平行于O1O2, 那么极线方向我们自然可以写出来：
-        ep1.x() = P12.x() * cam_->fx_; // 乘以焦距缩放到像素坐标
-        ep1.y() = P12.y() * cam_->fy_;
+        ep1.x() = P12.x() * cam_->fx_ + cam_->cx_; // 乘以焦距缩放到像素坐标
+        ep1.y() = P12.y() * cam_->fy_ + cam_->cy_;
         //cout<< lk1 << "  " << "ep1-2: " << ep1.transpose() << endl;
         
     }
-    ep1 = ep1.normalized();
+    ep1Direction = ep1.dot(ep2) > 0 ? 1 : -1;
+    if(ep1Direction < 0) {
+        // 说明相机姿态夹角不是正常的？
+        // return {};
+    }
+    ep1 = ep1.normalized() * ep1Direction;
 
     const int desLen = config->descriptorPatchLen;
     const int midLen = desLen / 2;
@@ -626,6 +646,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     vector<Eigen::Vector2d> debugPx1{p1};
 
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
+    ep1 *= config->minSearchStep;
     vector<double> v1 = CalculateDescriptor(grayImg_, p1, ep1, desLen);
 
     double s1 = 0;
@@ -658,7 +679,9 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const double expandLen = minEpipolarLen - ep2Len;
     if(cutLen > 0) {
         // 只能修改最近点
-        nearPx2 -= cutLen * ep2;
+        // nearPx2 -= cutLen * ep2;
+        // nearPx2 = farPx2 - cutLen * ep2;
+        nearPx2 = farPx2 + maxEpipolarLen*ep2;
     } else if(expandLen > 0) {
         const double halfLen = 0.5 * expandLen;
         nearPx2 += halfLen * ep2;
@@ -668,7 +691,8 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     double bestScore = 1e9, secondBestScore = 1e9;
     Eigen::Vector2d bestP2{1000, 1000}, secondBestP2{1000, 1000};
 
-    Eigen::Vector2d &p2 = farPx2;
+    Eigen::Vector2d p2 = farPx2;
+    ep2 *= config->minSearchStep;
     //cout << "farPx2, ep2: " << p2.transpose() << " | " << ep2.transpose() << endl;
     vector<Eigen::Vector2d> debugPx2{p2};
 
@@ -682,7 +706,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     avg2 = s2/desLen;
 
-    while ((p2 - nearPx2).norm() > 0.5) {
+    while ((p2 - nearPx2).norm() > 0.5 && (p2-farPx2).norm() < config->maxEpipolarSearchLine) {
         //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
         if (InRange(kf2->grayImg_, p2End.cast<int>()) && InRange(kf2->grayImg_, p2Start.cast<int>()) && px2IsEdge(p2)) {
             const double score = CalculateSSD(&v1[0], &v2[0], avg1, avg2, desLen);
@@ -718,6 +742,9 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         debugPx1.push_back(p1);
     }
 
+    // cout << "epipolarPoint1: " << epipolarPoint1.transpose() << endl;
+    debugPx1.push_back(epipolarPoint1);
+
     vector<Eigen::Vector2d> debugGoodKp2;
     if(InRange(edgeImg2, bestP2.cast<int>())) {
         //cout << "best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
@@ -727,24 +754,30 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         debugGoodKp2.push_back(secondBestP2);
     }
 
-    //cout << "Each best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl << endl << endl;
+    // cout << "Each best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
 
+    if(config->drawAllEpipolarMatch && nearPc2.z() > 0.1) {
+        DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
+            "each point 2 all Epipolar constraint matches", 1, 1000000);
+    }
 
-    //DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
-    //    "each point 2 all Epipolar constraint matches", 1, 1000000);
     const bool smallScore = bestScore < config->maxDescriptorDist * desLen;
-    if(!smallScore) {
+    // 意味着是最后一个点匹配上，不可信？
+    if(!smallScore || (bestP2-nearPx2).norm() < 2) {
         return {};
     }
 
 #if 1
     // TODO: 这里返回不确定度就行了
     const bool goodScore = bestScore < config->best2SecondRatio * secondBestScore;
-    const double badDist = (bestP2 - secondBestP2).norm() > 5;
-    if(goodScore || (!badDist && !goodScore )) {
-    //if(goodScore) {
-        //DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
-        //    "current point 2 all Epipolar constraint matches", 1, 1000000);
+    const double badDist = (bestP2 - secondBestP2).norm() > 2 * config->minSearchStep; //  config->best2SecondDist;
+    // if(goodScore || (!badDist && !goodScore )) {
+    if((goodScore && bestP2.norm() > 1e8) || (!badDist && goodScore) ) {
+        if(config->drawGoddEpipolarMatch) {
+            DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
+                "current point 2 all Epipolar constraint matches", 1, 1000000);
+        }
+
         if(InRange(edgeImg2, secondBestP2.cast<int>()) ) {
             deltaPx2 = bestP2 - secondBestP2;
         } else {
@@ -788,7 +821,7 @@ vector<double> KeyFrame::CalculateDescriptor(const cv::Mat &grayImg, const Eigen
 double KeyFrame::CalculateSSD(double *v1, double *v2, double avg1, double avg2, const int desLen) {
     double sum = 0;
     double avg = avg1 - avg2;
-    //avg = 0;
+    avg = 0;
     for(int i = 0; i < desLen; ++i) {
         sum += abs(v1[i] - avg - v2[i]);
     }

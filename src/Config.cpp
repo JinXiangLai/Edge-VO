@@ -69,6 +69,9 @@ Config::Config(const std::string &yamlFilePath) {
     minSearchStep = f["minSearchStep"].as<int>();
     pyrLevel = f["pyrLevel"].as<int>();
     SimErrorRatio = f["SimErrorRatio"].as<double>();
+    drawGoddEpipolarMatch = f["drawGoddEpipolarMatch"].as<bool>();
+    best2SecondDist = f["best2SecondDist"].as<double>();
+    drawAllEpipolarMatch = f["drawAllEpipolarMatch"].as<bool>();
 
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
 }

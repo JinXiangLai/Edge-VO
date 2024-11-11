@@ -284,6 +284,9 @@ cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Ei
         cv::circle(im, goodMatchP2, radius*2, secondMatchColor, 2);
     }
 
+    cv::Point epipolarPoint1(trajKp1.back().x()*ratio, trajKp1.back().y()*ratio);
+    cv::circle(im, epipolarPoint1, radius*2, bestMatchColor, 2);
+
     cv::namedWindow(name);
     cv::imshow(name, im);
     cv::imwrite(name+".png", im);
@@ -548,6 +551,38 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &k
     return A.colPivHouseholderQr().solve(b);
 }
 
+double TriangulateDepth(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam) {
+    Pose T12 = T21.Inverse();
+    
+    Eigen::Vector3d f_ref = cam.InverseProject(kp1.cast<int>());
+    f_ref.normalize();
+    Eigen::Vector3d f_curr = cam.InverseProject(kp2.cast<int>());
+    f_curr.normalize();
+    
+    // 方程
+    // d_ref * f_ref = d_cur * ( R_RC * f_cur ) + t_RC
+    // => [ f_ref^T f_ref, -f_ref^T f_cur ] [d_ref] = [f_ref^T t]
+    //    [ f_cur^T f_ref, -f_cur^T f_cur ] [d_cur] = [f_cur^T t]
+    // 二阶方程用克莱默法则求解并解之
+    Eigen::Vector3d t = T12.t_wb_;
+    Eigen::Vector3d f2 = T12.q_wb_ * f_curr; 
+    Eigen::Vector2d b = Eigen::Vector2d ( t.dot ( f_ref ), t.dot ( f2 ) );
+    double A[4];
+    A[0] = f_ref.dot ( f_ref );
+    A[2] = f_ref.dot ( f2 );
+    A[1] = -A[2];
+    A[3] = - f2.dot ( f2 );
+    double d = A[0]*A[3]-A[1]*A[2];
+    Eigen::Vector2d lambdavec = 
+        Eigen::Vector2d (  A[3] * b ( 0,0 ) - A[1] * b ( 1,0 ),
+                    -A[2] * b ( 0,0 ) + A[0] * b ( 1,0 )) /d;
+    Eigen::Vector3d xm = lambdavec ( 0,0 ) * f_ref;
+    Eigen::Vector3d xn = t + lambdavec ( 1,0 ) * f2;
+    Eigen::Vector3d d_esti = ( xm+xn ) / 2.0;  // 三角化算得的深度向量
+    double depth_estimation = d_esti.norm();   // 深度值
+    return depth_estimation;
+}
+
 bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z) {
     // case 1: 距离校验
     if(z < lk1.depthRange_[0] || z > lk1.depthRange_[1]) {
@@ -648,7 +683,11 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
     const Eigen::Vector2d kp1 = lk.uv_;
 
-    const Eigen::Vector3d pc1 = Triangulate(kp1, kp2[0], T21, cam);
+    Eigen::Vector3d pc1 = Triangulate(kp1, kp2[0], T21, cam);
+    const double d1 = TriangulateDepth(kp1, kp2[0], T21, cam);
+    const Eigen::Vector3d pc1New = cam.InverseProject(kp1.cast<int>(), d1);
+    // cout << "pc1.z, pc1New.z, diff: " << pc1.z() << " " << pc1New.z() << " " << pc1.z() - pc1New.z() << endl;
+    pc1 = pc1New;
     if(!CheckDepthQuality(lk, T12, kp2[0], pc1.z()) ){
         return false;
     }

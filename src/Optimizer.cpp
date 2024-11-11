@@ -1697,7 +1697,7 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
     constexpr double needLandmarkRatio = 500;
     // TODO: 使用多线程时，需要注意后端也会使用optLandmark_，因此最好用不同的变量表示
     optLandmark_.clear();
-    optLandmark_.reserve(config->maxActiveLandmarkEachKF * needLandmarkRatio);
+    // optLandmark_.reserve(config->maxActiveLandmarkEachKF * needLandmarkRatio);
 
 #if 0
     // 由于最新的KF更新次数不够，且还未进行外点剔除，所以这里选择跟踪局部地图

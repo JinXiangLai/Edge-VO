@@ -103,6 +103,8 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp2, const Pose &T21, const C
 
 Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
 
+double TriangulateDepth(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
+
 bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk,
     const Eigen::Vector2d &deltaPx2);
 
