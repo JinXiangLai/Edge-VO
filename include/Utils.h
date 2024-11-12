@@ -165,6 +165,8 @@ double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::
 
 void ShowLocalMap(const std::vector<Pose> &vTwc);
 
+void ShowCameraCone(const std::vector<Pose> &vTwc, const std::vector<cv::Mat> &imgs, const Camera &cam);
+
 enum KeyboardEvent{Reset, StepByStep};
 
 class InteractionParam {

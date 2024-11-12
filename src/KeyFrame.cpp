@@ -120,6 +120,22 @@ void KeyFrame::operator =(const KeyFrame &f) {
 
 
 void KeyFrame::CannyEdgeDetect() {
+// #define Undistort
+
+#ifdef Undistort
+    Mat D;
+    if(config->model == "fisheye") {
+        D = (cv::Mat_<float>(4, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_);
+    } else if (config->model == "pinhole") {
+        D = (cv::Mat_<float>(5, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_, cam_->k5_);
+    }
+    Mat R = cv::Mat::eye(3, 3, CV_32F);
+    Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
+    Mat map1, map2;
+    cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
+		cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
+	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
+#endif
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 #if 1
     cv::Mat blurred = grayImg_.clone();
@@ -159,7 +175,7 @@ void KeyFrame::CannyEdgeDetect() {
         vector<Point2i> px;
         // 取出边缘像素点
         // 这里跳过了6个图像边缘的像素
-        constexpr int jump = 6;
+        constexpr int jump = 2;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
                 if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
@@ -172,7 +188,14 @@ void KeyFrame::CannyEdgeDetect() {
         // cv::waitKey(0);
 
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+#ifdef Undistort
+        unPx_[lvl].clear();
+        for(const Point2i &p : px) {
+            unPx_[lvl].push_back({p.x, p.y});
+        }
+#else
         unPx_[lvl] = cam_->UndistortPoints(px, lvl); // 去畸变后的像素平面上的点
+#endif
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
         if(config->messageLevel == MessageLevel::Debug)
             cout << "Undistort " << px.size() << "points spend " 
@@ -333,10 +356,14 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     convergeEdgeNum_ = 0; // 重新统计当前KF的收敛边缘点集
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.01) {
+    if(Tc1c2.t_wb_.norm() < 0.) {
         // 位移过小，不能进行更新
         return 0;
     }
+
+    vector<Pose> vTwc{ Pose(), Tc1c2}; 
+    vector<Mat> imgs{ debugGrayImg_, kf2.debugGrayImg_ };
+    ShowCameraCone(vTwc, imgs, *cam_);
 
     for(int i = 0; i < landmark_.size(); ++i) {
         if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
@@ -563,6 +590,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const Pose T12 = T21.Inverse();
     const Mat &edgeImg2 = kf2->edgeImg_[0];
 
+    const double fx = cam_->fx_, fy = cam_->fy_, cx = cam_->cx_, cy = cam_->cy_;
     // for(int i = 0; i < landmark_.size(); ++i) {
     //     Landmark *lk1 = landmark_[i];
     if(lk1 == nullptr || lk1->IsOutOfRange()) {
@@ -602,7 +630,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     ep2 = ep2.normalized();
 
 
-    // OK，接下来求KF1像素平面上对应极线
+    // OK，接下来求KF1像素平面上对应极线，直接把O2当作O1相机系下的一点，那么极点位置不就轻松求出来了
     // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
     const Eigen::Vector3d P12 = T12.t_wb_;
     Eigen::Vector2d ep1;
@@ -610,8 +638,8 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     if(P12[2] != 0) {
         const Eigen::Vector2d xyNorm = (P12/P12[2]).head(2);
-        epipolarPoint1[0] = cam_->fx_ * xyNorm[0] + cam_->cx_;
-        epipolarPoint1[1] = cam_->fy_ * xyNorm[1] + cam_->cy_;
+        epipolarPoint1[0] = fx * xyNorm[0] + cx;
+        epipolarPoint1[1] = fy * xyNorm[1] + cy;
         ep1 = epipolarPoint1 - lk1->uv_;
         //cout << "px1 | l1: " << px1.transpose() << " | " << ep1.norm() << endl;
         //cout<< lk1 << "  " << "ep1-1: " << ep1.transpose() << endl;
@@ -622,17 +650,30 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         // 意味着，KF1归一化平面上e1Pe2与极平面O1PO2是相似的，因为 e1P、e2P分别与O1P、O2P重叠，
         // 且e1、e2都在KF1的归一化平面上{事实上，像素平面可以认为它与归一化平面重叠，只是要使用焦距fx、fy缩放, cx、cy平移而已}
         // 那么, e1e2必然平行于O1O2, 那么极线方向我们自然可以写出来：
-        ep1.x() = P12.x() * cam_->fx_ + cam_->cx_; // 乘以焦距缩放到像素坐标
-        ep1.y() = P12.y() * cam_->fy_ + cam_->cy_;
+        ep1.x() = P12.x() * fx + cx; // 乘以焦距缩放到像素坐标
+        ep1.y() = P12.y() * fy + cy;
         //cout<< lk1 << "  " << "ep1-2: " << ep1.transpose() << endl;
         
     }
     ep1Direction = ep1.dot(ep2) > 0 ? 1 : -1;
     if(ep1Direction < 0) {
         // 说明相机姿态夹角不是正常的？
+        cerr << "[WARNING]: ep1, ep2 cross angle is obtuse" << endl;
         // return {};
     }
     ep1 = ep1.normalized() * ep1Direction;
+
+    // LSD
+    // const Eigen::Vector3d thisToOther_t = T12.t_wb_;
+    // const double x = lk1->uv_.x(), y = lk1->uv_.y();
+    // float epx = - fx * fy * thisToOther_t[0] + thisToOther_t[2]*(x - cx) * fy;
+	// float epy = - fy * fx * thisToOther_t[1] + thisToOther_t[2]*(y - cy) * fx;
+    // ep1 << epx, epy;
+    // if(ep1.norm() < 1) {
+    //     return {};
+    // }
+    // ep1.normalize();
+    // ep1 *= -1;
 
     const int desLen = config->descriptorPatchLen;
     const int midLen = desLen / 2;
@@ -827,3 +868,74 @@ double KeyFrame::CalculateSSD(double *v1, double *v2, double avg1, double avg2, 
     }
     return sum;
 }
+
+void KeyFrame::ReleaseMat() {
+    grayImg_.release();
+    for(int i = 0; i < edgeImg_.size(); ++i) {
+        edgeImg_[i].release();
+        dist_[i].release();
+        dx_[i].release();
+        dy_[i].release();
+    }
+}
+
+void KeyFrame::FuseDepth() {
+    const int fusePatchLen = 5;
+    const int midLen = 5/2;
+    static vector<vector<double> > weights(fusePatchLen, vector<double>(fusePatchLen, 0));
+    static bool first = true;
+    if(first) {
+        for(int x = -midLen; x <= midLen; ++x)
+            for(int y = -midLen; y <= midLen; ++y) {
+                // 权重与距离成反比
+                weights[y+midLen][x+midLen] = 1./(x*x + y*y);
+            }
+        // 中心点给予特殊权重
+        weights[midLen][midLen] = 0.5;
+        first = false;
+    }
+
+    KeyFrame temp = *this; // I'm too lazy
+    vector<Landmark*> &readLk = temp.landmark_;
+    unordered_map<Eigen::Vector2i, int, TupleHash> &readPointMapId = temp.pointMapId_;
+
+    for(int i = 0; i < landmark_.size(); ++i) {
+        double maxDepth = -1, minDepth = 1e9;
+        Landmark *lk1 = landmark_[i];
+        const Eigen::Vector2i px1 = lk1->uv_.cast<int>();
+        const double d1 = lk1->z_;
+
+        double sumDepth = 0, sumWeight = 0;
+        for(int x = -midLen; x <= midLen; ++x) {
+            for(int y = -midLen; y <= midLen; ++y) {
+                const double w = weights[y+midLen][x+midLen];
+                const Eigen::Vector2i px2 = px1 + Eigen::Vector2i(x, y);
+                if(!readPointMapId.count(px2) ) {
+                    continue;
+                }
+                Landmark *lk2 = readLk[readPointMapId.at(px2)];
+                if(lk2!=nullptr && lk2->Converge() ) {
+                    const double d2 = lk2->z_;
+                    if(lk1->Converge() && abs(d2 - d1) > lk1->uncertainty_ * 3) {
+                        continue;
+                    }
+                    if(d2 > maxDepth) {
+                        maxDepth = d2;
+                    }
+                    if(d2 < minDepth) {
+                        minDepth = d2;
+                    }
+
+                    sumDepth += w * d2;
+                    sumWeight += w;
+                }
+            }     
+        }
+        if(maxDepth > 0 && minDepth < maxDepth) {
+            lk1->z_ = sumDepth / sumWeight;
+            lk1->depthCov_ = pow(maxDepth - minDepth, 2) ;
+            lk1->UpdateUncertainty(true);
+        }
+    } 
+}
+

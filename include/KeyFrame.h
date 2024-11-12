@@ -42,15 +42,8 @@ public:
     double CullingBadDepth(KeyFrame *kf2);
     double CalculateSSD(double *v1, double *v2, double avg1, double avg2, const int desLen);
     std::vector<double> CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2d &px, const Eigen::Vector2d &epNorm, const int len=5);
-    void ReleaseMat() {
-        grayImg_.release();
-        for(int i = 0; i < edgeImg_.size(); ++i) {
-            edgeImg_[i].release();
-            dist_[i].release();
-            dx_[i].release();
-            dy_[i].release();
-        }
-    }
+    void ReleaseMat();
+    void FuseDepth();
 
     std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d &deltaPx2);
 

@@ -693,7 +693,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     }
 
 
-#if 0
+#if 1
     // 这样计算不确定度感觉效果很差
     //const double deltaDepth = GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
     const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
@@ -1544,4 +1544,50 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     interaction->resetWindow = false;
     window.removeAllWidgets();
     //window.close();
+}
+
+void ShowCameraCone(const vector<Pose> &vTwc, const vector<Mat> &imgs, const Camera &cam) {
+    viz::Viz3d mainWindow("Camera cone window");
+    mainWindow.setViewerPose(cv::Affine3d::Identity());
+    
+    // 初始化相机类
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> K = cam.K_[0];
+    double *dataK = K.data();
+    Matx33d intrisicParams(dataK);
+    const int w = imgs[0].cols, h = imgs[0].rows;
+    viz::Camera camera(intrisicParams, Size(w,h));
+    cout << "t12: " << vTwc[1].t_wb_.transpose() << " norm: " << vTwc[1].t_wb_.norm() << endl;
+
+    // 将输入转化为Mat格式
+    vector<viz::WCameraPosition> camParams(imgs.size());
+    vector<Affine3d> camPoses(imgs.size());
+    const double scale = 0.1;
+    for(int i = 0; i < imgs.size(); ++i) {
+        Eigen::Matrix<double, 4, 4, Eigen::RowMajor> Twc = Eigen::Matrix<double, 4, 4>::Identity();
+        Twc.block(0, 0, 3, 3) = vTwc[i].q_wb_.toRotationMatrix();
+        Twc.block(0, 3, 3, 1) = vTwc[i].t_wb_;
+        Affine3d matTwc(Twc.data());
+        if(i == 0)
+            camParams[i] = viz::WCameraPosition(camera.getFov(), imgs[i], scale ,viz::Color::white());
+        else
+            camParams[i] = viz::WCameraPosition(camera.getFov(), imgs[i], scale ,viz::Color::cyan());
+        camPoses[i] = matTwc;
+        mainWindow.showWidget("Camera"+to_string(i), camParams[i], camPoses[i]);
+    }
+
+    const Eigen::Vector3d t1 = vTwc[1].t_wb_;
+    const Eigen::Vector2i uv0(320, 210);
+    cv::Point3d o0(0, 0, 0), o1(t1[0], t1[1], t1[2]);
+    o1 *= 5;
+    const Eigen::Vector3d _p = cam.InverseProject(uv0);
+    cv::Point3d pc0(_p[0], _p[1], _p[2]);
+    cv::viz::WLine l0(o0, pc0, viz::Color::red());
+    cv::viz::WLine l1(o0, o1, viz::Color::red());
+    cv::viz::WLine l2(pc0, o1, viz::Color::bluberry());
+    mainWindow.showWidget("Line0", l0);
+    mainWindow.showWidget("Line1", l1);
+
+
+    // mainWindow.showWidget("Coordinate", viz::WCoordinateSystem(), Affine3d::Identity());
+    mainWindow.spin();
 }

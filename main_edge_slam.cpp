@@ -100,7 +100,7 @@ int main(int argc, char** argv){
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
-            viewerThread = new thread(Run, &optimizer);
+            // viewerThread = new thread(Run, &optimizer);
             continue; // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg"+to_string(i), showImg);
@@ -211,8 +211,9 @@ int main(int argc, char** argv){
         // step4: 将深度图传递给当前帧
         // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
         // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
-        double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
-        cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
+        // double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
+        // cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
+        win.back()->FuseDepth();
         
         // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
         //     ShowPointCloud(curF.landmark_);
