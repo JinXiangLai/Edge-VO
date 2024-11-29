@@ -72,7 +72,7 @@ Config::Config(const std::string &yamlFilePath) {
     drawGoddEpipolarMatch = f["drawGoddEpipolarMatch"].as<bool>();
     best2SecondDist = f["best2SecondDist"].as<double>();
     drawAllEpipolarMatch = f["drawAllEpipolarMatch"].as<bool>();
-
+    drawEpipolarMatchStartCol = f["drawEpipolarMatchStartCol"].as<int>();
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
 }
 

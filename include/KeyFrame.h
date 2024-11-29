@@ -17,6 +17,13 @@ struct TupleHash {
     }
 };
 
+namespace EpipolarMatchType {
+    constexpr float outOFboundaryORabnormalDepth = -1;
+    constexpr float repeatTextureORbadDepth = -2;
+    constexpr float occulsionORnoBestMatch = -3;
+    constexpr float nanValueNOstereoVisionIssue = -4;
+}
+
 class KeyFrame {
 public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -44,8 +51,9 @@ public:
     std::vector<double> CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2d &px, const Eigen::Vector2d &epNorm, const int len=5);
     void ReleaseMat();
     void FuseDepth();
+    bool MoveNearPx2IntoBoundary(Eigen::Vector2d &pClose, const Eigen::Vector2d &ep2, const Eigen::Vector2d &pFar);
 
-    std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d &deltaPx2);
+    double FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, double &bestDepth, double &std, Eigen::Vector2d &bestPx2);
 
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;

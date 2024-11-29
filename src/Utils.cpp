@@ -10,6 +10,18 @@ using namespace std;
 
 InteractionParam *interaction = nullptr;
 
+std::map<int, cv::Vec3b> Color;
+void InitColor() {
+    Color.insert({COLOR::red, cv::Vec3b(0, 0, 255)});
+    Color.insert({COLOR::orange, cv::Vec3b(0, 165, 255)});
+    Color.insert({COLOR::yellow, cv::Vec3b(0, 255, 255)});
+    Color.insert({COLOR::green, cv::Vec3b(0, 255, 0)});
+    Color.insert({COLOR::blue, cv::Vec3b(255, 255, 0)});
+    Color.insert({COLOR::purple, cv::Vec3b(128, 0, 128)});
+    Color.insert({COLOR::pink, cv::Vec3b(203, 192, 255)});
+}
+
+
 Mat GetDistanceTransform(Mat img) {
     Mat res;
     // https://blog.csdn.net/kakiebu/article/details/82967085
@@ -51,14 +63,15 @@ void CaculateDerivative(const Mat &dist, Mat &dx, Mat &dy) {
     }
 }
 
-bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
-    // 边缘行、列忽略
-    // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
-    //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
-    const double imgScale = config->imageScale;
-    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
-            p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
-}
+// 短小且频繁调用则定义为内联函数
+// bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
+//     // 边缘行、列忽略
+//     // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
+//     //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
+//     const double imgScale = config->imageScale;
+//     return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
+//             p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
+// }
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
     Eigen::Matrix3d m;
@@ -603,7 +616,7 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     }
     const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
     const double projError = (p2-px2).norm();
-    return projError < max(3.0, 10.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
+    return projError < 1.0; // max(3.0, 5.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
 }
 
 // bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
@@ -695,9 +708,9 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
 
 #if 1
     // 这样计算不确定度感觉效果很差
-    //const double deltaDepth = GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
-    const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
-    const double u2 = pc1.z(), cov2 = deltaDepth * deltaDepth;
+    const double deltaDepth = GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
+    // const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
+    double u2 = pc1.z(), cov2 = deltaDepth * deltaDepth; // 考虑基线的影响
 #else
     // 这样反而结果正常，why?建模不准
     const double u2 = pc1.z(), cov2 = 50 * max(0.1, 1-double(lk.obvTime_)/5);
@@ -707,6 +720,13 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
         // 首次初始化
         u1 = u2;
         //cov1 = cov2;
+        // cov2 = cov1 * 0.25; // 不完全信赖第一次的三角化
+    } else {
+        // 一致性校验
+        if(u2 < u1-lk.uncertainty_*3 || u2 > u1+lk.uncertainty_*3) {
+            return false;
+        }
+        cov1 *= 1.1; // KF propagate
     }
     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
     //     << depth.size() << " " << cov1 << endl;
@@ -1094,6 +1114,9 @@ bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f) {
 }
 
 bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px) {
+    if(config->fastNum == 0) {
+        return true;
+    }
     const Point2i pt{px.x(), px.y()};
     const int v = gray.at<uchar>(pt);
 
@@ -1215,7 +1238,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
     }
     for(int i = 0; i < kf1->landmark_.size(); ++i) {
         Landmark *lk1 = kf1->landmark_[i];
-        if(lk1==nullptr || lk1->IsOutOfRange() || !lk1->Converge()) {
+        if(lk1==nullptr || lk1->IsOutOfRange() ) {
             continue;
         }
 
@@ -1247,6 +1270,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
     }
     return double(initNum) / kf2->landmark_.size();
 }
+
 
 double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2) {
     const Mat &im1 = kf1->grayImg_;
@@ -1438,7 +1462,7 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg, &curKFimg] (set<Landmark*> &ps, const cv::Vec3b &color,
-        vector<Point3d> &points) {
+        vector<Point3d> &points, vector<cv::Vec3b> &colors) {
         points.reserve(10000);
 
         for(Landmark *p : ps) {
@@ -1446,26 +1470,36 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
                 continue;
             }
             const Eigen::Vector3d pw = p->GetPw();
-            points.push_back({pw.x(), pw.y(), pw.z()});
+            const Eigen::Vector3d pc = p->GetPc();
+            // points.push_back({pw.x(), pw.y(), pw.z()});
+            const int colorId = min(int(pc.z() / 0.5), int(COLOR::pink) );
+            const cv::Vec3b curColor(Color[static_cast<COLOR>(colorId)]); 
+            points.push_back({pc.x(), pc.y(), pc.z()});
+            colors.push_back(curColor);
+
             if(curf!=nullptr) {
                 const Eigen::Vector3d pc2 = curf->Tcw_ * pw;
                 const Eigen::Vector2i px2 = curf->cam_->Project2PixelPlane(pc2).cast<int>();
                 if(InRange(curf->grayImg_, px2) ) {
                     //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
-                    cv::circle(curImg, {px2.x(), px2.y()}, 2, color);
+                    // cv::circle(curImg, {px2.x(), px2.y()}, 2, color);
+                    cv::circle(curImg, {px2.x(), px2.y()}, 2, colors.back());
                 }
 
                 const Eigen::Vector3d pc3 = curfInit->Tcw_ * pw;
                 const Eigen::Vector2i px3 = curfInit->cam_->Project2PixelPlane(pc3).cast<int>();
                 if(InRange(curfInit->grayImg_, px3) ) {
                     //curImg.at<cv::Vec3b>(px2.y(), px2.x()) = {0, 0, 255};
-                    cv::circle(curInitImg, {px3.x(), px3.y()}, 2, color);
+                    // cv::circle(curInitImg, {px3.x(), px3.y()}, 2, color);
+                    cv::circle(curInitImg, {px3.x(), px3.y()}, 2, colors.back());
+
                 }
 
                 const Eigen::Vector3d pck = curkf->Tcw_ * pw;
                 const Eigen::Vector2i pxk = curkf->cam_->Project2PixelPlane(pck).cast<int>();
                 if(InRange(curKFimg, pxk) ) {
-                    cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, color);
+                    // cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, color);
+                    cv::circle(curKFimg, {pxk.x(), pxk.y()}, 2, colors.back());
                 }
             }
         }
@@ -1473,21 +1507,28 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     constexpr double pointSize = 1.0;
 
     vector<Point3d> localPoints;
+    vector<cv::Vec3b> localColors;
     cv::Vec3b color1{0, 255, 0};
-    GenerateCloud(interaction->localPoints, color1, localPoints);
+    GenerateCloud(interaction->localPoints, color1, localPoints, localColors);
     if(!localPoints.empty()) {
-        viz::WCloud localCloud(localPoints);
-        localCloud.setColor({color1});
+        viz::WCloud localCloud(localPoints, localColors);
+        if(localColors.empty() ) {
+            localCloud.setColor({color1});
+        }
         localCloud.setRenderingProperty(viz::POINT_SIZE, pointSize);
         window.showWidget("localPointCloud", localCloud);
     }
 
     vector<Point3d> activePoints;
+    vector<cv::Vec3b> activeColors;
+    vector<cv::Vec3b> colors1;
     cv::Vec3b color2{0, 0, 255};
-    GenerateCloud(interaction->activePoints, color2, activePoints);
+    GenerateCloud(interaction->activePoints, color2, activePoints, activeColors);
     if(!activePoints.empty()) {
-        viz::WCloud activeCloud(activePoints);
-        activeCloud.setColor({color2});
+        viz::WCloud activeCloud(activePoints, activeColors);
+        if(activeColors.empty() ) {
+            activeCloud.setColor({color2});
+        }
         activeCloud.setRenderingProperty(viz::POINT_SIZE, pointSize * 2);
         window.showWidget("activePointCloud", activeCloud);
     }
@@ -1532,6 +1573,24 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
         // cv::imshow("curProjImg", curImg);
     }
     window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(2*w+20, 0, w, h)) );
+
+
+    // 显示当前帧的视锥
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> K = curf->cam_->K_[0];
+    double *dataK = K.data();
+    Matx33d intrisicParams(dataK);
+    viz::Camera camera(intrisicParams, Size(w,h));
+    // 将输入转化为Mat格式
+    viz::WCameraPosition camParam;
+    Affine3d camPose;
+    const double scale = 0.1;
+    Eigen::Matrix<double, 4, 4, Eigen::RowMajor> Twc = Eigen::Matrix<double, 4, 4>::Identity();
+    Twc.block(0, 0, 3, 3) = curf->Twc_.q_wb_.toRotationMatrix();
+    Twc.block(0, 3, 3, 1) = curf->Twc_.t_wb_;
+    Affine3d matTwc(Twc.data());
+    camParam = viz::WCameraPosition(camera.getFov(), curImg, scale ,viz::Color::white());
+    camPose = matTwc;
+    window.showWidget("cur Camera", camParam, camPose);
 
 
     window.registerKeyboardCallback(VizInteraction);

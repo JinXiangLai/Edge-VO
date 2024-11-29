@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -24,6 +25,13 @@
 class KeyFrame;
 class Landmark;
 
+enum COLOR {
+    red, orange, yellow, green, blue, purple, pink
+};
+
+extern std::map<int, cv::Vec3b> Color;
+
+void InitColor();
 // 距离变换是计算前景到背景的距离
 
 cv::Mat GetDistanceTransform(cv::Mat img);
@@ -32,7 +40,11 @@ std::vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, std::vector<Eigen:
 
 void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy);
 
-bool InRange(const cv::Mat &img, const Eigen::Vector2i &p);
+inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
+    const double imgScale = config->imageScale;
+    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
+            p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
+}
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
 

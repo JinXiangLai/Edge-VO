@@ -38,6 +38,7 @@ int main(int argc, char** argv){
     interaction = &_visualizeParam;
     viz::Viz3d window("Local Map Viewer");
     interaction->window = &window;
+    InitColor();
 
     const bool useInvZ = config->useInvZ;
     const bool showImg = config->showDebugImg;
@@ -75,14 +76,8 @@ int main(int argc, char** argv){
     bool isInitialized = false;
     vector<KeyFrame *> &win = optimizer.window_;
     double accDist = 0.;
-    //vector<KeyFrame> unmappedFrame; // 新KF与过去的F匹配来产生新的深度估计
-    stack<KeyFrame> unmappedFrame;
+    stack<KeyFrame> unmappedFrame; // 由于当前把每一帧都用来更新深度，所以不需要像lsd slam那样保留一些帧
     for(int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
-        // if(interaction->stepBystep) {
-        //     usleep(100 * 1000);
-        //     --i;
-        //     continue;
-        // }
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
@@ -100,14 +95,10 @@ int main(int argc, char** argv){
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
-            // viewerThread = new thread(Run, &optimizer);
+            viewerThread = new thread(Run, &optimizer);
             continue; // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg"+to_string(i), showImg);
-
-        //cv::imshow("cur f"+to_string(vTimeStamps[i]), curF.grayImg_);
-        //cv::waitKey(56);
-        //cv::destroyWindow("cur f"+to_string(vTimeStamps[i]));
         
         // 使用KF更新当前帧的pose
         const Pose Twc2 = curF.priorTwc_;
@@ -158,7 +149,7 @@ int main(int argc, char** argv){
             const double ang = orientationNorm/3 * config->SimErrorRatio, 
                 t = transNorm/3 * config->SimErrorRatio;
             cout << "add noise ang, trans: " << ang * kRad2Deg << "deg, " << t << "m." << endl;
-            noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
+            // noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
             curF.SetTwc(lastF.Twc_ * _Tc1c2 * noise);
         }
 
@@ -176,7 +167,7 @@ int main(int argc, char** argv){
             const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
             if(config->messageLevel <= MessageLevel::Error)
                 cout << "kfConvergeEdgeRatio, accDist: " << kfConvergeEdgeRatio << ", " << accDist << endl;
-            if(kfConvergeEdgeRatio > 0.6 || (accDist > 0.5 && (curF.id_ - initFrame->id_ > 30) ) ) {
+            if(kfConvergeEdgeRatio > 0.1 || (accDist > 0.5 && (curF.id_ - initFrame->id_ > 30) ) || accDist > config->needNewKFtrans) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;
@@ -189,13 +180,15 @@ int main(int argc, char** argv){
 #if 1
         // Step: 利用当前帧更新深度图
         // step1: 优化当前帧pose
-        optimizer.SetInitLambda(1);
+        // optimizer.SetInitLambda(1);
         // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准，卒
+        // optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准，卒
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        // win.back()->FuseDepth();
+
 #else
         // step1
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
@@ -203,17 +196,18 @@ int main(int argc, char** argv){
         optimizer.SetInitLambda(0);
         optimizer.TrackLocalMap(&curF);
 #endif        
+        
         // 显示线程更新使用
         interaction->visualCurF = curF;
         // step3: 剔除地图外点, TODO: 应该使用融合而不是剔除策略！！！
-        //optimizer.CullingErrorLandmark(&curF);
+        // optimizer.CullingErrorLandmark(&curF);
         
         // step4: 将深度图传递给当前帧
         // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
         // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
         // double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
         // cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
-        win.back()->FuseDepth();
+        // win.back()->FuseDepth();
         
         // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
         //     ShowPointCloud(curF.landmark_);
@@ -230,10 +224,11 @@ int main(int argc, char** argv){
              case2 = true, // kfConvergeEdgeRatio > 0.3,
              case3 = T12.t_wb_.norm() > config->needNewKFtrans,
              case4 = Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot,
-             case5 = accDist > config->needNewKFtrans;
+             case5 = accDist > config->needNewKFtrans,
+             case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
         cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " " << case4 << " " << case5 << " accdist: " << accDist << endl;
-        if((case1 || case3 || case4 || case5) && case2) {
+        if((case1 || case3 || case4 || case5) && case2 && case6) {
             {
                 static bool first = true;
                 ofstream f;
@@ -248,13 +243,8 @@ int main(int argc, char** argv){
                 f.close();
                 
             }
-            // 重叠度低，需要将当前帧选为KF，更新它的Landmark
-            if(curF.unPx_.size() < win.back()->unPx_.size() * 0.6) {
-                // TODO：显示线程会显示出异常的图像，需要检测并剔除异常图像
-                //continue;
-            } else {
-                accDist = 0;
-            }
+
+            accDist = 0.;
 
 #ifndef USE_DT_RESIDUAL      
             // 同时未跟踪上landmark的边缘点生成新的landmark
@@ -266,21 +256,9 @@ int main(int argc, char** argv){
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-
+            win.back()->FuseDepth();
             optimizer.AddOneKeyFeame(new KeyFrame(curF) );
             interaction->visualLastKF = win.back();
-
-            if(win.size() > 2) {
-                optimizer.SetInitLambda(1.0);
-                optimizer.SlidingWindowOptimize();
-                // optimizer.UpdateDepthInWindow();
-            }
-            // optimizer.CullingErrorLandmark();
-
-            while (!unmappedFrame.empty()) {
-                win.back()->UpdateDepth(unmappedFrame.top());
-                unmappedFrame.pop();
-            }
 
         } else {
             // delete curF; // 释放非KF内存
@@ -289,11 +267,6 @@ int main(int argc, char** argv){
 
         lastLastF = lastF;
         lastF = curF;
-        if(unmappedFrame.empty()) {
-            unmappedFrame.push(curF);
-        } else if((unmappedFrame.top().Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.05){
-            unmappedFrame.push(curF);
-        }
 
         while(interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i

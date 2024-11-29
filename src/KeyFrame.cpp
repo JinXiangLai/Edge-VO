@@ -120,7 +120,7 @@ void KeyFrame::operator =(const KeyFrame &f) {
 
 
 void KeyFrame::CannyEdgeDetect() {
-// #define Undistort
+#define Undistort
 
 #ifdef Undistort
     Mat D;
@@ -136,6 +136,7 @@ void KeyFrame::CannyEdgeDetect() {
 		cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
 	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 #endif
+
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 #if 1
     cv::Mat blurred = grayImg_.clone();
@@ -178,7 +179,7 @@ void KeyFrame::CannyEdgeDetect() {
         constexpr int jump = 2;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
-                if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
+                if(edgeImg_[lvl].at<uchar>(y, x) != 0 && ( lvl!=0 || IsFastPoint(grayImg_, {x, y}) )) {
                     px.push_back({x, y});
                 }
             }
@@ -354,16 +355,17 @@ size_t KeyFrame::InitializeLandmark() {
 double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     double matchEdgeNum = 0;
     convergeEdgeNum_ = 0; // 重新统计当前KF的收敛边缘点集
+    int findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.) {
+    if(Tc1c2.t_wb_.norm() < 0.001) {
         // 位移过小，不能进行更新
         return 0;
     }
 
-    vector<Pose> vTwc{ Pose(), Tc1c2}; 
-    vector<Mat> imgs{ debugGrayImg_, kf2.debugGrayImg_ };
-    ShowCameraCone(vTwc, imgs, *cam_);
+    // vector<Pose> vTwc{ Pose(), Tc1c2}; 
+    // vector<Mat> imgs{ debugGrayImg_, kf2.debugGrayImg_ };
+    // ShowCameraCone(vTwc, imgs, *cam_);
 
     for(int i = 0; i < landmark_.size(); ++i) {
         if(landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
@@ -374,33 +376,58 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
             convergeEdgeNum_ += 1;
         }
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
-        //const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        Eigen::Vector2d deltaPx2;
-        const vector<Eigen::Vector2d> kp2 = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1, deltaPx2);
-        if(kp2.empty()) {
+        // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
+        double bestDepth, std;
+        Eigen::Vector2d bestPx2;
+        const double error = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1, bestDepth, std, bestPx2);
+        if(error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
             continue;
-        }
-        // 更新的是host帧下的深度
-        const Pose T21 = kf2.Tcw_ * lk1->host_->Twc_;
-        if(UpdateLandmarkDepth(kp2, T21, *cam_, *lk1, deltaPx2) ) {
-            // cout << "depth range, depth, std: [" << lk1->depthRange_[0] << " " << lk1->depthRange_[1] << "] "
-            //  << lk1->z_ << " " << lk1->uncertainty_ << endl;
-            // if(i%10 == 0) {
-            //     DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, kp2, "current point 2 all Epipolar constraint matches", 1, 1);
-            //     DrawMatch(edgeImg_[0], kf2.edgeImg_[0], {lk1->uv_}, {kp2[0]}, "BEST matche", 1, 1);
 
-            // }
-            ++lk1->obvTime_; // 对于KF有用，因其会多次更新depth
-            if(lk1->Converge() ) {
-                matchEdgeNum += 1.0;
+        } else if(error == EpipolarMatchType::repeatTextureORbadDepth) {
+            ++lk1->failObvTime_;
+            lk1->depthCov_ *= 1.1;
+            lk1->UpdateUncertainty(false);
+            continue;
+
+        } else if(error == EpipolarMatchType::occulsionORnoBestMatch) {        
+            lk1->depthCov_ *= 1.01;
+            lk1->UpdateUncertainty(false);
+            continue;
+
+        } else {
+            const double diff = lk1->z_ - bestDepth;
+            if(diff*diff > std*std + lk1->depthCov_) {
+                lk1->depthCov_ *= 1.1;
+                lk1->UpdateUncertainty(false);
+                continue;
             }
-        }   
+
+            if(!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
+                continue;
+            }
+
+            double u2 = bestDepth, cov2 = std * std; // 考虑基线的影响
+            double u1 = lk1->z_, cov1 = lk1->depthCov_ * 1.01; 
+            if(lk1->obvTime_ == 0) {
+                // 首次初始化
+                u1 = u2;
+                cov1 = cov2 * 9;
+                // cov2 = cov1 * 0.25; // 不完全信赖第一次的三角化
+            } 
+
+            lk1->z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
+            lk1->depthCov_ = (cov1 * cov2)/(cov1 + cov2);
+            //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+            //     << " " << landmark.z_ << endl;
+            lk1->UpdateUncertainty(true);
+            ++findMatchNum;
+        }
     }
     
     if(config->messageLevel <= MessageLevel::Error)
         cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
             << " " << convergeEdgeNum_ << endl;
-
+    cout << "successful findMatchNum: " << findMatchNum << endl;
     return double(convergeEdgeNum_) / landmark_.size();
 }
 
@@ -585,111 +612,67 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
 }
 
 
-vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d &deltaPx2) {
+double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, double &bestDepth, double &std, Eigen::Vector2d &bestPx2) {
+    if(lk1 == nullptr || lk1->IsOutOfRange()) {
+        return EpipolarMatchType::nanValueNOstereoVisionIssue;
+    }
+
     const Pose T21 = kf2->Twc_.Inverse() * Twc_;
     const Pose T12 = T21.Inverse();
-    const Mat &edgeImg2 = kf2->edgeImg_[0];
-
     const double fx = cam_->fx_, fy = cam_->fy_, cx = cam_->cx_, cy = cam_->cy_;
-    // for(int i = 0; i < landmark_.size(); ++i) {
-    //     Landmark *lk1 = landmark_[i];
-    if(lk1 == nullptr || lk1->IsOutOfRange()) {
-        // continue;
-        return {};
+
+    // 求KF1像素平面上对应极线，直接把O2当作O1相机系下的一点，那么极点位置不就轻松求出来了
+    // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
+    const Eigen::Vector3d &t12 = T12.t_wb_;
+    Eigen::Vector2d p1 = lk1->uv_;
+    // ep1 = (x, y)*t12.z - 极点e1*t12.z
+    // 注意：这个极线是像素平面上放大 t12.z 倍后的方向向量
+    Eigen::Vector2d ep1{ -fx*t12[0] + t12[2]*(p1.x()-cx), -fy*t12[1] + t12[2]*(p1.y()-cy) };
+    // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
+    // ep1 *= -1;
+    if(ep1.norm() < 1.0) {
+        return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
+    ep1.normalize();
+
+    const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
+    const double depthScale = priorPc2.z() / lk1->z_;
+    if(!(depthScale > 0.7f && depthScale < 1.4f))
+	{
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
+	}
+    // 根据近大远小的规则调整窗口范围
+    ep1 *= depthScale; 
+    const int desLen = config->descriptorPatchLen;
+    const int midLen = desLen / 2;
+    // 检验一下描述子是否在范围内
+    Eigen::Vector2d p1Start = p1 - midLen*ep1, p1End = p1 + midLen*ep1;       
+    if(!InRange(grayImg_, p1Start.cast<int>()) || !InRange(grayImg_, p1End.cast<int>())) {
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
+    }
+    vector<Eigen::Vector2d> debugPx1{p1};
+
 
     double maxZ1 = lk1->z_+3*lk1->uncertainty_;
     double minZ1 = max(0.1, lk1->z_-3*lk1->uncertainty_); 
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_.cast<int>(), minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;
-    int ep1Direction = 1;
-    if(farPc2.z() < 0.1) {
-        // cout << "farPc2.z() " << farPc2.z() << endl;
-        return {};
-    }
     const Eigen::Vector3d nearPc2 = T21 * nearPc1;
-    if(nearPc2.z() < 0.1) {
-        // cout << "nearPc2.z() " << nearPc2.z() << endl;
-        // ep1Direction = -1;
-        // return {};
+    if(farPc2.z() < nearPc2.z() ) {
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
-
-    const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
-    const double depthScale = priorPc2.z() / lk1->z_;
-    if(!(depthScale > 0.7 && depthScale < 1.4 )) {
-        cout << "depthScale error: " << depthScale << endl;
-        // return {};
-    }
-
     Eigen::Vector2d farPx2 = cam_->Project2PixelPlane(farPc2),
-                            nearPx2 = cam_->Project2PixelPlane(nearPc2);
-    // 从 far->near 的方向向量
-    Eigen::Vector2d ep2 = nearPx2 - farPx2; // 我们从最远到最近深度进行遍历
+                    nearPx2 = cam_->Project2PixelPlane(nearPc2);
+    // 从 far->near 的方向向量，ep1极线向量的方向相对图像需要与此保持一致
+    Eigen::Vector2d ep2 = nearPx2 - farPx2; 
     const double ep2Len = ep2.norm();
     ep2 = ep2.normalized();
 
 
-    // OK，接下来求KF1像素平面上对应极线，直接把O2当作O1相机系下的一点，那么极点位置不就轻松求出来了
-    // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
-    const Eigen::Vector3d P12 = T12.t_wb_;
-    Eigen::Vector2d ep1;
-    Eigen::Vector2d epipolarPoint1; // debug极点显示
-
-    if(P12[2] != 0) {
-        const Eigen::Vector2d xyNorm = (P12/P12[2]).head(2);
-        epipolarPoint1[0] = fx * xyNorm[0] + cx;
-        epipolarPoint1[1] = fy * xyNorm[1] + cy;
-        ep1 = epipolarPoint1 - lk1->uv_;
-        //cout << "px1 | l1: " << px1.transpose() << " | " << ep1.norm() << endl;
-        //cout<< lk1 << "  " << "ep1-1: " << ep1.transpose() << endl;
-
-    } else {
-        // 两光心的连线O1O2在一条直线上，所以， KF1上的极线在哪里呢？
-        // 答：将KF1画称右手OXYZ世界系，再画其上的z=1平面，由于OXY平面平行于z=1平面，
-        // 意味着，KF1归一化平面上e1Pe2与极平面O1PO2是相似的，因为 e1P、e2P分别与O1P、O2P重叠，
-        // 且e1、e2都在KF1的归一化平面上{事实上，像素平面可以认为它与归一化平面重叠，只是要使用焦距fx、fy缩放, cx、cy平移而已}
-        // 那么, e1e2必然平行于O1O2, 那么极线方向我们自然可以写出来：
-        ep1.x() = P12.x() * fx + cx; // 乘以焦距缩放到像素坐标
-        ep1.y() = P12.y() * fy + cy;
-        //cout<< lk1 << "  " << "ep1-2: " << ep1.transpose() << endl;
-        
-    }
-    ep1Direction = ep1.dot(ep2) > 0 ? 1 : -1;
-    if(ep1Direction < 0) {
-        // 说明相机姿态夹角不是正常的？
-        cerr << "[WARNING]: ep1, ep2 cross angle is obtuse" << endl;
-        // return {};
-    }
-    ep1 = ep1.normalized() * ep1Direction;
-
-    // LSD
-    // const Eigen::Vector3d thisToOther_t = T12.t_wb_;
-    // const double x = lk1->uv_.x(), y = lk1->uv_.y();
-    // float epx = - fx * fy * thisToOther_t[0] + thisToOther_t[2]*(x - cx) * fy;
-	// float epy = - fy * fx * thisToOther_t[1] + thisToOther_t[2]*(y - cy) * fx;
-    // ep1 << epx, epy;
-    // if(ep1.norm() < 1) {
-    //     return {};
-    // }
-    // ep1.normalize();
-    // ep1 *= -1;
-
-    const int desLen = config->descriptorPatchLen;
-    const int midLen = desLen / 2;
-
-    Eigen::Vector2d p1 = lk1->uv_;
-    Eigen::Vector2d p1Start = p1 - midLen*ep1, p1End = p1 + midLen*ep1;       
-    if(!InRange(grayImg_, p1Start.cast<int>()) || !InRange(grayImg_, p1End.cast<int>())) {
-        cout << "ERROR p1m2, p1p2: " << p1Start.transpose() << " | " << p1End.transpose() << endl;
-        return {};
-    }
-    vector<Eigen::Vector2d> debugPx1{p1};
-
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;
     vector<double> v1 = CalculateDescriptor(grayImg_, p1, ep1, desLen);
-
     double s1 = 0;
     double avg1 = 0;
     for(int i = 0; i < desLen; ++i) {
@@ -697,7 +680,10 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     avg1 = s1/desLen;
 
+
+    const Mat &edgeImg2 = kf2->edgeImg_[0];
     auto px2IsEdge = [&edgeImg2] (const Eigen::Vector2d px2) -> bool{
+        return true;
         bool isEdge = edgeImg2.at<uchar>(px2.y(), px2.x()) == 0;
         if(!isEdge) {
             // 允许小的像素偏差
@@ -714,7 +700,7 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return isEdge;
     };
 
-    // OK， 我们需要限制一下KF2上的极线范围，这是最重要的先验
+    // OK， 我们需要限制一下KF2上的极线范围，这是最重要的先验，极线搜索距离越短，受相对旋转的影响越小
     const double maxEpipolarLen = config->maxEpipolarSearchLine, minEpipolarLen = config->minEpipolarSearchLine;
     const double cutLen = ep2Len - maxEpipolarLen;
     const double expandLen = minEpipolarLen - ep2Len;
@@ -728,6 +714,16 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         nearPx2 += halfLen * ep2;
         farPx2 -= halfLen * ep2;
     }
+    // 最远点若不在投影范围内，那么意味着视野范围受限？直接返回
+    if(!InRange(edgeImg2, farPx2.cast<int>()) ) {
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
+    }
+    if(!InRange(edgeImg2, nearPx2.cast<int>()) ) {
+        // 将最近点移动到图像内
+        if(!MoveNearPx2IntoBoundary(nearPx2, ep2, farPx2) ) {
+            return EpipolarMatchType::outOFboundaryORabnormalDepth;
+        }
+    }
 
     double bestScore = 1e9, secondBestScore = 1e9;
     Eigen::Vector2d bestP2{1000, 1000}, secondBestP2{1000, 1000};
@@ -738,6 +734,13 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     vector<Eigen::Vector2d> debugPx2{p2};
 
     Eigen::Vector2d p2End = p2 - midLen*ep2, p2Start = p2 + midLen*ep2;
+    // 保证端点在图像范围内
+    if(!InRange(edgeImg2, p2End.cast<int>()) ) {
+        p2End = p2;
+        p2 = p2Start;
+        p2Start = p2 + midLen*ep2;
+
+    }
     const Mat &img2 = kf2->grayImg_;
     vector<double> v2 = CalculateDescriptor(img2, p2, ep2, desLen);
 
@@ -747,9 +750,18 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     avg2 = s2/desLen;
 
-    while ((p2 - nearPx2).norm() > 0.5 && (p2-farPx2).norm() < config->maxEpipolarSearchLine) {
+    if(ep2.norm() < 1) {
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
+    }
+
+    // 通过判断incx，incy的正负，来判断循环终止条件
+    // while ( (ep2[0] > 0) == (p2[0] < nearPx2[0]) && (ep2[1] > 0) == (p2[1] < nearPx2[1]) ) {
+    while (1) {
         //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
-        if (InRange(kf2->grayImg_, p2End.cast<int>()) && InRange(kf2->grayImg_, p2Start.cast<int>()) && px2IsEdge(p2)) {
+        // if (InRange(kf2->grayImg_, p2End.cast<int>()) && InRange(kf2->grayImg_, p2Start.cast<int>()) && px2IsEdge(p2)) {
+        if (px2IsEdge(p2) ) {
+
+            // 已经保证端点在边界范围内，这里无需再判断
             const double score = CalculateSSD(&v1[0], &v2[0], avg1, avg2, desLen);
 
             if(score < bestScore) {
@@ -768,9 +780,12 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         p2 += ep2; // 移动关键点
         p2Start += ep2; // 判断边界及移动滑窗
         s2 -= v2[0];
-        
         for(int i = 1; i < v2.size(); ++i) {
             v2[i-1] = v2[i];
+        }
+        const bool inSearchRange = (ep2[0] > 0) == (p2Start[0] < nearPx2[0]) && (ep2[1] > 0) == (p2Start[1] < nearPx2[1]);
+        if(!inSearchRange) {
+            break;
         }
         const double v2Back = BilinearInterpolate<uchar>(kf2->grayImg_, p2Start);
         v2.back() = v2Back;
@@ -783,9 +798,6 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         debugPx1.push_back(p1);
     }
 
-    // cout << "epipolarPoint1: " << epipolarPoint1.transpose() << endl;
-    debugPx1.push_back(epipolarPoint1);
-
     vector<Eigen::Vector2d> debugGoodKp2;
     if(InRange(edgeImg2, bestP2.cast<int>())) {
         //cout << "best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
@@ -797,46 +809,78 @@ vector<Eigen::Vector2d> KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     // cout << "Each best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
 
-    if(config->drawAllEpipolarMatch && nearPc2.z() > 0.1) {
+    if(config->drawAllEpipolarMatch && lk1->uv_.x() > config->drawEpipolarMatchStartCol) {
+        cout << "best & second score: " << bestScore << " " << secondBestScore << endl;
+        cout << "(bestP2 - secondBestP2).norm(): " << (bestP2 - secondBestP2).norm() << endl;
         DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
             "each point 2 all Epipolar constraint matches", 1, 1000000);
     }
 
     const bool smallScore = bestScore < config->maxDescriptorDist * desLen;
-    // 意味着是最后一个点匹配上，不可信？
-    if(!smallScore || (bestP2-nearPx2).norm() < 2) {
-        return {};
+    if(!smallScore) {
+        return EpipolarMatchType::occulsionORnoBestMatch;
     }
 
-#if 1
-    // TODO: 这里返回不确定度就行了
     const bool goodScore = bestScore < config->best2SecondRatio * secondBestScore;
-    const double badDist = (bestP2 - secondBestP2).norm() > 2 * config->minSearchStep; //  config->best2SecondDist;
-    // if(goodScore || (!badDist && !goodScore )) {
-    if((goodScore && bestP2.norm() > 1e8) || (!badDist && goodScore) ) {
-        if(config->drawGoddEpipolarMatch) {
+    if(!goodScore) {
+        return EpipolarMatchType::repeatTextureORbadDepth;
+    }
+
+    double badDist = false;
+    if(secondBestScore < 1e8) {
+        badDist = (bestP2 - secondBestP2).norm() > config->best2SecondDist;
+    }
+    if(badDist) {
+        return EpipolarMatchType::repeatTextureORbadDepth;
+    }
+
+    const double maxMeasureDepth = fx * fy * T12.t_wb_.norm()/sqrt(fx*fx+fy*fy); // 1pixel
+    const double minMeasureDepth = maxMeasureDepth / config->maxEpipolarSearchLine; 
+
+    // if(pointMapId_.at(lk1->uv_.cast<int>()) == 0)
+    static int mea = 0;
+    if(mea++%10000==0)
+        cout << "maxMeasureDepth, minMeasureDepth: [" << maxMeasureDepth << " " << minMeasureDepth << "]" << endl;
+
+
+    if(goodScore && !badDist) {
+        const int time = 2;
+        const double dm1 = TriangulateDepth(lk1->uv_, bestP2-time*ep2, T21, *cam_);
+        const double d1 = TriangulateDepth(lk1->uv_, bestP2, T21, *cam_);
+        const double dp1 = TriangulateDepth(lk1->uv_, bestP2+time*ep2, T21, *cam_);
+        if(d1 < 0 || d1 > maxMeasureDepth || d1 < minMeasureDepth) {
+            return EpipolarMatchType::repeatTextureORbadDepth;
+        }
+        // 对于深度大于5米的，发现深度差异会非常大
+        // 对于深度小于0.5米的，结果是 d: [0.829857 0.203911 0.78017] 深度比例也差很大
+        const double ratio1 = dm1 > d1? (dm1-d1)/dm1 : (d1-dm1)/d1;
+        const double ratio2 = dp1 > d1? (dp1-d1)/dp1 : (d1-dp1)/d1;
+        const double uncertainty1 = dm1 > d1? (dm1-d1) : (d1-dm1);
+        const double uncertainty2 = dp1 > d1? (dp1-d1) : (d1-dp1);
+        const double maxUncertainty = 1e9; // 0.5
+        if( ratio1 > 0.6 || ratio2 > 0.6 || uncertainty1 > maxUncertainty || uncertainty2 > maxUncertainty) {
+            return EpipolarMatchType::outOFboundaryORabnormalDepth;
+        }
+
+        // if(config->drawGoddEpipolarMatch && (lk1->uv_.x() > config->drawEpipolarMatchStartCol || d1 < 0.5)) {
+        if(config->drawGoddEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
+        // if(config->drawGoddEpipolarMatch && (d1 > 5.0)) {
+            cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "]" << endl;
+            cout << "parallax: " << (lk1->uv_-bestP2).norm() << endl;
+            cout << "bestScore, secondBestScore/desLen: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
+            cout << "(bestP2 - secondBestP2).norm(): " << (bestP2 - secondBestP2).norm() << endl;
             DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
                 "current point 2 all Epipolar constraint matches", 1, 1000000);
         }
+        
+        bestDepth = d1;
+        std = max(uncertainty1, uncertainty2) * 2; // 考虑像素测量误差
+        bestPx2 = bestP2;
 
-        if(InRange(edgeImg2, secondBestP2.cast<int>()) ) {
-            deltaPx2 = bestP2 - secondBestP2;
-        } else {
-            deltaPx2 = ep2;
-        }
-        return {bestP2};
+        cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "], uncertainty:[ " << abs(dp1-d1) << " " << abs(dm1-d1) << "]" << endl;
+        return bestScore;
     }
-    return {};
-#else
-    //if(InRange(edgeImg2, secondBestP2.cast<int>()) ) {
-    //    // TODO: 建模成深度高斯分布，容易过收敛？
-    //    deltaPx2 = bestP2 - secondBestP2;
-    //} else {
-    //    deltaPx2 = ep2 * 3;
-    //}
-    deltaPx2 = ep2 * config->filterPixelError;
-    return {bestP2};
-#endif
+    return EpipolarMatchType::outOFboundaryORabnormalDepth;
 }
 
 vector<double> KeyFrame::CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2d &px, const Eigen::Vector2d &epNorm, const int len) {
@@ -868,6 +912,67 @@ double KeyFrame::CalculateSSD(double *v1, double *v2, double avg1, double avg2, 
     }
     return sum;
 }
+
+bool KeyFrame::MoveNearPx2IntoBoundary(Eigen::Vector2d &pClose, const Eigen::Vector2d &ep2, const Eigen::Vector2d &pFar) {
+#define SAMPLE_POINT_TO_BORDER 7
+    const int width = edgeImg_[0].cols,
+        height = edgeImg_[0].rows;
+    const double incx = ep2[0], incy = ep2[1];
+    if(
+			pClose[0] <= SAMPLE_POINT_TO_BORDER ||
+			pClose[0] >= width-SAMPLE_POINT_TO_BORDER ||
+			pClose[1] <= SAMPLE_POINT_TO_BORDER ||
+			pClose[1] >= height-SAMPLE_POINT_TO_BORDER)
+	{
+		if(pClose[0] <= SAMPLE_POINT_TO_BORDER)
+		{
+			float toAdd = (SAMPLE_POINT_TO_BORDER - pClose[0]) / incx;
+			pClose[0] += toAdd * incx;
+			pClose[1] += toAdd * incy;
+		}
+		else if(pClose[0] >= width-SAMPLE_POINT_TO_BORDER)
+		{
+			float toAdd = (width-SAMPLE_POINT_TO_BORDER - pClose[0]) / incx;
+			pClose[0] += toAdd * incx;
+			pClose[1] += toAdd * incy;
+		}
+
+		if(pClose[1] <= SAMPLE_POINT_TO_BORDER)
+		{
+			float toAdd = (SAMPLE_POINT_TO_BORDER - pClose[1]) / incy;
+			pClose[0] += toAdd * incx;
+			pClose[1] += toAdd * incy;
+		}
+		else if(pClose[1] >= height-SAMPLE_POINT_TO_BORDER)
+		{
+			float toAdd = (height-SAMPLE_POINT_TO_BORDER - pClose[1]) / incy;
+			pClose[0] += toAdd * incx;
+			pClose[1] += toAdd * incy;
+		}
+
+		// get new epl length
+        // OK, 根据极线端点我们就能计算极线长度了
+		float fincx = pClose[0] - pFar[0];
+		float fincy = pClose[1] - pFar[1];
+		float newEplLength = sqrt(fincx*fincx+fincy*fincy);
+
+		// test again
+        // 如果curF上对应的极线太短，意味着旋转太大？导致无法找到正确匹配？
+        // oob: out of border, 超出范围？
+		if(
+				pClose[0] <= SAMPLE_POINT_TO_BORDER ||
+				pClose[0] >= width-SAMPLE_POINT_TO_BORDER ||
+				pClose[1] <= SAMPLE_POINT_TO_BORDER ||
+				pClose[1] >= height-SAMPLE_POINT_TO_BORDER ||
+				newEplLength < 8.0f
+				)
+		{
+			return false;
+		}
+	}
+    return true;
+}
+
 
 void KeyFrame::ReleaseMat() {
     grayImg_.release();
@@ -916,7 +1021,7 @@ void KeyFrame::FuseDepth() {
                 Landmark *lk2 = readLk[readPointMapId.at(px2)];
                 if(lk2!=nullptr && lk2->Converge() ) {
                     const double d2 = lk2->z_;
-                    if(lk1->Converge() && abs(d2 - d1) > lk1->uncertainty_ * 3) {
+                    if(lk1->Converge() && abs(d2 - d1) > lk1->uncertainty_ * 1) {
                         continue;
                     }
                     if(d2 > maxDepth) {

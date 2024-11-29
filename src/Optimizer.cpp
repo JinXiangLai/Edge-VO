@@ -687,12 +687,12 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
-    // TransformDepthMap2CurrentFrame(kf);
+    if(!window_.empty() ) {
+        TransformDepthMap2CurrentFrame(kf);
+        window_.pop_back();
+
+    } 
     window_.push_back(kf);
-    if(window_.size() > config->maxKFnumInWindow) {
-        // margTwc_ = &window_.front()->Twc_;
-        // MarginalizeOldestKeyFrame();
-    }
 }
 
 // 无用的函数
@@ -1852,7 +1852,7 @@ void Optimizer::ShowLocalMap() {
 
     if(!aPoints.empty() || !lPoints.empty()) {
         ::ShowLocalMap(vTwc);
-        cout << "show " << vTwc.size() << " KFs map points" << endl;
+        cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
     } else {
         //cerr << "wait for local map..." << endl;
     }
