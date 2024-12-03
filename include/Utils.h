@@ -192,6 +192,8 @@ public:
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
     std::set<Landmark*> activePoints;
     std::set<Landmark*> localPoints;
+    std::vector<Eigen::Vector3d> allMapPoints;
+    void ShowGlobalMapPoint();
 };
 extern InteractionParam *interaction;
 #endif

@@ -187,6 +187,7 @@ int main(int argc, char** argv){
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        win.back()->CullingBadDepth(&curF);
         // win.back()->FuseDepth();
 
 #else
@@ -281,12 +282,17 @@ int main(int argc, char** argv){
     return 0;
 }
 
+#define SHOW_GLOBAL_MAP 1
 void Run(Optimizer *optimizer) {
     while(1) {
+#if SHOW_GLOBAL_MAP
+        interaction->ShowGlobalMapPoint();
+#else
         // UpdatePointCloud(historicalKF);
         if(!optimizer->window_.empty()) {
             optimizer->ShowLocalMap();
         }
+#endif
         usleep(10 * 1000);
     }
 }

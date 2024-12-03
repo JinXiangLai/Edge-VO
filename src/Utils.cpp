@@ -1,4 +1,5 @@
 #include "Utils.h"
+#include <unistd.h>
 #include "Landmark.h"
 
 #include <cstdint>
@@ -342,6 +343,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
     // c[0]*x + c[1]*y + c[2] = 0
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
+    // TODO：直接去读DT图就行
     auto Kp2Useful = [&kf2, &lk1](Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
 
@@ -1236,12 +1238,44 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
     if(kf2->landmark_.empty()) {
         kf2->InitializeLandmark();
     }
+
     for(int i = 0; i < kf1->landmark_.size(); ++i) {
         Landmark *lk1 = kf1->landmark_[i];
         if(lk1==nullptr || lk1->IsOutOfRange() ) {
             continue;
         }
 
+#if 1
+        const Eigen::Vector3d Pc1 = lk1->GetPc();
+        const Eigen::Vector3d Pc2 = T21 * Pc1;
+        const double depthRatio = Pc2.z() / Pc1.z();
+        if(depthRatio < 0.7 || depthRatio > 1.4) {
+            continue;
+        }
+        const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
+        if(!kf2->pointMapId_.count({px2.x(), px2.y()}) ) {
+            continue;
+        }
+        // const double residual = abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) - kf2->grayImg_.at<uchar>(px2[1], px2[0]) );
+        // if(residual > config->maxDescriptorDist) {
+        //     continue;
+        // }
+        
+        // if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
+        //     // lk1->SetOutOfRange();
+        //     // 投影点误差大的就给它重置
+        //     // lk1->depthCov_ = pow(config->maxDepth, 2);
+        //     lk1->depthCov_ *= 2.0;
+        // } 
+
+        int id = kf2->pointMapId_.at({px2.x(), px2.y()});
+        Landmark *lk2 = kf2->landmark_[id];
+        lk2->z_ = Pc2.z();
+        // 这里我们初始化kp2的不确定度，它应该比较大
+        lk2->depthCov_ = lk1->depthCov_ * 2.0;
+        lk2->UpdateUncertainty(false);
+        ++initNum;
+#else
         //  我们再次利用极线搜索来生成kf2的深度图
         vector<Eigen::Vector2d> kp2s = lk1->FindMatches(*kf2);
         for(Eigen::Vector2d &p2 : kp2s) {
@@ -1267,6 +1301,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
                 ++initNum;
             }
         }
+#endif
     }
     return double(initNum) / kf2->landmark_.size();
 }
@@ -1649,4 +1684,54 @@ void ShowCameraCone(const vector<Pose> &vTwc, const vector<Mat> &imgs, const Cam
 
     // mainWindow.showWidget("Coordinate", viz::WCoordinateSystem(), Affine3d::Identity());
     mainWindow.spin();
+}
+
+void InteractionParam::ShowGlobalMapPoint() {
+    viz::Viz3d window("Global Point Cloud Viewer");
+    cv::Affine3d viewPose;
+    window.setViewerPose(viewPose);
+    vector<Point3d> points;
+    vector<Vec3b> colors;
+    if(allMapPoints.empty() ) {
+        usleep(100 * 1000);
+        return;
+    }
+
+    for(const Eigen::Vector3d &pw : allMapPoints) {
+        points.push_back({pw.x(), pw.y(), pw.z()});
+
+        // {B G R}
+        if(pw.z() > 8) {
+            colors.push_back({255, 255, 0});
+        } else if(pw.z() > 4) {
+            colors.push_back({0, 255, 0});
+        } else if(pw.z() > 2) {
+            colors.push_back({0, 0, 255});
+        } else {
+            colors.push_back({255, 255, 255});
+        }
+    }
+    cout << endl;
+    cout << "show point size: " << points.size() << endl;
+
+    if(points.empty() ) {
+        cerr << "No Points' depth Converged!" << endl;
+        return;
+    } else {
+        cout << points.size() << " points converged!" << endl;
+    }
+
+
+    // 创建点云对象
+    viz::WCloud cloud(points, colors);
+ 
+    // 设置点云颜色和大小
+    // cloud.setColor(cv::viz::Color::green());
+    // cloud.setSize(5);
+ 
+    // 显示点云
+    window.showWidget("PointCloud", cloud);
+ 
+    // 运行事件循环，使窗口响应用户输入
+    window.spin();
 }

@@ -29,7 +29,8 @@ public:
         //     z_ > config->minDepth && z_ < config->maxDepth;
         // return obvTime_ > 0;
         // TODO：考虑把后续找不到匹配的深度估计值剔除才能最终实现一个基础版
-        return uncertainty_ < config->maxDepthConvergeStd;
+        // OK，那些<0.5m深度的点，可以在一次观测收敛，但是被观测次数确实很少的，据此可以剔除
+        return uncertainty_ < config->maxDepthConvergeStd && obvTime_ > 4;
         // return obvTime_ > 0 && failObvTime_ < 5;
     }
     void SetOutOfRange() {outOfRange_ = true;}

@@ -689,6 +689,11 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
     if(!window_.empty() ) {
         TransformDepthMap2CurrentFrame(kf);
+        for(Landmark *lk : window_.back()->landmark_) {
+            if(lk!=nullptr && lk->Converge()) {
+                interaction->allMapPoints.push_back(lk->GetPw());
+            }
+        }
         window_.pop_back();
 
     } 

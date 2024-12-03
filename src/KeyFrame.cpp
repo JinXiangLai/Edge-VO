@@ -385,7 +385,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
 
         } else if(error == EpipolarMatchType::repeatTextureORbadDepth) {
             ++lk1->failObvTime_;
-            lk1->depthCov_ *= 1.1;
+            lk1->depthCov_ *= 1.01;
             lk1->UpdateUncertainty(false);
             continue;
 
@@ -589,15 +589,28 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
             // 投影点不在视野内是正常的
             continue;
         }
+
+        bool isBad = false;
+        const double residual = abs(grayImg_.at<uchar>(lk1->uv_.y(), lk1->uv_.x()) - kf2->grayImg_.at<uchar>(px2.y(), px2.x()) );
+        if(residual > config->maxDescriptorDist) {
+            // lk1->depthCov_ *= 1.1;
+            // isBad = true;
+        }
+
         if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
             // lk1->SetOutOfRange();
             // 投影点误差大的就给它重置
-            lk1->depthCov_ = pow(config->maxDepth, 2);
-            lk1->UpdateUncertainty(false);
-            lk1->obvTime_ = 0;
-            ++badNum;
-            continue;
+            // lk1->depthCov_ = pow(config->maxDepth, 2);
+            lk1->depthCov_ *= 2.0;
+            isBad = true;
         } 
+
+        if(isBad) {
+            ++badNum;
+            lk1->UpdateUncertainty(false);
+        }
+
+
 #ifdef USE_SSD
         // 考虑到图像远近，似乎不能使用这个条件？
         // if( CalculatePatchSSD(this, kf2, lk1->uv_.cast<int>(), px2) > config->maxSSDdist) {
@@ -682,23 +695,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
 
 
     const Mat &edgeImg2 = kf2->edgeImg_[0];
-    auto px2IsEdge = [&edgeImg2] (const Eigen::Vector2d px2) -> bool{
-        return true;
-        bool isEdge = edgeImg2.at<uchar>(px2.y(), px2.x()) == 0;
-        if(!isEdge) {
-            // 允许小的像素偏差
-            const int ix = px2.x(), iy = px2.y();
-            vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
-            for(const Eigen::Vector2i &dp : xy) {
-                Point2i p(ix+dp.x(), iy+dp.y());
-                if(edgeImg2.at<uchar>(p) == 0) {
-                    isEdge = true;
-                    break;
-                }
-            }
-        }
-        return isEdge;
-    };
 
     // OK， 我们需要限制一下KF2上的极线范围，这是最重要的先验，极线搜索距离越短，受相对旋转的影响越小
     const double maxEpipolarLen = config->maxEpipolarSearchLine, minEpipolarLen = config->minEpipolarSearchLine;
@@ -758,8 +754,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
     // while ( (ep2[0] > 0) == (p2[0] < nearPx2[0]) && (ep2[1] > 0) == (p2[1] < nearPx2[1]) ) {
     while (1) {
         //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
-        // if (InRange(kf2->grayImg_, p2End.cast<int>()) && InRange(kf2->grayImg_, p2Start.cast<int>()) && px2IsEdge(p2)) {
-        if (px2IsEdge(p2) ) {
+        if (1) {
 
             // 已经保证端点在边界范围内，这里无需再判断
             const double score = CalculateSSD(&v1[0], &v2[0], avg1, avg2, desLen);
@@ -906,7 +901,7 @@ vector<double> KeyFrame::CalculateDescriptor(const cv::Mat &grayImg, const Eigen
 double KeyFrame::CalculateSSD(double *v1, double *v2, double avg1, double avg2, const int desLen) {
     double sum = 0;
     double avg = avg1 - avg2;
-    avg = 0;
+    // avg = 0;
     for(int i = 0; i < desLen; ++i) {
         sum += abs(v1[i] - avg - v2[i]);
     }
@@ -993,10 +988,9 @@ void KeyFrame::FuseDepth() {
         for(int x = -midLen; x <= midLen; ++x)
             for(int y = -midLen; y <= midLen; ++y) {
                 // 权重与距离成反比
-                weights[y+midLen][x+midLen] = 1./(x*x + y*y);
+                // 避免除以0
+                weights[y+midLen][x+midLen] = 1./(x*x + y*y + 1.0);
             }
-        // 中心点给予特殊权重
-        weights[midLen][midLen] = 0.5;
         first = false;
     }
 
@@ -1011,6 +1005,7 @@ void KeyFrame::FuseDepth() {
         const double d1 = lk1->z_;
 
         double sumDepth = 0, sumWeight = 0;
+        int sumCount = 0;
         for(int x = -midLen; x <= midLen; ++x) {
             for(int y = -midLen; y <= midLen; ++y) {
                 const double w = weights[y+midLen][x+midLen];
@@ -1019,9 +1014,9 @@ void KeyFrame::FuseDepth() {
                     continue;
                 }
                 Landmark *lk2 = readLk[readPointMapId.at(px2)];
-                if(lk2!=nullptr && lk2->Converge() ) {
+                if(lk2!=nullptr && !lk2->IsOutOfRange() && lk2->Converge()) {
                     const double d2 = lk2->z_;
-                    if(lk1->Converge() && abs(d2 - d1) > lk1->uncertainty_ * 1) {
+                    if(abs(d2 - d1) > lk1->uncertainty_ * 2.0) {
                         continue;
                     }
                     if(d2 > maxDepth) {
@@ -1031,12 +1026,15 @@ void KeyFrame::FuseDepth() {
                         minDepth = d2;
                     }
 
-                    sumDepth += w * d2;
-                    sumWeight += w;
+                    const double mixWeight = 1/lk2->depthCov_ + w;
+                    sumDepth += mixWeight * d2;
+                    sumWeight += mixWeight;
+                    ++sumCount;
                 }
             }     
         }
-        if(maxDepth > 0 && minDepth < maxDepth) {
+
+        if(maxDepth > 0 && minDepth < maxDepth && sumCount > 3) {
             lk1->z_ = sumDepth / sumWeight;
             lk1->depthCov_ = pow(maxDepth - minDepth, 2) ;
             lk1->UpdateUncertainty(true);
