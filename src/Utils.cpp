@@ -603,6 +603,7 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     if(z < lk1.depthRange_[0] || z > lk1.depthRange_[1]) {
         return false;
     }
+
     // case 2: 进行视差角校验
     const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_.cast<int>(), 
         z);
@@ -611,14 +612,19 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     if(ang < config->minGoodTriangulateAngle || ang > config->maxGoodTriangulateAngle) {
         return false;
     }
+    
     // case 3: 进行重投影质量校验
     const Eigen::Vector3d pc2 = T12.Inverse() * v1;
     if(pc2.z() / z <0.7 || pc2.z() / z > 1.4) {
         return false;
     }
-    const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
-    const double projError = (p2-px2).norm();
-    return projError < 1.0; // max(3.0, 5.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
+
+    // case 4： 深度未收敛时不好判断，不启用
+    // const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
+    // const double projError = (p2-px2).norm();
+    // return projError < 1.0; // max(3.0, 5.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
+
+    return true;
 }
 
 // bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
@@ -1314,7 +1320,7 @@ double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::
     const int x1 = px1.x(), y1 = px1.y(), x2 = px2.x(), y2 = px2.y();
     double sum = 0;
     double avg = 0;
-#if 0
+#if 1
     double sum1 = 0, sum2 = 0;
     int count = 0;
     for(int i = -range; i <= range; ++i) {
@@ -1325,15 +1331,15 @@ double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::
         }
     }
     double avg1 = sum1/count, avg2 = sum2/count;
-    double avg = avg1 - avg2;
+    avg = avg1 - avg2;
 #endif
 
     for(int i = -range; i <= range; ++i) {
         for(int j = -range; j <= range; ++j) {
-            sum += pow(double(im1.at<uchar>(y1+i, x1+j)) - double(im2.at<uchar>(y2+i, x2+j)) - avg, 2);
+            sum += abs(double(im1.at<uchar>(y1+i, x1+j)) - double(im2.at<uchar>(y2+i, x2+j)) - avg);
         }
     }
-    return sum;
+    return sum/count;
 }
 
 void ShowPointCloud(const vector<Landmark*> &ps) {

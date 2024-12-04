@@ -66,6 +66,9 @@ public:
     double best2SecondDist;
     bool drawAllEpipolarMatch;
     int drawEpipolarMatchStartCol;
+    double minDepthCompareRatio, maxDepthCompareRatio;
+    double maxObvDepthStd, minObvDepthStd;
+    int minObvTime;
 };
 
 extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次

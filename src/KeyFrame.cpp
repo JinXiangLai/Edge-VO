@@ -138,13 +138,14 @@ void KeyFrame::CannyEdgeDetect() {
 #endif
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-#if 1
+#if 0
     cv::Mat blurred = grayImg_.clone();
-    // 应用高斯滤波来平滑边缘
-    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
 #else
     Mat blurred = grayImg_.clone();
 #endif
+    // 应用高斯滤波来平滑边缘
+    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
+
     debugGrayImg_ = grayImg_.clone();
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
@@ -380,6 +381,24 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         double bestDepth, std;
         Eigen::Vector2d bestPx2;
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(&kf2, lk1, bestDepth, std, bestPx2);
+        
+        if(lk1->obvTime_ == 0) {
+            // 首次创建深度假设
+            if(std > config->maxObvDepthStd || std < config->minObvDepthStd || error == EpipolarMatchType::repeatTextureORbadDepth
+                || error == EpipolarMatchType::occulsionORnoBestMatch) {
+                // 深度异常
+                ++lk1->failObvTime_;
+                
+                if(lk1->failObvTime_ > 1) {
+                    lk1->SetOutOfRange();
+                }
+
+                continue;
+            }
+        }
+
+
+        // 深度量测更新
         if(error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
             continue;
 
@@ -394,15 +413,21 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
             lk1->UpdateUncertainty(false);
             continue;
 
+        } else if(std > config->maxObvDepthStd || std < config->minObvDepthStd) {
+            // 深度标准差异常
+            lk1->depthCov_ *= 1.01;
+            lk1->UpdateUncertainty(false);
         } else {
             const double diff = lk1->z_ - bestDepth;
-            if(diff*diff > std*std + lk1->depthCov_) {
-                lk1->depthCov_ *= 1.1;
+            if(diff*diff > std*std + lk1->depthCov_ ) {
+                lk1->depthCov_ *= 1.01;
                 lk1->UpdateUncertainty(false);
                 continue;
             }
 
             if(!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
+                lk1->depthCov_ *= 1.01;
+                lk1->UpdateUncertainty(false);
                 continue;
             }
 
@@ -411,16 +436,21 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
             if(lk1->obvTime_ == 0) {
                 // 首次初始化
                 u1 = u2;
-                cov1 = cov2 * 9;
-                // cov2 = cov1 * 0.25; // 不完全信赖第一次的三角化
+                cov1 = cov2;
             } 
 
             lk1->z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
-            lk1->depthCov_ = (cov1 * cov2)/(cov1 + cov2);
+            const double newCov = (cov1 * cov2)/(cov1 + cov2);
+            lk1->depthCov_ = min(lk1->depthCov_, newCov);
             //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
             //     << " " << landmark.z_ << endl;
             lk1->UpdateUncertainty(true);
             ++findMatchNum;
+        }
+
+        // 三角化后的深度异常值过大
+        if(lk1->uncertainty_ > config->maxObvDepthStd) {
+            lk1->SetOutOfRange();
         }
     }
     
@@ -583,7 +613,15 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
         }
 
         ++convergeNum;
-        const Eigen::Vector3d pc2 = T21 * lk1->GetPc();
+        const Eigen::Vector3d pc1 = lk1->GetPc();
+        const Eigen::Vector3d pc2 = T21 * pc1;
+
+        const double depthRatio = pc2.z() / pc1.z();
+        if(depthRatio < config->minDepthCompareRatio || depthRatio > config->maxDepthCompareRatio) {
+            // 距离变化过大，导致深度差异大，不能再比较了
+            continue;
+        }
+
         const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
         if(!InRange(kf2->grayImg_, px2)) {
             // 投影点不在视野内是正常的
@@ -591,17 +629,19 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
         }
 
         bool isBad = false;
-        const double residual = abs(grayImg_.at<uchar>(lk1->uv_.y(), lk1->uv_.x()) - kf2->grayImg_.at<uchar>(px2.y(), px2.x()) );
-        if(residual > config->maxDescriptorDist) {
-            // lk1->depthCov_ *= 1.1;
-            // isBad = true;
-        }
+        const double residual = CalculatePatchSSD(this, kf2, lk1->uv_.cast<int>(), px2);
+        // if(residual > config->maxDescriptorDist) {
+        //     lk1->depthCov_ *= 1.1;
+        //     isBad = true;
+        // }
 
-        if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
+        const double dist = kf2->dist_[0].at<float>(px2.y(), px2.x());
+        if(dist > config->maxTrackProjectPixelError && residual > config->maxDescriptorDist) {
             // lk1->SetOutOfRange();
             // 投影点误差大的就给它重置
             // lk1->depthCov_ = pow(config->maxDepth, 2);
-            lk1->depthCov_ *= 2.0;
+            ++lk1->checkTime_;
+            lk1->depthCov_ *= 1.1; // pow(1.1, int(dist));
             isBad = true;
         } 
 
@@ -839,7 +879,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
 
 
     if(goodScore && !badDist) {
-        const int time = 2;
+        const int time = config->best2SecondDist;
         const double dm1 = TriangulateDepth(lk1->uv_, bestP2-time*ep2, T21, *cam_);
         const double d1 = TriangulateDepth(lk1->uv_, bestP2, T21, *cam_);
         const double dp1 = TriangulateDepth(lk1->uv_, bestP2+time*ep2, T21, *cam_);
@@ -869,10 +909,13 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
         }
         
         bestDepth = d1;
-        std = max(uncertainty1, uncertainty2) * 2; // 考虑像素测量误差
+        std = max(uncertainty1, uncertainty2); // 考虑像素测量误差
         bestPx2 = bestP2;
 
-        cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "], uncertainty:[ " << abs(dp1-d1) << " " << abs(dm1-d1) << "]" << endl;
+        if(d1 < 0.5 || d1 > 5.0) {
+            cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "], uncertainty:[ " << abs(dp1-d1) << " " << abs(dm1-d1) << "]" << endl;
+        }
+
         return bestScore;
     }
     return EpipolarMatchType::outOFboundaryORabnormalDepth;

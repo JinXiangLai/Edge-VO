@@ -27,11 +27,10 @@ public:
         // 这个标准差是很不准的，所以不能用其判断
         // return uncertainty_ < config->maxDepthConvergeStd && 
         //     z_ > config->minDepth && z_ < config->maxDepth;
-        // return obvTime_ > 0;
         // TODO：考虑把后续找不到匹配的深度估计值剔除才能最终实现一个基础版
         // OK，那些<0.5m深度的点，可以在一次观测收敛，但是被观测次数确实很少的，据此可以剔除
-        return uncertainty_ < config->maxDepthConvergeStd && obvTime_ > 4;
-        // return obvTime_ > 0 && failObvTime_ < 5;
+        return uncertainty_ < config->maxDepthConvergeStd && !outOfRange_ && obvTime_ > config->minObvTime;
+        // return obvTime_ > 0 && !outOfRange_ ;
     }
     void SetOutOfRange() {outOfRange_ = true;}
     bool IsOutOfRange() const {return outOfRange_;}
@@ -48,6 +47,7 @@ public:
     // TODO: 结合光度残差分布给定优化的权重值
     int obvTime_ = 0; // 路标点被看的次数可以反映其可信度
     int failObvTime_ = 0; // 遮挡或者重复纹理导致失败
+    int checkTime_ = 0;
 
 	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame *host_; // cnchor frame

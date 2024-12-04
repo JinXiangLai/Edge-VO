@@ -74,6 +74,13 @@ Config::Config(const std::string &yamlFilePath) {
     drawAllEpipolarMatch = f["drawAllEpipolarMatch"].as<bool>();
     drawEpipolarMatchStartCol = f["drawEpipolarMatchStartCol"].as<int>();
     maxSSDdist = pow(maxDescriptorDist, 2) * pow(descriptorPatchLen, 2);
+
+    minDepthCompareRatio = f["minDepthCompareRatio"].as<double>();
+    maxDepthCompareRatio = f["maxDepthCompareRatio"].as<double>();
+
+    maxObvDepthStd = f["maxObvDepthStd"].as<double>();
+    minObvDepthStd = f["minObvDepthStd"].as<double>();
+    minObvTime = f["minObvTime"].as<int>();
 }
 
 Config *config = nullptr;
