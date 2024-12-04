@@ -282,7 +282,7 @@ int main(int argc, char** argv){
     return 0;
 }
 
-#define SHOW_GLOBAL_MAP 1
+#define SHOW_GLOBAL_MAP 0 
 void Run(Optimizer *optimizer) {
     while(1) {
 #if SHOW_GLOBAL_MAP

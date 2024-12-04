@@ -250,7 +250,7 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
     return im;
 }
 
-cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
+char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
     const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
     const std::string &name, const int ratio, const int jump) {
     if(trajKp1.empty() || trajKp2.empty()) {
@@ -304,8 +304,7 @@ cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Ei
     cv::namedWindow(name);
     cv::imshow(name, im);
     cv::imwrite(name+".png", im);
-    cv::waitKey(0);
-    return im;
+    return cv::waitKey(0);
 }
 
 vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
@@ -1234,6 +1233,9 @@ void VizInteraction(const cv::viz::KeyboardEvent &event, void *_b) {
         interaction->stepBystep = !interaction->stepBystep;
         cout << "after interaction->stepBystep: " << interaction->stepBystep << endl;
 
+    } else if (event.action == viz::KeyboardEvent::KEY_DOWN
+        && (event.code == 'D' || event.code == 'd') ) {
+        interaction->drawEpipolarMatch = !interaction->drawEpipolarMatch;
     }
 }
 

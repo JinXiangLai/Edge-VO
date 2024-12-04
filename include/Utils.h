@@ -21,6 +21,7 @@
 #include "KeyFrame.h"
 
 #define USE_SSD
+#define Undistort
 
 class KeyFrame;
 class Landmark;
@@ -42,8 +43,12 @@ void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy);
 
 inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     const double imgScale = config->imageScale;
-    return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
-            p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
+    int jumpPxNum = 6;
+    #ifdef Undistort
+        jumpPxNum = 26;
+    #endif
+    return p.x() >= jumpPxNum*imgScale && p.x() < img.cols-jumpPxNum*imgScale && 
+            p.y() >= jumpPxNum*imgScale && p.y() < img.rows-jumpPxNum*imgScale; // 把车头像素滤掉
 }
 
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
@@ -102,7 +107,7 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track 
 
 int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
-cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
+char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
     const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
     const std::string &name = "epipolar matches", const int ratio = 1, const int jump = 10);
 
@@ -194,6 +199,7 @@ public:
     std::set<Landmark*> localPoints;
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
+    bool drawEpipolarMatch = false;
 };
 extern InteractionParam *interaction;
 #endif

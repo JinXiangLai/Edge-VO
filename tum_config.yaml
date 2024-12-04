@@ -36,7 +36,7 @@ huberDelta: 4 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 1
 imgTimeOffset: 0.0 # sec,时间同步误差
-needNewKFtrans: 0.20 # 选取新KF的条件
+needNewKFtrans: 0.2 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.2 # 匹配边缘点数量小于该阈值时，需要选定新KF
 # TODO: 这个误差模型将极大的影响深度估计，这里直接是将其当作误差角度使用，值为1时不行
@@ -70,7 +70,7 @@ pyrLevel: 1
 # 任何标准差在这范围之外的，都是不正常的
 maxObvDepthStd: 2.0
 minObvDepthStd: 0.1
-minObvTime: 5
+minObvTime: 2
 
 minGoodTriangulateAngle: 0.1 # deg, 使用深度滤波时不在意视差
 maxGoodTriangulateAngle: 180.0

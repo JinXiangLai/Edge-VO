@@ -120,8 +120,6 @@ void KeyFrame::operator =(const KeyFrame &f) {
 
 
 void KeyFrame::CannyEdgeDetect() {
-#define Undistort
-
 #ifdef Undistort
     Mat D;
     if(config->model == "fisheye") {
@@ -643,7 +641,7 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
             ++lk1->checkTime_;
             lk1->depthCov_ *= 1.1; // pow(1.1, int(dist));
             isBad = true;
-        } 
+        }
 
         if(isBad) {
             ++badNum;
@@ -898,21 +896,26 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
         }
 
         // if(config->drawGoddEpipolarMatch && (lk1->uv_.x() > config->drawEpipolarMatchStartCol || d1 < 0.5)) {
-        if(config->drawGoddEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
+        if(interaction->drawEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
         // if(config->drawGoddEpipolarMatch && (d1 > 5.0)) {
             cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "]" << endl;
             cout << "parallax: " << (lk1->uv_-bestP2).norm() << endl;
             cout << "bestScore, secondBestScore/desLen: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
             cout << "(bestP2 - secondBestP2).norm(): " << (bestP2 - secondBestP2).norm() << endl;
-            DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
+            char c = DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2, debugGoodKp2, 
                 "current point 2 all Epipolar constraint matches", 1, 1000000);
+            if(c == 'D' || c == 'd') {
+                interaction->drawEpipolarMatch = false;
+                cv::destroyAllWindows();
+            }
         }
         
         bestDepth = d1;
         std = max(uncertainty1, uncertainty2); // 考虑像素测量误差
         bestPx2 = bestP2;
 
-        if(d1 < 0.5 || d1 > 5.0) {
+        // if(d1 < 0.5 || d1 > 5.0) {
+        if(d1 < 0.5 && std > config->minObvDepthStd) {
             cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "], uncertainty:[ " << abs(dp1-d1) << " " << abs(dm1-d1) << "]" << endl;
         }
 
