@@ -9,7 +9,7 @@ using namespace cv;
 
 class KeyFrame;
 
-Landmark::Landmark(const Eigen::Vector2d &px, KeyFrame *host, const shared_ptr<Camera> cam, 
+Landmark::Landmark(const Eigen::Vector2i &px, KeyFrame *host, const shared_ptr<Camera> cam, 
     const uint64_t desc, const double z)
     : z_(z)
     , invZ_(1.0/z)
@@ -25,11 +25,11 @@ Landmark::Landmark(const Eigen::Vector2d &px, KeyFrame *host, const shared_ptr<C
     }
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
-    return cam_->InverseProject(uv_.cast<int>(), 1.0);
+    return cam_->InverseProject(uv_, 1.0);
 }
 
 Eigen::Vector3d Landmark::GetPc() const {
-    return cam_->InverseProject(uv_.cast<int>(), z_);
+    return cam_->InverseProject(uv_, z_);
 }
 
 Eigen::Vector3d Landmark::GetPw() const {

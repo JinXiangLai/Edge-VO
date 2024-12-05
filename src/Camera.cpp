@@ -46,7 +46,7 @@ Eigen::Vector2d Camera::Project2PixelPlane(const Eigen::Vector3d &Pc, const int 
 // OK，我们将所有的一切都转到归一化平面上并去畸变，
 // 然后就可以生成一个新的无畸变的边缘图像了
 // 归一化平面上，X轴分辨率为1/fx米、Y轴分辨率为1/fy米
-vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px, const int level) const {
+vector<Eigen::Vector2i> Camera::UndistortPoints(vector<Point2i> px, const int level) const {
     Mat D;
     if(config->model == "fisheye") {
         D = (cv::Mat_<float>(4, 1) << k1_, k2_, k3_, k4_);
@@ -68,9 +68,9 @@ vector<Eigen::Vector2d> Camera::UndistortPoints(vector<Point2i> px, const int le
     } else if (config->model == "pinhole") {
         cv::undistortPoints(pxs, pxs, K, D, R, K);
     }
-    vector<Eigen::Vector2d> res;
+    vector<Eigen::Vector2i> res;
     for(const Point2f &p : pxs) {
-        res.push_back({p.x, p.y});
+        res.push_back({int(p.x), int(p.y) });
     }
 
     return res;

@@ -62,26 +62,26 @@ target_link_libraries(edge_slam_main
     -lyaml-cpp
 )
 
-add_executable(ut unit_test.cpp)
-target_link_libraries(ut 
-    edge_slam
-    -lpthread
-    -lyaml-cpp
-)
+# add_executable(ut unit_test.cpp)
+# target_link_libraries(ut 
+#     edge_slam
+#     -lpthread
+#     -lyaml-cpp
+# )
 
-add_executable(main main_loop_closure_confirm.cpp)
-target_link_libraries(main 
-    edge_slam
-)
+# add_executable(main main_loop_closure_confirm.cpp)
+# target_link_libraries(main 
+#     edge_slam
+# )
 
-add_executable(ut_main ut_loop_closure_confirm.cpp)
-target_link_libraries(ut_main 
-    edge_slam
-    -lyaml-cpp
-)
+# add_executable(ut_main ut_loop_closure_confirm.cpp)
+# target_link_libraries(ut_main 
+#     edge_slam
+#     -lyaml-cpp
+# )
 
-add_executable(orb varify_ORB_orienttaion_invariance.cpp)
-target_link_libraries(orb 
-    ${OpenCV_LIBS}
-    ${EIGEN3_LIBS}
-)
+# add_executable(orb varify_ORB_orienttaion_invariance.cpp)
+# target_link_libraries(orb 
+#     ${OpenCV_LIBS}
+#     ${EIGEN3_LIBS}
+# )

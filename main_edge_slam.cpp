@@ -84,8 +84,14 @@ int main(int argc, char** argv){
         cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 
         KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
+#if 0
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
+#else
+        curF.ExtractEdge();
+        curF.GenerateDTandDerivative();
+        curF.GenerateKeyPoint();
+#endif
 
         if(!initFrame) {
             initFrame = new KeyFrame(curF);

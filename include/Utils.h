@@ -99,16 +99,16 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond &_q);
 
 std::ostream& operator<<(std::ostream &cout, const Pose& T);
 
-cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &kp1, 
-    const std::vector<Eigen::Vector2d> &kp2, const std::string &name = "matches", 
+cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2i> &kp1, 
+    const std::vector<Eigen::Vector2i> &kp2, const std::string &name = "matches", 
     const int ratio = 1, const int jump = 10);
     
 int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track first kf matches");
 
 int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
 
-char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
-    const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
+char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2i> &trajKp1, 
+    const std::vector<Eigen::Vector2i> &trajKp2, const std::vector<Eigen::Vector2i> &goodKp2,
     const std::string &name = "epipolar matches", const int ratio = 1, const int jump = 10);
 
 std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);

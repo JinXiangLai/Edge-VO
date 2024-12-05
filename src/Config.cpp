@@ -81,6 +81,7 @@ Config::Config(const std::string &yamlFilePath) {
     maxObvDepthStd = f["maxObvDepthStd"].as<double>();
     minObvDepthStd = f["minObvDepthStd"].as<double>();
     minObvTime = f["minObvTime"].as<int>();
+    maxDTdistOFkeyPoint = f["maxDTdistOFkeyPoint"].as<double>();
 }
 
 Config *config = nullptr;

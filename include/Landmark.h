@@ -14,7 +14,7 @@ class Landmark {
 public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Landmark(const Eigen::Vector2d &px, KeyFrame *host, const std::shared_ptr<Camera> cam, 
+    Landmark(const Eigen::Vector2i &px, KeyFrame *host, const std::shared_ptr<Camera> cam, 
         const uint64_t desc, const double z);
     Landmark() {}
     Eigen::Vector3d GetPcNorm() const;
@@ -30,6 +30,7 @@ public:
         // TODO：考虑把后续找不到匹配的深度估计值剔除才能最终实现一个基础版
         // OK，那些<0.5m深度的点，可以在一次观测收敛，但是被观测次数确实很少的，据此可以剔除
         return uncertainty_ < config->maxDepthConvergeStd && !outOfRange_ && obvTime_ > config->minObvTime;
+        // return initFromPropagate_;
         // return obvTime_ > 0 && !outOfRange_ ;
     }
     void SetOutOfRange() {outOfRange_ = true;}
@@ -48,12 +49,13 @@ public:
     int obvTime_ = 0; // 路标点被看的次数可以反映其可信度
     int failObvTime_ = 0; // 遮挡或者重复纹理导致失败
     int checkTime_ = 0;
+    bool initFromPropagate_ = false;
 
 	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame *host_; // cnchor frame
-    Eigen::Vector2d uv_; // host帧下的像素坐标
+    Eigen::Vector2i uv_; // host帧下的像素坐标
 
-	std::map<KeyFrame*, Eigen::Vector2d> target_;
+	std::map<KeyFrame*, Eigen::Vector2i> target_;
     std::shared_ptr<Camera> cam_;
 
     // keep FEJ

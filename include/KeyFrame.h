@@ -35,6 +35,7 @@ public:
 
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
+    void ExtractEdge();
     void GenerateDTandDerivative();
     size_t GenerateLandmark(KeyFrame &kf1, std::vector<std::vector<Eigen::Vector2d> > &debugGoodKp1, 
         std::vector<std::vector<Eigen::Vector2d> >&debugGoodKp2, const int equalparts);
@@ -55,6 +56,8 @@ public:
 
     double FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, double &bestDepth, double &std, Eigen::Vector2d &bestPx2);
 
+    void GenerateKeyPoint();
+
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
     // canny边缘图像已经去畸变了
@@ -65,7 +68,7 @@ public:
     Pose Tcw_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<std::vector<Eigen::Vector2d> > unPx_; // 像素平面上的去畸变点
+    std::vector<std::vector<Eigen::Vector2i> > unPx_; // 像素平面上的去畸变点
     std::vector<Landmark* > landmark_; // 成员变量内存在指针，需要手写拷贝构造函数
     // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
     std::vector<uint64_t> descriptor_; 

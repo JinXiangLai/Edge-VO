@@ -172,7 +172,7 @@ ostream& operator<<(ostream &cout, const Pose& T){
     return cout;
 }
 
-Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &kp1, const vector<Eigen::Vector2d> &kp2,
+Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2i> &kp1, const vector<Eigen::Vector2i> &kp2,
                 const string &name, const int ratio, const int jump) {
     if(kp1.empty() || kp2.empty()) {
         cerr << "{"+name << "} Error!" << endl
@@ -250,8 +250,8 @@ Mat DrawMatch(const Mat &img1, const Mat &img2, const vector<Eigen::Vector2d> &k
     return im;
 }
 
-char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2d> &trajKp1, 
-    const std::vector<Eigen::Vector2d> &trajKp2, const std::vector<Eigen::Vector2d> &goodKp2,
+char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2i> &trajKp1, 
+    const std::vector<Eigen::Vector2i> &trajKp2, const std::vector<Eigen::Vector2i> &goodKp2,
     const std::string &name, const int ratio, const int jump) {
     if(trajKp1.empty() || trajKp2.empty()) {
         cerr << "{"+name << "} Error!" << endl
@@ -308,7 +308,7 @@ char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen
 }
 
 vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
-    const Eigen::Vector2d &kp1 = lk1.uv_;
+    const Eigen::Vector2d &kp1 = lk1.uv_.cast<double>();
     const Mat &edgeImg = kf2.edgeImg_[0];
 
     /******** 使用极线约束寻找匹配关键点 ********
@@ -370,7 +370,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
             return false;
         }
 
-        const Eigen::Vector2i p1 = lk1.uv_.cast<int>();
+        const Eigen::Vector2i p1 = lk1.uv_;
 
 #ifndef USE_SSD
         const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
@@ -604,8 +604,7 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     }
 
     // case 2: 进行视差角校验
-    const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_.cast<int>(), 
-        z);
+    const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_, z);
     const Eigen::Vector3d v2 = v1 - T12.t_wb_;
     const double ang = acos(v1.dot(v2)/v1.norm()/v2.norm()) * kRad2Deg;
     if(ang < config->minGoodTriangulateAngle || ang > config->maxGoodTriangulateAngle) {
@@ -630,7 +629,7 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
 //     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
 //     const Pose T12 = T21.Inverse();
 
-//     const Eigen::Vector2d kp1 = lk.uv_;
+//     const Eigen::Vector2d kp1 = lk.uv_.cast<double>();
 //     vector<double> depth;
 //     // cout << "current triangulated depth: ";
 //     double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
@@ -701,7 +700,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, co
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
     const Pose T12 = T21.Inverse();
 
-    const Eigen::Vector2d kp1 = lk.uv_;
+    const Eigen::Vector2d kp1 = lk.uv_.cast<double>();
 
     Eigen::Vector3d pc1 = Triangulate(kp1, kp2[0], T21, cam);
     const double d1 = TriangulateDepth(kp1, kp2[0], T21, cam);
@@ -1008,8 +1007,8 @@ int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2) {
 // No used any more
 void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eigen::Vector2i &xRange, 
     Eigen::Vector2i &yRange) {
-    const Eigen::Vector3d pc1_1 = cam.InverseProject(lp.uv_.cast<int>(), lp.depthRange_[0]);
-    const Eigen::Vector3d pc1_2 = cam.InverseProject(lp.uv_.cast<int>(), lp.depthRange_[1]);
+    const Eigen::Vector3d pc1_1 = cam.InverseProject(lp.uv_, lp.depthRange_[0]);
+    const Eigen::Vector3d pc1_2 = cam.InverseProject(lp.uv_, lp.depthRange_[1]);
     const Eigen::Vector3d pc2_1 = T21 * pc1_1;
     const Eigen::Vector3d pc2_2 = T21 * pc1_2;
     const Eigen::Vector2i uv1 = cam.Project2PixelPlane(pc2_1).cast<int>();
@@ -1176,7 +1175,7 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name) {
     if(kf1 == kf2) {
         return 0;
     }
-    std::vector<Eigen::Vector2d> px1, px2;
+    std::vector<Eigen::Vector2i> px1, px2;
 
     for(Landmark *p : kf1->landmark_) {
         if(p != nullptr && p->target_.count(kf2)) { 
@@ -1194,7 +1193,7 @@ int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name) {
 }
 
 int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
-    vector<Eigen::Vector2d> Px1, Px2;
+    vector<Eigen::Vector2i> Px1, Px2;
     shared_ptr<Camera> cam = kf2->cam_;
     for(int i = 0; i < ps.size(); ++i) {
         Landmark *p = ps[i];
@@ -1206,7 +1205,7 @@ int DrawMatch(vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name) {
         if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
             continue;
         }
-        const Eigen::Vector2d px2 = cam->Project2PixelPlane(pc2);
+        const Eigen::Vector2i px2 = cam->Project2PixelPlane(pc2).cast<int>();
         if(!InRange(kf2->dist_[0], px2.cast<int>()) ) {
             continue;
         }
@@ -1280,8 +1279,9 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
         Landmark *lk2 = kf2->landmark_[id];
         lk2->z_ = Pc2.z();
         // 这里我们初始化kp2的不确定度，它应该比较大
-        lk2->depthCov_ = lk1->depthCov_ * 2.0;
+        lk2->depthCov_ = lk1->depthCov_ * 1.1;
         lk2->UpdateUncertainty(false);
+        lk2->initFromPropagate_ = true;
         ++initNum;
 #else
         //  我们再次利用极线搜索来生成kf2的深度图
@@ -1292,12 +1292,12 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             Landmark *lk2 = kf2->landmark_[id];
             
             // 恢复当前kp2的深度，注意：是在kf2相机坐标系下的
-            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_, lk1->uv_, T12, cam);
+            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_.cast<double>(), lk1->uv_.cast<double>(), T12, cam);
             // 进行深度值校验
-            if(CheckDepthQuality(*lk2, T21, lk1->uv_, pc2.z()) ) {
+            if(CheckDepthQuality(*lk2, T21, lk1->uv_.cast<double>(), pc2.z()) ) {
 
 #ifdef USE_SSD
-                if( CalculatePatchSSD(lk2->host_, lk1->host_, lk2->uv_.cast<int>(), lk1->uv_.cast<int>()) >
+                if( CalculatePatchSSD(lk2->host_, lk1->host_, lk2->uv_.cast<double>(), lk1->uv_.cast<double>() ) >
                     config->maxSSDdist * config->goodDescriptorDistRatio) {
                     continue;
                 }
@@ -1357,7 +1357,7 @@ void ShowPointCloud(const vector<Landmark*> &ps) {
             continue;
         }
         // const double depth = p.depthRange_[0]; // p.z_;//0.5 * (p.depthRange_[0] + p.depthRange_[1]);
-        // const Eigen::Vector3d &pc = p.cam_->InverseProject(p.uv_.cast<int>(), depth);
+        // const Eigen::Vector3d &pc = p.cam_->InverseProject(p.uv_, depth);
         const Eigen::Vector3d &pc = p.GetPw();
         points.push_back({pc.x(), pc.y(), pc.z()});
         // cout << "[" << p.depthRange_[0] << " " << p.depthRange_[1] << "]  ";

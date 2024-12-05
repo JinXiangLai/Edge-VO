@@ -71,6 +71,7 @@ pyrLevel: 1
 maxObvDepthStd: 2.0
 minObvDepthStd: 0.1
 minObvTime: 2
+maxDTdistOFkeyPoint: 1.0 # DT图像上值不超过该数的选为关键点，用以产生地图点
 
 minGoodTriangulateAngle: 0.1 # deg, 使用深度滤波时不在意视差
 maxGoodTriangulateAngle: 180.0

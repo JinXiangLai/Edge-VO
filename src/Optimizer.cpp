@@ -688,7 +688,7 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
 
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
     if(!window_.empty() ) {
-        TransformDepthMap2CurrentFrame(kf);
+        // TransformDepthMap2CurrentFrame(kf);
         for(Landmark *lk : window_.back()->landmark_) {
             if(lk!=nullptr && lk->Converge()) {
                 interaction->allMapPoints.push_back(lk->GetPw());
@@ -732,7 +732,7 @@ int Optimizer::TransferLandmarkOwnership() {
                         continue;
                     }
                     Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-                    const double pxError = (px2 - p->target_[kf]).norm();
+                    const double pxError = (px2 - p->target_[kf].cast<double>()).norm();
                     // 像素误差过大，无法转移控制权
                     if(pxError > config->maxTrackProjectPixelError) {
                         continue;
