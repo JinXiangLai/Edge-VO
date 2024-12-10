@@ -6,6 +6,7 @@
 #include <opencv2/highgui.hpp>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include "Config.h"
 #include "Eigen/src/Core/Matrix.h"
@@ -172,7 +173,7 @@ void KeyFrame::CannyEdgeDetect() {
             cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
                     << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
 
-        vector<Point2i> px;
+        vector<Eigen::Vector2i> px;
         // 取出边缘像素点
         // 这里跳过了6个图像边缘的像素
         constexpr int jump = 2;
@@ -190,8 +191,8 @@ void KeyFrame::CannyEdgeDetect() {
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 #ifdef Undistort
         unPx_[lvl].clear();
-        for(const Point2i &p : px) {
-            unPx_[lvl].push_back({p.x, p.y});
+        for(const Eigen::Vector2i &p : px) {
+            unPx_[lvl].push_back({p.x(), p.y()});
         }
 #else
         unPx_[lvl] = cam_->UndistortPoints(px, lvl); // 去畸变后的像素平面上的点
@@ -214,7 +215,7 @@ void KeyFrame::CannyEdgeDetect() {
                     debugGrayImg_.at<uchar>(int(p.y()), int(p.x()) ) = 255;
                 }
                 // 使用未去畸变像素邻域
-                const int x = px[id].x, y = px[id].y;
+                const int x = px[id].x(), y = px[id].y();
                 
                 // 计算描述子
                 // const Mat &m = grayImg_;
@@ -284,7 +285,7 @@ void KeyFrame::ExtractEdge() {
         Canny(blur_i, edgeImg_[lvl], lowerThreshold, upperThreshold, apertureSize);
 
         vector<Eigen::Vector2i> edgePx;
-        constexpr int jump = 6;
+        constexpr int jump = 36;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
                 if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
@@ -294,7 +295,7 @@ void KeyFrame::ExtractEdge() {
         }
 
 #ifndef Undistort
-        edgePx = cam_->UndistortPoints(px, lvl);
+        edgePx = cam_->UndistortPoints(edgePx, lvl);
 #endif
         edgeImg_[lvl] = Mat::ones(edgeImg_[lvl].rows, edgeImg_[lvl].cols, CV_8UC1) * 255;
         for(const Eigen::Vector2i &p : edgePx) {
@@ -383,7 +384,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     int findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.001) {
+    if(Tc1c2.t_wb_.norm() < 0.0001) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -413,7 +414,10 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
                 // 深度异常
                 ++lk1->failObvTime_;
                 
-                if(lk1->failObvTime_ > 1) {
+                // 由于是小基线，当最小视差角设的大时，这里也应该增大，或者不设置outOFrange
+                // 因为已经由最小视差角及先验std约束保证了初始化的准确性
+                if(lk1->failObvTime_ > 2 && Tc1c2.t_wb_.norm() > 0.05) {
+                    // 可以在后续视角好的时候，过程完成初始化
                     lk1->SetOutOfRange();
                 }
 
@@ -421,6 +425,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
             }
         }
 
+        constexpr double varianceExpand[2] = {1, 1}; // {1.01, 1.1};
 
         // 深度量测更新
         if(error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
@@ -428,35 +433,35 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
 
         } else if(error == EpipolarMatchType::repeatTextureORbadDepth) {
             ++lk1->failObvTime_;
-            lk1->depthCov_ *= 1.01;
+            lk1->depthCov_ *= varianceExpand[1];
             lk1->UpdateUncertainty(false);
             continue;
 
         } else if(error == EpipolarMatchType::occulsionORnoBestMatch) {        
-            lk1->depthCov_ *= 1.01;
+            lk1->depthCov_ *= varianceExpand[0];
             lk1->UpdateUncertainty(false);
             continue;
 
         } else if(std > config->maxObvDepthStd || std < config->minObvDepthStd) {
             // 深度标准差异常
-            lk1->depthCov_ *= 1.01;
+            lk1->depthCov_ *= varianceExpand[0];
             lk1->UpdateUncertainty(false);
         } else {
             const double diff = lk1->z_ - bestDepth;
             if(diff*diff > std*std + lk1->depthCov_ ) {
-                lk1->depthCov_ *= 1.01;
+                lk1->depthCov_ *= varianceExpand[1];
                 lk1->UpdateUncertainty(false);
                 continue;
             }
 
             if(!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
-                lk1->depthCov_ *= 1.01;
+                lk1->depthCov_ *= varianceExpand[0];
                 lk1->UpdateUncertainty(false);
                 continue;
             }
 
             double u2 = bestDepth, cov2 = std * std; // 考虑基线的影响
-            double u1 = lk1->z_, cov1 = lk1->depthCov_ * 1.01; 
+            double u1 = lk1->z_, cov1 = lk1->depthCov_ * varianceExpand[0]; 
             if(lk1->obvTime_ == 0) {
                 // 首次初始化
                 u1 = u2;
@@ -476,8 +481,28 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(lk1->uncertainty_ > config->maxObvDepthStd) {
             lk1->SetOutOfRange();
         }
+
+        static ofstream unf;
+        static bool first = 1;
+        if(first) {
+            unf.open("depth_uncertainty.csv");
+            unf << "#std, d" << endl;
+            unf.close();
+            first = false;
+        }
+        unf.open("depth_uncertainty.csv", ios::app);
+        // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: " 
+        if(i%1000 == 0)
+            unf << lk1->uncertainty_ << " " << lk1->z_ << endl;
+        unf.close();
     }
     
+    ++updateFrameCount_;
+    ofstream unf;
+    unf.open("depth_uncertainty.csv", ios::app);
+    unf << "#std, d" << endl;
+    unf.close();
+
     if(config->messageLevel <= MessageLevel::Error)
         cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
             << " " << convergeEdgeNum_ << endl;
@@ -660,12 +685,16 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
         // }
 
         const double dist = kf2->dist_[0].at<float>(px2.y(), px2.x());
-        if(dist > config->maxTrackProjectPixelError && residual > config->maxDescriptorDist) {
+        if(dist > 5) {
+            lk1->SetOutOfRange();
+        }
+        if(dist > config->maxTrackProjectPixelError && residual > config->maxDescriptorDist * 2) {
+        // if(dist > config->maxTrackProjectPixelError) {
             // lk1->SetOutOfRange();
             // 投影点误差大的就给它重置
             // lk1->depthCov_ = pow(config->maxDepth, 2);
             ++lk1->checkTime_;
-            lk1->depthCov_ *= 1.1; // pow(1.1, int(dist));
+            lk1->depthCov_ *= 1.2; // sqrt(dist)*sqrt(dist) pow(1.1, int(dist));
             isBad = true;
         }
 
@@ -893,13 +922,13 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
         return EpipolarMatchType::repeatTextureORbadDepth;
     }
 
-    const double maxMeasureDepth = fx * fy * T12.t_wb_.norm()/sqrt(fx*fx+fy*fy); // 1pixel
-    const double minMeasureDepth = maxMeasureDepth / config->maxEpipolarSearchLine; 
+    // const double maxMeasureDepth = fx * fy * T12.t_wb_.norm()/sqrt(fx*fx+fy*fy); // 1pixel
+    // const double minMeasureDepth = maxMeasureDepth / config->maxEpipolarSearchLine; 
 
     // if(pointMapId_.at(lk1->uv_) == 0)
-    static int mea = 0;
-    if(mea++%10000==0)
-        cout << "maxMeasureDepth, minMeasureDepth: [" << maxMeasureDepth << " " << minMeasureDepth << "]" << endl;
+    // static int mea = 0;
+    // if(mea++%10000==0)
+    //     cout << "maxMeasureDepth, minMeasureDepth: [" << maxMeasureDepth << " " << minMeasureDepth << "]" << endl;
 
 
     if(goodScore && !badDist) {
@@ -907,7 +936,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
         const double dm1 = TriangulateDepth(lk1->uv_.cast<double>(), bestP2-time*ep2, T21, *cam_);
         const double d1 = TriangulateDepth(lk1->uv_.cast<double>(), bestP2, T21, *cam_);
         const double dp1 = TriangulateDepth(lk1->uv_.cast<double>(), bestP2+time*ep2, T21, *cam_);
-        if(d1 < 0 || d1 > maxMeasureDepth || d1 < minMeasureDepth) {
+        // if(d1 < 0 || d1 > maxMeasureDepth || d1 < minMeasureDepth) {
+        if(d1 < 0) {
             return EpipolarMatchType::repeatTextureORbadDepth;
         }
         // 对于深度大于5米的，发现深度差异会非常大
@@ -1053,7 +1083,7 @@ void KeyFrame::ReleaseMat() {
 
 void KeyFrame::FuseDepth() {
     const int fusePatchLen = 5;
-    const int midLen = 5/2;
+    const int midLen = fusePatchLen/2;
     static vector<vector<double> > weights(fusePatchLen, vector<double>(fusePatchLen, 0));
     static bool first = true;
     if(first) {

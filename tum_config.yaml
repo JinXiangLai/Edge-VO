@@ -26,9 +26,9 @@ wheelRadius: 0
 maxDepth: 150.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.1
 
-maxDescriptorDist: 15 # or 使用光度残差时重新设置
+maxDescriptorDist: 20 # or 使用光度残差时重新设置
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
-maxTrackProjectPixelError: 1.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
+maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
 maxDepthConvergeStd: 0.5 # 深度收敛的标准差
 abnormalProjectResidual: 5 # 15个像素距离为异常残差值，不能参与优化步骤
@@ -59,8 +59,8 @@ showDebugImg: false
 firstImgIdx: 0
 loopClosureImgIdx: 10
 
-cannyLowerTh: 60 # 150
-cannyupperTh: 80 # 160
+cannyLowerTh: 40 # 150
+cannyupperTh: 60 # 160
 
 # 存在相邻边缘像素被匹配的情况
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
@@ -68,21 +68,24 @@ minDepthCompareRatio: 0.7
 maxDepthCompareRatio: 1.4
 pyrLevel: 1
 # 任何标准差在这范围之外的，都是不正常的
-maxObvDepthStd: 2.0
-minObvDepthStd: 0.1
+maxObvDepthStd: 2.0 # 2.0
+minObvDepthStd: 0.1 # 0.1
 minObvTime: 2
-maxDTdistOFkeyPoint: 1.0 # DT图像上值不超过该数的选为关键点，用以产生地图点
+maxDTdistOFkeyPoint: 3.0 # DT图像上值不超过该数的选为关键点，用以产生地图点
 
-minGoodTriangulateAngle: 0.1 # deg, 使用深度滤波时不在意视差
-maxGoodTriangulateAngle: 180.0
+# 因为是小基线恢复深度，所以该值影响很大，若是设的太大，就应该允许深度使用更多的帧进行初始化，即放大failObv次数
+# 若是设的太小，就会产生很多异常点，所以我宁愿设置大点，且不用failObv次数也不愿设置小些
+minGoodTriangulateAngle: 1.5 # deg, 
+
+maxGoodTriangulateAngle: 60.0
 minTranslation: 0.5 # m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]
 nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优描述子的比值，暂未启用
 descriptorPatchLen: 5
 minEpipolarSearchLine: 5
 maxEpipolarSearchLine: 30 # most import item for triangulation
-best2SecondRatio: 0.9
+best2SecondRatio: 0.8
 best2SecondDist: 2 # pixels
 SimErrorRatio: 0.0 # 千分之5
-drawGoddEpipolarMatch: false
+drawGoddEpipolarMatch: true
 drawAllEpipolarMatch: false
 drawEpipolarMatchStartCol: 300

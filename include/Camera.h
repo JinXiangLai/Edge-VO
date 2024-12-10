@@ -16,7 +16,7 @@ public:
     // TODO：后续我们都将在归一化平面上进行处理
     Eigen::Vector2d Project2PixelPlane(const Eigen::Vector3d &Pc, const int level = 0) const;
     Eigen::Vector3d InverseProject(const Eigen::Vector2i &uv, const double &z = 1.0, const int level = 0) const;
-    std::vector<Eigen::Vector2i> UndistortPoints(std::vector<cv::Point2i> px, const int level = 0) const;
+    std::vector<Eigen::Vector2i> UndistortPoints(std::vector<Eigen::Vector2i> px, const int level = 0) const;
     bool InImagePlaneRange(const Eigen::Vector2d &p, const int level = 0) const ;
 
     double imageScale_; // 需要根据图像缩放fx, fy, cx, cy

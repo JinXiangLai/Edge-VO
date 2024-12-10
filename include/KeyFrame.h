@@ -76,6 +76,7 @@ public:
     std::unordered_map<Eigen::Vector2i, int, TupleHash> pointMapId_; // 像素坐标与vector索引的映射
     bool outOfRange_ = false;
     int convergeEdgeNum_ = 0;
+    int updateFrameCount_ = 0;
 };
 
 #endif

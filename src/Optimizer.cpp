@@ -688,9 +688,9 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
 
 void Optimizer::AddOneKeyFeame(KeyFrame *kf) {
     if(!window_.empty() ) {
-        // TransformDepthMap2CurrentFrame(kf);
+        TransformDepthMap2CurrentFrame(kf);
         for(Landmark *lk : window_.back()->landmark_) {
-            if(lk!=nullptr && lk->Converge()) {
+            if(lk!=nullptr && lk->ManySupport() && lk->Converge()) {
                 interaction->allMapPoints.push_back(lk->GetPw());
             }
         }
@@ -1838,7 +1838,7 @@ void Optimizer::ShowLocalMap() {
     aPoints.clear();
     lPoints.clear();
     for(Landmark *p : optLandmark_) {
-        if(p!=nullptr && !aPoints.count(p) && p->Converge() && !p->IsOutOfRange()) {
+        if(p!=nullptr && !aPoints.count(p) && !p->IsOutOfRange() && p->ManySupport() && p->Converge() ) {
             aPoints.insert(p);
         }
     }
@@ -1848,8 +1848,8 @@ void Optimizer::ShowLocalMap() {
         KeyFrame *kf = window_[i];
         for(Landmark *p : kf->landmark_) {
             if(p!=nullptr && !aPoints.count(p) && !lPoints.count(p) 
-            && !p->IsOutOfRange() && p->Converge()) {
-            lPoints.insert(p);
+            && !p->IsOutOfRange() && p->ManySupport() && p->Converge()) {
+                lPoints.insert(p);
             }
         }
     }

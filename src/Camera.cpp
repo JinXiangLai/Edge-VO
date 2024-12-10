@@ -46,7 +46,7 @@ Eigen::Vector2d Camera::Project2PixelPlane(const Eigen::Vector3d &Pc, const int 
 // OK，我们将所有的一切都转到归一化平面上并去畸变，
 // 然后就可以生成一个新的无畸变的边缘图像了
 // 归一化平面上，X轴分辨率为1/fx米、Y轴分辨率为1/fy米
-vector<Eigen::Vector2i> Camera::UndistortPoints(vector<Point2i> px, const int level) const {
+vector<Eigen::Vector2i> Camera::UndistortPoints(vector<Eigen::Vector2i> px, const int level) const {
     Mat D;
     if(config->model == "fisheye") {
         D = (cv::Mat_<float>(4, 1) << k1_, k2_, k3_, k4_);
@@ -58,8 +58,8 @@ vector<Eigen::Vector2i> Camera::UndistortPoints(vector<Point2i> px, const int le
     Mat K = (cv::Mat_<float>(3, 3) << fx_ * ratio, 0, cx_ * ratio, 0, fy_ * ratio, cy_ * ratio, 0, 0, 1);
     
     vector<Point2f> pxs;
-    for(const Point2i &p : px) {
-        pxs.push_back({static_cast<float>(p.x), static_cast<float>(p.y)});
+    for(const Eigen::Vector2i &p : px) {
+        pxs.push_back({static_cast<float>(p.x()), static_cast<float>(p.y())});
     }
     // 函数的输入、输出均是像素平面上的点
     // 经过显示去畸变前后图像检验，去畸变函数是正确且有效的

@@ -85,4 +85,32 @@ void Landmark::ResetFEJ() {
     noUsed_ = false;
 }
 
+bool Landmark::ManySupport() const{
+
+#if 1
+    return initFromPropagate_ || 1;
+#else
+    constexpr int minNearSupport = 5;
+    int nearSupport = 0;
+    const int x = uv_.x(), y = uv_.y();
+    for(int i = -1; i < 2; ++i) {
+        for(int j = -1; j < 2; ++j) {
+            Eigen::Vector2i px{x+j, y+i};
+            if(host_->pointMapId_.count(px) ) {
+                const int id = host_->pointMapId_.at(px);
+                Landmark *lk = host_->landmark_[id];
+                if(lk==nullptr || lk->IsOutOfRange()) {
+                    continue;
+                }
+                const double diff = abs(z_ - lk->z_);
+                if(diff < 2*uncertainty_) {
+                    ++nearSupport;
+                }
+            }
+        }
+    }
+    return nearSupport > minNearSupport;
+#endif
+}
+
 

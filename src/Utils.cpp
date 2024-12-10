@@ -1252,64 +1252,83 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             continue;
         }
 
-#if 1
-        const Eigen::Vector3d Pc1 = lk1->GetPc();
-        const Eigen::Vector3d Pc2 = T21 * Pc1;
-        const double depthRatio = Pc2.z() / Pc1.z();
-        if(depthRatio < 0.7 || depthRatio > 1.4) {
-            continue;
-        }
-        const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
-        if(!kf2->pointMapId_.count({px2.x(), px2.y()}) ) {
-            continue;
-        }
-        // const double residual = abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) - kf2->grayImg_.at<uchar>(px2[1], px2[0]) );
-        // if(residual > config->maxDescriptorDist) {
-        //     continue;
-        // }
-        
-        // if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > config->maxTrackProjectPixelError) {
-        //     // lk1->SetOutOfRange();
-        //     // 投影点误差大的就给它重置
-        //     // lk1->depthCov_ = pow(config->maxDepth, 2);
-        //     lk1->depthCov_ *= 2.0;
-        // } 
+        Eigen::Vector3d Pc1_norm = lk1->GetPc();
+        Pc1_norm /= Pc1_norm.z();
+        const double z1 = lk1->z_, std = lk1->uncertainty_;
+    
+        for(int j = 0; j <1; ++j) {
+            if(!lk1->Converge() && j!=0) {
+                // 只有深度收敛的才进行大范围传播
+                continue;
+            }
 
-        int id = kf2->pointMapId_.at({px2.x(), px2.y()});
-        Landmark *lk2 = kf2->landmark_[id];
-        lk2->z_ = Pc2.z();
-        // 这里我们初始化kp2的不确定度，它应该比较大
-        lk2->depthCov_ = lk1->depthCov_ * 1.1;
-        lk2->UpdateUncertainty(false);
-        lk2->initFromPropagate_ = true;
-        ++initNum;
-#else
-        //  我们再次利用极线搜索来生成kf2的深度图
-        vector<Eigen::Vector2d> kp2s = lk1->FindMatches(*kf2);
-        for(Eigen::Vector2d &p2 : kp2s) {
-            // 在find match时我们就已保证p2点一定对应像素点
-            int id = kf2->pointMapId_.at({p2.x(), p2.y()});
+            const Eigen::Vector3d Pc1 = Pc1_norm * (z1 + j * std);
+            if(Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
+                continue;
+            }
+            const Eigen::Vector3d Pc2 = T21 * Pc1;
+            const double depthRatio = Pc2.z() / Pc1.z();
+
+            // if(depthRatio < 0.7 || depthRatio > 1.4) {
+            //     continue;
+            // }
+
+            const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
+            if(!kf2->pointMapId_.count({px2.x(), px2.y()}) ) {
+                continue;
+            }
+            
+            const double residual = abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) - kf2->grayImg_.at<uchar>(px2[1], px2[0]) );
+            if(residual > config->maxDescriptorDist * 2) {
+                continue;
+            }
+            
+            int flatRatio = 1;
+            if(kf2->dist_[0].at<float>(px2.y(), px2.x()) > 1.5) {
+                flatRatio *= 2; 
+            } 
+
+            int id = kf2->pointMapId_.at({px2.x(), px2.y()});
             Landmark *lk2 = kf2->landmark_[id];
             
-            // 恢复当前kp2的深度，注意：是在kf2相机坐标系下的
-            const Eigen::Vector3d pc2 = Triangulate(lk2->uv_.cast<double>(), lk1->uv_.cast<double>(), T12, cam);
-            // 进行深度值校验
-            if(CheckDepthQuality(*lk2, T21, lk1->uv_.cast<double>(), pc2.z()) ) {
+            // if(lk2->obvTime_ > 0 && j!=0) {
+            //     // 优先相信不加偏移的深度
+            //     continue;
+            // }
 
-#ifdef USE_SSD
-                if( CalculatePatchSSD(lk2->host_, lk1->host_, lk2->uv_.cast<double>(), lk1->uv_.cast<double>() ) >
-                    config->maxSSDdist * config->goodDescriptorDistRatio) {
-                    continue;
-                }
-#endif
-                lk2->z_ = pc2.z();
+            if(lk2->obvTime_ > 0 && Pc2.z() < lk2->z_) {
+                // 使用较近的点替代
+                lk2->z_ = Pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->depthCov_ = lk1->depthCov_ * 4;
-                lk2->UpdateUncertainty(false);
-                ++initNum;
+                lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+                lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
+                // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+                lk2->obvTime_ = lk1->obvTime_;
+                lk2->failObvTime_ = lk1->failObvTime_;
+                lk2->initFromPropagate_ = true;
+                
+            } else if(lk2->obvTime_ == 0) {
+                lk2->z_ = Pc2.z();
+                // 这里我们初始化kp2的不确定度，它应该比较大
+                lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+                lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
+                // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+                lk2->obvTime_ = lk1->obvTime_;
+                lk2->failObvTime_ = lk1->failObvTime_;
+                lk2->initFromPropagate_ = true;
             }
+
+            // lk2->z_ = Pc2.z();
+            // // 这里我们初始化kp2的不确定度，它应该比较大
+            // lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+            // lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
+            // // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+            // lk2->obvTime_ = lk1->obvTime_;
+            // lk2->failObvTime_ = lk1->failObvTime_;
+            // lk2->initFromPropagate_ = true;
+
+            ++initNum;
         }
-#endif
     }
     return double(initNum) / kf2->landmark_.size();
 }
