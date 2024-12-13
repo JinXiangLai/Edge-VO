@@ -262,10 +262,10 @@ void KeyFrame::ExtractEdge() {
 #if 0
     cv::Mat blurred = grayImg_.clone();
 #else
-    Mat blurred = grayImg_.clone();
+    Mat blurred = grayImg_;
 #endif
     // 应用高斯滤波来平滑边缘
-    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
+    // cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
 
     debugGrayImg_ = grayImg_.clone();
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -274,6 +274,7 @@ void KeyFrame::ExtractEdge() {
     const double upperThreshold = config->cannyupperTh; // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
 
+    const int minGrant = config->minGradientOFkeyPoint;
     for(int lvl = 0; lvl < level_; ++lvl) {
         Mat blur_i;
         double ratio = 1./pow(2, lvl);
@@ -282,10 +283,12 @@ void KeyFrame::ExtractEdge() {
         else
             blur_i = blurred;
 
-        Canny(blur_i, edgeImg_[lvl], lowerThreshold, upperThreshold, apertureSize);
+#define USE_CANNY 0
+#if USE_CANNY
+        Canny(blur_i, edgeImg_[lvl], lowerThreshold, upperThreshold, apertureSize, true);
 
         vector<Eigen::Vector2i> edgePx;
-        constexpr int jump = 36;
+        constexpr int jump = 6;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
                 if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
@@ -294,9 +297,6 @@ void KeyFrame::ExtractEdge() {
             }
         }
 
-#ifndef Undistort
-        edgePx = cam_->UndistortPoints(edgePx, lvl);
-#endif
         edgeImg_[lvl] = Mat::ones(edgeImg_[lvl].rows, edgeImg_[lvl].cols, CV_8UC1) * 255;
         for(const Eigen::Vector2i &p : edgePx) {
             edgeImg_[lvl].at<uchar>(p.y(), p.x()) = 0;
@@ -304,10 +304,35 @@ void KeyFrame::ExtractEdge() {
                 debugGrayImg_.at<uchar>(p.y(), p.x() ) = 255;
             }
         }
+#else    
+        Mat dx, dy;
+        CaculateDerivative<uchar>(blur_i, dx, dy);
+        edgeImg_[lvl] = Mat::ones(blur_i.rows, blur_i.cols, CV_8UC1) * 255;
+        int w = blur_i.cols, h = blur_i.rows;
+        constexpr int jump = 6;
+        float *datax = dx.ptr<float>(), *datay = dy.ptr<float>();
+        uchar *dataEdge = edgeImg_[lvl].data, *dataDebug = debugGrayImg_.data;
+
+        for(int i = jump; i < h - jump; ++i)
+            for(int j = jump; j < w - jump; ++j) {
+                const int id = i*w+j;
+                if( abs(datax[id]) + abs(datay[id]) > minGrant ) {
+                    dataEdge[id] = 0;
+                    if(lvl == 0) {
+                        dataDebug[id] = 255;
+                    }
+                }
+            }    
+#endif
+
+#ifndef Undistort
+        // edgePx = cam_->UndistortPoints(edgePx, lvl);
+#endif
+
     }
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
         
-    if(config->messageLevel == MessageLevel::Debug)
+    if(config->messageLevel == MessageLevel::Debug || 1)
         cout << "Extract canny edge spend " << chrono::duration<double>(t3 - t2).count() << "s" 
                 << " & Gaussian Blur spend " << chrono::duration<double>(t2 - t1).count() << endl;
 }
@@ -316,7 +341,7 @@ void KeyFrame::ExtractEdge() {
 void KeyFrame::GenerateDTandDerivative() {
     for(int lvl = 0; lvl < level_; ++lvl) {
         dist_[lvl] = GetDistanceTransform(edgeImg_[lvl]);
-        CaculateDerivative(dist_[lvl], dx_[lvl], dy_[lvl]);
+        CaculateDerivative<uchar>(dist_[lvl], dx_[lvl], dy_[lvl]);
     }
 }
 
@@ -384,7 +409,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     int findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.0001) {
+    if(Tc1c2.t_wb_.norm() < 0.02) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -416,8 +441,9 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
                 
                 // 由于是小基线，当最小视差角设的大时，这里也应该增大，或者不设置outOFrange
                 // 因为已经由最小视差角及先验std约束保证了初始化的准确性
-                if(lk1->failObvTime_ > 2 && Tc1c2.t_wb_.norm() > 0.05) {
+                if((lk1->failObvTime_ > config->maxFailObvTimeBeforeCreateDepth) && Tc1c2.t_wb_.norm() > 0.02) {
                     // 可以在后续视角好的时候，过程完成初始化
+                    // 三角化精度与准确度存在矛盾，因此，当基线过大时，宁愿不生成深度，也不愿生成错误深度
                     lk1->SetOutOfRange();
                 }
 
@@ -688,7 +714,7 @@ double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
         if(dist > 5) {
             lk1->SetOutOfRange();
         }
-        if(dist > config->maxTrackProjectPixelError && residual > config->maxDescriptorDist * 2) {
+        if(dist > config->maxTrackProjectPixelError && residual > 40) {
         // if(dist > config->maxTrackProjectPixelError) {
             // lk1->SetOutOfRange();
             // 投影点误差大的就给它重置
@@ -759,8 +785,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
 
-    double maxZ1 = lk1->z_+3*lk1->uncertainty_;
-    double minZ1 = max(0.1, lk1->z_-3*lk1->uncertainty_); 
+    double maxZ1 = lk1->z_+2*lk1->uncertainty_;
+    double minZ1 = max(0.1, lk1->z_-2*lk1->uncertainty_); 
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_, maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_, minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;
@@ -847,10 +873,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
     // while ( (ep2[0] > 0) == (p2[0] < nearPx2[0]) && (ep2[1] > 0) == (p2[1] < nearPx2[1]) ) {
     while (1) {
         //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
-        if (1) {
-
+        // if (1) {
+        if(kf2->dist_[0].at<float>(p2.y(), p2.x()) < 2.0 || abs(v2[2]-v1[2]) < 20 || 1) {
             // 已经保证端点在边界范围内，这里无需再判断
-            const double score = CalculateSSD(&v1[0], &v2[0], avg1, avg2, desLen);
+            const double score = CalculateSSD(v1.data(), v2.data(), avg1, avg2, desLen);
 
             if(score < bestScore) {
                 secondBestScore = bestScore;
@@ -867,7 +893,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
         p2End += ep2; // 判断边界
         p2 += ep2; // 移动关键点
         p2Start += ep2; // 判断边界及移动滑窗
-        s2 -= v2[0];
+        s2 -= v2[0]; // v2[0] 对应的可是 p2End 点
         for(int i = 1; i < v2.size(); ++i) {
             v2[i-1] = v2[i];
         }
@@ -951,9 +977,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
             return EpipolarMatchType::outOFboundaryORabnormalDepth;
         }
 
-        // if(config->drawGoddEpipolarMatch && (lk1->uv_.x() > config->drawEpipolarMatchStartCol || d1 < 0.5)) {
-        if(interaction->drawEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
-        // if(config->drawGoddEpipolarMatch && (d1 > 5.0)) {
+        if(config->drawGoddEpipolarMatch && interaction->drawEpipolarMatch && (lk1->uv_.x() > config->drawEpipolarMatchStartCol && d1 > 2.0)) {
+        // if(interaction->drawEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
             cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "]" << endl;
             cout << "parallax: " << (lk1->uv_.cast<double>()-bestP2).norm() << endl;
             cout << "bestScore, secondBestScore/desLen: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
@@ -962,7 +987,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* k
                 "current point 2 all Epipolar constraint matches", 1, 1000000);
             if(c == 'D' || c == 'd') {
                 interaction->drawEpipolarMatch = false;
-                cv::destroyAllWindows();
+                // cv::destroyAllWindows();
+                cv::destroyWindow("current point 2 all Epipolar constraint matches");
             }
         }
         
@@ -986,16 +1012,25 @@ vector<double> KeyFrame::CalculateDescriptor(const cv::Mat &grayImg, const Eigen
         cerr << "descriptor length must be odd number" << endl;
         exit(-1);
     }
-    const int mid = len / 2;
+
+#if 1
+    const int mid = len / 2; // default = 2
     // 这里我们使用双线性插值来获取光度，这样就不用担心四舍五入的问题了
     des[mid] = BilinearInterpolate<uchar>(grayImg, px);
     int incRatio = 1;
-    const int maxId = len - 1;
+    const int maxId = len - 1; // default 4
     for(int i = mid-1; i >= 0; --i) {
-        des[i] = BilinearInterpolate<uchar>(grayImg, px - incRatio*epNorm);
-        des[maxId - i] = BilinearInterpolate<uchar>(grayImg, px + incRatio*epNorm);
+        des[i] = BilinearInterpolate<uchar>(grayImg, px - incRatio*epNorm); // 1, 0
+        des[maxId - i] = BilinearInterpolate<uchar>(grayImg, px + incRatio*epNorm); // 3, 4
         ++incRatio;
     }
+#else
+    des[0] = BilinearInterpolate<uchar>(grayImg, px + 2*epNorm);
+    des[1] = BilinearInterpolate<uchar>(grayImg, px + 1*epNorm);
+    des[2] = BilinearInterpolate<uchar>(grayImg, px);
+    des[3] = BilinearInterpolate<uchar>(grayImg, px - epNorm);
+    des[4] = BilinearInterpolate<uchar>(grayImg, px - 2*epNorm);
+#endif
     return des;
 }
 
@@ -1082,7 +1117,7 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
-    const int fusePatchLen = 5;
+    const int fusePatchLen = 3;
     const int midLen = fusePatchLen/2;
     static vector<vector<double> > weights(fusePatchLen, vector<double>(fusePatchLen, 0));
     static bool first = true;
@@ -1091,7 +1126,7 @@ void KeyFrame::FuseDepth() {
             for(int y = -midLen; y <= midLen; ++y) {
                 // 权重与距离成反比
                 // 避免除以0
-                weights[y+midLen][x+midLen] = 1./(x*x + y*y + 1.0);
+                weights[y+midLen][x+midLen] = 1./(x*x + y*y + config->maxDepthConvergeStd); // 
             }
         first = false;
     }
@@ -1099,6 +1134,7 @@ void KeyFrame::FuseDepth() {
     KeyFrame temp = *this; // I'm too lazy
     vector<Landmark*> &readLk = temp.landmark_;
     unordered_map<Eigen::Vector2i, int, TupleHash> &readPointMapId = temp.pointMapId_;
+    constexpr bool removeOcclusion = true;
 
     for(int i = 0; i < landmark_.size(); ++i) {
         double maxDepth = -1, minDepth = 1e9;
@@ -1107,7 +1143,7 @@ void KeyFrame::FuseDepth() {
         const double d1 = lk1->z_;
 
         double sumDepth = 0, sumWeight = 0;
-        int sumCount = 0;
+        int occlusionCount = 0;
         for(int x = -midLen; x <= midLen; ++x) {
             for(int y = -midLen; y <= midLen; ++y) {
                 const double w = weights[y+midLen][x+midLen];
@@ -1115,10 +1151,18 @@ void KeyFrame::FuseDepth() {
                 if(!readPointMapId.count(px2) ) {
                     continue;
                 }
+
                 Landmark *lk2 = readLk[readPointMapId.at(px2)];
                 if(lk2!=nullptr && !lk2->IsOutOfRange() && lk2->Converge()) {
                     const double d2 = lk2->z_;
-                    if(abs(d2 - d1) > lk1->uncertainty_ * 2.0) {
+                    if(d2 < d1) {
+                        ++occlusionCount;
+                    }
+                    if(occlusionCount > 4 && removeOcclusion) {
+                        lk1->SetOutOfRange();
+                        continue;
+                    }
+                    if(abs(d2 - d1) > lk1->uncertainty_ * 1.0) {
                         continue;
                     }
                     if(d2 > maxDepth) {
@@ -1128,18 +1172,17 @@ void KeyFrame::FuseDepth() {
                         minDepth = d2;
                     }
 
-                    const double mixWeight = 1/lk2->depthCov_ + w;
+                    const double mixWeight = 1/lk2->uncertainty_; // lk2->depthCov_; //  + w;
                     sumDepth += mixWeight * d2;
                     sumWeight += mixWeight;
-                    ++sumCount;
                 }
             }     
         }
 
-        if(maxDepth > 0 && minDepth < maxDepth && sumCount > 3) {
+        if(maxDepth > 0 && minDepth < maxDepth) {
             lk1->z_ = sumDepth / sumWeight;
-            lk1->depthCov_ = pow(maxDepth - minDepth, 2) ;
-            lk1->UpdateUncertainty(true);
+            lk1->depthCov_ *= 0.9;  // pow(maxDepth - minDepth, 2) ;
+            lk1->UpdateUncertainty(false);
         }
     } 
 }

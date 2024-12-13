@@ -152,10 +152,10 @@ int main(int argc, char** argv){
             // 增加相对pose噪声，若噪声太大，则初始边缘都对不齐
             const double orientationNorm = Quat2RPY(_Tc1c2.q_wb_).norm(),
                 transNorm = _Tc1c2.t_wb_.norm();
-            const double ang = orientationNorm/3 * config->SimErrorRatio, 
-                t = transNorm/3 * config->SimErrorRatio;
+            const double ang = 0.; //orientationNorm/3 * config->SimErrorRatio, 
+            const double  t = 0.0 ; // transNorm/3 * config->SimErrorRatio;
             cout << "add noise ang, trans: " << ang * kRad2Deg << "deg, " << t << "m." << endl;
-            // noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
+            noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
             curF.SetTwc(lastF.Twc_ * _Tc1c2 * noise);
         }
 
@@ -173,7 +173,7 @@ int main(int argc, char** argv){
             const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
             if(config->messageLevel <= MessageLevel::Error)
                 cout << "kfConvergeEdgeRatio, accDist: " << kfConvergeEdgeRatio << ", " << accDist << endl;
-            if(kfConvergeEdgeRatio > 0.1 || (accDist > 0.5 && (curF.id_ - initFrame->id_ > 30) ) || accDist > config->needNewKFtrans) {
+            if(kfConvergeEdgeRatio > 0.1 || (accDist > 0.1 && (curF.id_ - initFrame->id_ > 30) ) || accDist > config->needNewKFtrans) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;
@@ -194,8 +194,8 @@ int main(int argc, char** argv){
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
         win.back()->CullingBadDepth(&curF);
-        // if((curF.id_ - win.back()->id_)%5 == 0 )
-        //     win.back()->FuseDepth();
+        if(win.back()->updateFrameCount_%5 == 0 )
+            win.back()->FuseDepth();
 
 #else
         // step1

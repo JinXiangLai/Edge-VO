@@ -62,6 +62,7 @@ public:
     cv::Mat grayImg_, debugGrayImg_;
     // canny边缘图像已经去畸变了
     std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;
+
     std::shared_ptr<Camera> cam_;
     Pose Twc_;
     // TODO： 增加该字段，减小Inverse()次数

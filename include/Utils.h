@@ -39,7 +39,38 @@ cv::Mat GetDistanceTransform(cv::Mat img);
 
 std::vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, std::vector<Eigen::Vector3d> &ps);
 
-void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy);
+// template<typename  C>
+// void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy);
+template<typename  C>
+void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy) {
+    const int h = dist.rows;
+    const int w = dist.cols;
+    
+    // 差分肯定是float类型
+    dx = cv::Mat(h, w, CV_32FC1, 0.);
+    dy = dx.clone();
+
+    const C* data = dist.ptr<C>();
+    float* datax = dx.ptr<float>();
+    float* datay = dy.ptr<float>();
+
+    for(int i = 0; i < h; ++i) {
+        // 遍历一行
+        for(int j = 1; j < w-1; ++j) {
+            //  dx.at<C>(i, j) = 0.5 * (dist.at<C>(i, j+1) - dist.at<C>(i, j-1));
+            datax[i*w+j] = 0.5 * (data[i*w+j+1] - data[i*w+j-1]);
+            //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
+        }
+    }
+    for(int j = 0; j < w; ++j) {
+        // 遍历一列
+        for(int i = 1; i < h-1; ++i) {
+            //  dy.at<C>(i, j) = 0.5 * (dist.at<C>(i+1, j) - dist.at<C>(i-1, j));
+            //dy.at<float>(i, j) = (dist.at<float>(i+1, j) - dist.at<float>(i, j));
+            datay[i*w+j] = 0.5 * (data[(i+1)*w+j] - data[(i-1)*w+j]);
+        }
+    }
+}
 
 inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     const double imgScale = config->imageScale;

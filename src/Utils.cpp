@@ -43,26 +43,28 @@ vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, vector<Eigen::Vector3d>
     return pc;
 }
 
-void CaculateDerivative(const Mat &dist, Mat &dx, Mat &dy) {
-    const int row = dist.rows;
-    const int col = dist.cols;
-    dx = Mat(row, col, CV_32FC1, 0.);
-    dy = dx.clone();
-    for(int i = 0; i < row; ++i) {
-        // 遍历一行
-        for(int j = 1; j < col-1; ++j) {
-             dx.at<float>(i, j) = 0.5 * (dist.at<float>(i, j+1) - dist.at<float>(i, j-1));
-            //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
-        }
-    }
-    for(int j = 0; j < col; ++j) {
-        // 遍历一列
-        for(int i = 1; i < row-1; ++i) {
-             dy.at<float>(i, j) = 0.5 * (dist.at<float>(i+1, j) - dist.at<float>(i-1, j));
-            //dy.at<float>(i, j) = (dist.at<float>(i+1, j) - dist.at<float>(i, j));
-        }
-    }
-}
+// template<typename  C>
+// void CaculateDerivative(const Mat &dist, Mat &dx, Mat &dy, const int cvType) {
+//     const int row = dist.rows;
+//     const int col = dist.cols;
+    
+//     dx = Mat(row, col, cvType, 0.);
+//     dy = dx.clone();
+//     for(int i = 0; i < row; ++i) {
+//         // 遍历一行
+//         for(int j = 1; j < col-1; ++j) {
+//              dx.at<C>(i, j) = 0.5 * (dist.at<C>(i, j+1) - dist.at<C>(i, j-1));
+//             //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
+//         }
+//     }
+//     for(int j = 0; j < col; ++j) {
+//         // 遍历一列
+//         for(int i = 1; i < row-1; ++i) {
+//              dy.at<C>(i, j) = 0.5 * (dist.at<C>(i+1, j) - dist.at<C>(i-1, j));
+//             //dy.at<float>(i, j) = (dist.at<float>(i+1, j) - dist.at<float>(i, j));
+//         }
+//     }
+// }
 
 // 短小且频繁调用则定义为内联函数
 // bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
@@ -275,31 +277,31 @@ char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen
     cv::Scalar secondMatchColor = cv::Scalar(0, 255, 0);
 
     cv::Point c1(trajKp1[0].x()*ratio, trajKp1[0].y()*ratio);
-    cv::circle(im, c1, radius*2, startColor, 2);
+    cv::circle(im, c1, radius, startColor, 1);
     for(int i = 1; i < trajKp1.size(); ++i) {
         cv::Point c1(trajKp1[i].x()*ratio, trajKp1[i].y()*ratio);
-        cv::circle(im, c1, radius, pColor, 1);
+        // cv::circle(im, c1, radius, pColor, 1);
     }
 
     cv::Point c2(sCol+trajKp2[0].x()*ratio, trajKp2[0].y()*ratio);
-    cv::circle(im, c2, radius*2, startColor, 2);
+    cv::circle(im, c2, radius, startColor, 1);
     for(int i = 1; i < trajKp2.size(); ++i) {
         cv::Point c2(sCol+trajKp2[i].x()*ratio, trajKp2[i].y()*ratio);
-        cv::circle(im, c2, radius, pColor, 1);
+        // cv::circle(im, c2, radius, pColor, 1);
     }
 
     if(goodKp2.size() > 0) {
         cv::Point bestMatchP2 = cv::Point (sCol+goodKp2[0].x()*ratio, goodKp2[0].y()*ratio);
-        cv::circle(im, bestMatchP2, radius*2, bestMatchColor, 2);
+        cv::circle(im, bestMatchP2, radius, bestMatchColor, 1);
         //cv::line(im, c1, bestMatchP2, lColor, 1);
     }
     if(goodKp2.size() > 1) {
         cv::Point goodMatchP2 = cv::Point (sCol+goodKp2[1].x()*ratio, goodKp2[1].y()*ratio);
-        cv::circle(im, goodMatchP2, radius*2, secondMatchColor, 2);
+        cv::circle(im, goodMatchP2, radius, secondMatchColor, 1);
     }
 
     cv::Point epipolarPoint1(trajKp1.back().x()*ratio, trajKp1.back().y()*ratio);
-    cv::circle(im, epipolarPoint1, radius*2, bestMatchColor, 2);
+    cv::circle(im, epipolarPoint1, radius, bestMatchColor, 1);
 
     cv::namedWindow(name);
     cv::imshow(name, im);
@@ -1279,7 +1281,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             }
             
             const double residual = abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) - kf2->grayImg_.at<uchar>(px2[1], px2[0]) );
-            if(residual > config->maxDescriptorDist * 2) {
+            if(residual > 40) {
                 continue;
             }
             
@@ -1503,6 +1505,12 @@ void ShowPointCloud(const set<Landmark* > &ps) {
 }
 
 void ShowLocalMap(const vector<Pose> &vTwc) {
+
+    if(interaction->drawEpipolarMatch) {
+        sleep(1);
+        return;
+    }
+
     viz::Viz3d &window = *interaction->window;
     //cv::Affine3d &viewPose = *interaction->viewPose;
     //window.setViewerPose(viewPose); // 使用默认的才是正确的
@@ -1657,7 +1665,8 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
 
     window.registerKeyboardCallback(VizInteraction);
     // 运行事件循环，使窗口响应用户输入
-    while (!interaction->resetWindow && curId == interaction->visualCurF.id_) {
+    while (!interaction->resetWindow && curId == interaction->visualCurF.id_
+            && !interaction->drawEpipolarMatch) {
         window.spinOnce(100);
         cv::waitKey(100);
     }
