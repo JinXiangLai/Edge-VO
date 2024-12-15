@@ -88,9 +88,13 @@ int main(int argc, char** argv){
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
 #else
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.ExtractEdge();
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
         curF.GenerateDTandDerivative();
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
         curF.GenerateKeyPoint();
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 #endif
 
         if(!initFrame) {
@@ -192,10 +196,19 @@ int main(int argc, char** argv){
         // optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准，卒
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
+        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
         win.back()->CullingBadDepth(&curF);
-        if(win.back()->updateFrameCount_%5 == 0 )
+        chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
+        
+        chrono::steady_clock::time_point t8, t9;
+        if(win.back()->updateFrameCount_%5 == 0 && accDist > 0.03) {
+            chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
             win.back()->FuseDepth();
+            chrono::steady_clock::time_point t9 = chrono::steady_clock::now();
+            //cout << "Fuse depth spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
+        }
 
 #else
         // step1
@@ -236,6 +249,7 @@ int main(int argc, char** argv){
              case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
         cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " " << case4 << " " << case5 << " accdist: " << accDist << endl;
+        chrono::steady_clock::time_point t10, t11;
         if((case1 || case3 || case4 || case5) && case2 && case6) {
             {
                 static bool first = true;
@@ -265,7 +279,9 @@ int main(int argc, char** argv){
             // optimizer.ShowLocalMap(nullptr);
 
             // win.back()->FuseDepth();
+            t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF) );
+           t11 = chrono::steady_clock::now();
             interaction->visualLastKF = win.back();
 
         } else {
@@ -276,13 +292,21 @@ int main(int argc, char** argv){
         lastLastF = lastF;
         lastF = curF;
 
+        cout << "ExtractEdge spend: " << chrono::duration<double>(t2 - t1).count() << "s" << endl
+            << "GenerateDTandDerivative spend: " << chrono::duration<double>(t3 - t2).count() << "s" << endl
+            << "GenerateKeyPoint spend: " << chrono::duration<double>(t4 - t3).count() << "s" << endl
+            << "UpdateDepth spend: " << chrono::duration<double>(t6 - t5).count() << "s" << endl
+            << "CullingBadDepth spend: " << chrono::duration<double>(t7 - t6).count() << "s" << endl
+            << "FuseDepth spend: " << chrono::duration<double>(t9 - t8).count() << "s" << endl
+            << "AddOneKeyFeame transform spend: " << chrono::duration<double>(t11 - t10).count() << "s" << endl;
+
         while(interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i
             usleep(100 * 1000);
         }
 
     }
-
+    
     viewerThread->join();
     delete viewerThread;
 

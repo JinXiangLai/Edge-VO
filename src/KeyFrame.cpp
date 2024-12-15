@@ -204,7 +204,7 @@ void KeyFrame::CannyEdgeDetect() {
 
         edgeImg_[lvl] = Mat::ones(edgeImg_[lvl].rows, edgeImg_[lvl].cols, CV_8UC1) * 255;
         vector<Eigen::Vector2i>::iterator it = unPx_[lvl].begin();
-        int id = -1;
+        int id = -1, edgeNum = 0;
         while(it != unPx_[lvl].end()) {
             ++id;
             const Eigen::Vector2i &p = *it;
@@ -227,8 +227,13 @@ void KeyFrame::CannyEdgeDetect() {
 
                 // 只保留第0层金字塔
                 if(lvl == 0) {
-                    descriptor_.push_back(::CalculateDescriptor(grayImg_, {x, y}) );
-                    pointMapId_.insert({ {p.x(), p.y()}, descriptor_.size()-1});
+                    const int w = grayImg_.cols, h = grayImg_.rows;
+                    //descriptor_.push_back(::CalculateDescriptor(grayImg_, {x, y}) );
+                #if USE_POINT_MAP_ID
+                    pointMapId_.insert({ {p.x(), p.y()}, edgeNum++});
+                #else
+                    pointMapId_.insert({ p.y()*w + p.x(), edgeNum++});
+                #endif
 
                 }
                 ++it;
@@ -348,6 +353,7 @@ void KeyFrame::GenerateDTandDerivative() {
 void KeyFrame::GenerateKeyPoint() {
     const float maxDist = config->maxDTdistOFkeyPoint;
     int count = 0;
+    const int w = dist_[0].cols, h = dist_[0].rows;
     for(int lvl = 0; lvl < level_; ++lvl)
         for(int i = 0; i < dist_[0].rows; ++i) {
             for(int j = 0; j < dist_[0].cols; ++j) {
@@ -355,7 +361,11 @@ void KeyFrame::GenerateKeyPoint() {
                     // 插入关键点
                     unPx_[lvl].push_back({j, i});
                     if(lvl == 0) {
+                    #if USE_POINT_MAP_ID
                         pointMapId_.insert({ {j, i}, count++});
+                    #else
+                        pointMapId_.insert({i*w+j, count++});
+                    #endif
                     }
                 }
             }
@@ -570,9 +580,15 @@ int KeyFrame::TrackLandmarkByEpilorLine(const KeyFrame &kf1) {
         }
 
         for(const Eigen::Vector2d &p : kp2) {
+            const int w = grayImg_.cols, h = grayImg_.rows;
             const Eigen::Vector3d pc1 = Triangulate(lp1->uv_.cast<double>(), p, T21, *cam_);
             if(pc1.z() >= lp1->depthRange_[0] && pc1.z() <= lp1->depthRange_[1]) {
+            #if USE_POINT_MAP_ID
                 const int vecId = pointMapId_[p.cast<int>()];
+            #else
+                const int x = p.x(), y = p.y();
+                const int vecId = pointMapId_[y*w+x];
+            #endif
                 if(landmark_[vecId] != nullptr) {
                     // TODO: 选一个更好的，或者按照先来后到
                     break;
@@ -600,15 +616,20 @@ int KeyFrame::TrackLandmarkByEpilorLine(const KeyFrame &kf1) {
 int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
     // 给新的KF2预分配内存
     landmark_ = vector<Landmark*>(unPx_[0].size(), nullptr);
+    const int w = grayImg_.cols, h = grayImg_.rows;
 
-
-    auto Project2Edge = [this](const Eigen::Vector2i px) -> bool {
+    auto Project2Edge = [this, &w](const Eigen::Vector2i px) -> bool {
         // 允许的像素偏差
+        
         const vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, 
             {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
         for(const Eigen::Vector2i &p : xy) {
             Eigen::Vector2i px2 = px + p;
+        #if USE_POINT_MAP_ID
             if(pointMapId_.count(px2) ) {
+        #else
+            if(pointMapId_.count(px2.y()*w+px2.x()) ) {
+        #endif
                 return true;
             }
         }
@@ -635,8 +656,15 @@ int KeyFrame::ReuseLandmark(KeyFrame *kf1) {
         }
 
         const Eigen::Vector2i px2 = cam_->Project2PixelPlane(pc2).cast<int>();
+        const int x = px2.x(), y = px2.y();
+    #if USE_POINT_MAP_ID
         if(pointMapId_.count(px2) || Project2Edge(px2) ) {
             const int vecId = pointMapId_[px2];
+    #else
+        const int id = y*w+x;
+        if(pointMapId_.count(id) || Project2Edge(px2) ) {
+            const int vecId = pointMapId_.at(id);
+    #endif
             if(landmark_[vecId] != nullptr) {
                 // TODO: 选一个更好的，或者按照先来后到
                 continue;
@@ -1117,7 +1145,7 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
-    const int fusePatchLen = 3;
+    const int fusePatchLen = 5;
     const int midLen = fusePatchLen/2;
     static vector<vector<double> > weights(fusePatchLen, vector<double>(fusePatchLen, 0));
     static bool first = true;
@@ -1133,8 +1161,13 @@ void KeyFrame::FuseDepth() {
 
     KeyFrame temp = *this; // I'm too lazy
     vector<Landmark*> &readLk = temp.landmark_;
+#if USE_POINT_MAP_ID
     unordered_map<Eigen::Vector2i, int, TupleHash> &readPointMapId = temp.pointMapId_;
+#else
+    unordered_map<int, int> &readPointMapId = temp.pointMapId_;
+#endif
     constexpr bool removeOcclusion = true;
+    const int w = grayImg_.cols, h = grayImg_.rows;
 
     for(int i = 0; i < landmark_.size(); ++i) {
         double maxDepth = -1, minDepth = 1e9;
@@ -1148,11 +1181,20 @@ void KeyFrame::FuseDepth() {
             for(int y = -midLen; y <= midLen; ++y) {
                 const double w = weights[y+midLen][x+midLen];
                 const Eigen::Vector2i px2 = px1 + Eigen::Vector2i(x, y);
+                
+#if USE_POINT_MAP_ID
                 if(!readPointMapId.count(px2) ) {
                     continue;
                 }
-
                 Landmark *lk2 = readLk[readPointMapId.at(px2)];
+#else
+                const int id = px2.y()*w + px2.x();
+                if(!readPointMapId.count(id) ) {
+                    continue;
+                }
+                Landmark *lk2 = readLk[readPointMapId.at(id)];
+#endif
+
                 if(lk2!=nullptr && !lk2->IsOutOfRange() && lk2->Converge()) {
                     const double d2 = lk2->z_;
                     if(d2 < d1) {
@@ -1172,7 +1214,7 @@ void KeyFrame::FuseDepth() {
                         minDepth = d2;
                     }
 
-                    const double mixWeight = 1/lk2->uncertainty_; // lk2->depthCov_; //  + w;
+                    const double mixWeight = 1/lk2->uncertainty_ * w; // lk2->depthCov_; //  + w;
                     sumDepth += mixWeight * d2;
                     sumWeight += mixWeight;
                 }

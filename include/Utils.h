@@ -85,9 +85,6 @@ inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
 
 template<typename T>
-    double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p);
-
-template<typename T>
     double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
         if(!InRange(img, p.cast<int>())) {
             return 0;

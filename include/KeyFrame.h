@@ -7,6 +7,8 @@
 #include "Pose.h"
 #include "Landmark.h"
 
+#define USE_POINT_MAP_ID 0
+
 class Landmark;
 
 struct TupleHash {
@@ -74,7 +76,13 @@ public:
     // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
     std::vector<uint64_t> descriptor_; 
     static constexpr int descDim = 63;
+
+#if USE_POINT_MAP_ID
     std::unordered_map<Eigen::Vector2i, int, TupleHash> pointMapId_; // 像素坐标与vector索引的映射
+#else
+    std::unordered_map<int, int> pointMapId_; // key: y*width + x
+#endif
+
     bool outOfRange_ = false;
     int convergeEdgeNum_ = 0;
     int updateFrameCount_ = 0;

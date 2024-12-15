@@ -777,6 +777,8 @@ void Optimizer::RemoveOldestKeyFrame() {
     historicalKF_.push_back(oldest); // TODO: 排查内存泄漏，关闭
     cout << "historicalKF_.size: " << historicalKF_.size() << endl;
 
+    const int w = oldest->grayImg_.cols, h = oldest->grayImg_.rows;
+
     // 所有观测到该帧的地图点要删除量测
     vector<int> count(window_.size(), 0);
     for(Landmark *p : oldest->landmark_) {
@@ -795,8 +797,14 @@ void Optimizer::RemoveOldestKeyFrame() {
                 vector<Eigen::Vector2i> bias{ {0, 0}, {-1, 0}, {1, 0}, {0, -1}, {0, 1} };
                 for(int i = 0; i < bias.size(); ++i) {
                     Eigen::Vector2i px = px2 + bias[i];
+                #if USE_POINT_MAP_ID
                     if(kf2->pointMapId_.count(px) && !kf2->landmark_[kf2->pointMapId_.at(px)]->Converge() ) {
                         Landmark *lk = kf2->landmark_[kf2->pointMapId_.at(px)];
+                #else
+                    const int id = px.y()*w + px.x();
+                    if(kf2->pointMapId_.count(id) && !kf2->landmark_[kf2->pointMapId_[id] ]->Converge() ) {
+                        Landmark *lk = kf2->landmark_[kf2->pointMapId_[id] ];
+                #endif
                         // TODO: 使用融合而非替代
                         lk->z_ = 0.7 * lk->z_ + 0.3 * pc2.z();
                         lk->depthCov_ = p->depthCov_ * 4;

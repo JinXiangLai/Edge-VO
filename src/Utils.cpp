@@ -312,7 +312,7 @@ char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen
 vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam) {
     const Eigen::Vector2d &kp1 = lk1.uv_.cast<double>();
     const Mat &edgeImg = kf2.edgeImg_[0];
-
+    const int w = edgeImg.cols, h = edgeImg.rows;
     /******** 使用极线约束寻找匹配关键点 ********
     * R21 * s1 * Pc1_norm + t21 = s2 * Pc2_norm
     * R21 * s1/s2 * Pc1_norm + 1/s2 * t21 = Pc2_norm
@@ -345,7 +345,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
     // y = -c[0]/c[1]*x - c[2]/c[1]
     
     // TODO：直接去读DT图就行
-    auto Kp2Useful = [&kf2, &lk1](Eigen::Vector2i &p2, int &score) -> bool {
+    auto Kp2Useful = [&kf2, &lk1, &w](Eigen::Vector2i &p2, int &score) -> bool {
         const Mat &edgeImg = kf2.edgeImg_[0];
 
         if(!InRange(edgeImg, p2) ) {
@@ -375,7 +375,12 @@ vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, co
         const Eigen::Vector2i p1 = lk1.uv_;
 
 #ifndef USE_SSD
+    #if USE_POINT_MAP_ID
         const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
+    #else
+        const int id = p2.y()*w + p2.x();
+        const int descId = kf2.pointMapId_.at(id);
+    #endif
         const u_int64_t d2 = kf2.descriptor_[descId];
         score = CalculateDescriptorScore(lk1.descriptor_, d2);
         return score < config->maxDescriptorDist;
@@ -1248,6 +1253,8 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
         kf2->InitializeLandmark();
     }
 
+    const int w = kf1->grayImg_.cols, h = kf1->grayImg_.rows;
+
     for(int i = 0; i < kf1->landmark_.size(); ++i) {
         Landmark *lk1 = kf1->landmark_[i];
         if(lk1==nullptr || lk1->IsOutOfRange() ) {
@@ -1276,9 +1283,16 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
             // }
 
             const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
+        #if USE_POINT_MAP_ID
             if(!kf2->pointMapId_.count({px2.x(), px2.y()}) ) {
                 continue;
             }
+        #else
+            const int key = px2.y()*w+px2.x();
+            if(!kf2->pointMapId_.count(key) ) {
+                continue;
+            }
+        #endif
             
             const double residual = abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) - kf2->grayImg_.at<uchar>(px2[1], px2[0]) );
             if(residual > 40) {
@@ -1290,7 +1304,11 @@ double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam)
                 flatRatio *= 2; 
             } 
 
+        #if USE_POINT_MAP_ID
             int id = kf2->pointMapId_.at({px2.x(), px2.y()});
+        #else
+            int id = kf2->pointMapId_.at(key);
+        #endif
             Landmark *lk2 = kf2->landmark_[id];
             
             // if(lk2->obvTime_ > 0 && j!=0) {
