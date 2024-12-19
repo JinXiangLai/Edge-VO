@@ -21,7 +21,7 @@
 #include "KeyFrame.h"
 
 #define USE_SSD
-#define Undistort
+// #define Undistort // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 
 class KeyFrame;
 class Landmark;
@@ -94,7 +94,7 @@ template<typename T>
         const int row = img.rows;
         const int x = int(p.x());
         const int y = int(p.y());
-        if(x == col-1 || x == 0 || y == row-1 || y == 0) {
+        if(x == col-1 || x == 0 || y == row-1 || y == 0 || 1) {
             return img.at<T>(y, x);
         }
 
@@ -118,6 +118,38 @@ template<typename T>
         // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
         return w1*v1 + w2*v2 + w3*v3 + w4*v4;
     }
+
+template<typename Scalar>
+Eigen::Quaternion<Scalar> Exp(const Eigen::Matrix<Scalar, 3, 1> & omega) {
+    Scalar theta_sq = omega.squaredNorm();
+    Scalar theta = sqrt(theta_sq);
+    Scalar half_theta = Scalar(0.5) * theta;
+
+    Scalar imag_factor;
+    Scalar real_factor;
+    const Scalar ellison = Scalar(1e-10);
+    if (theta < ellison ) {
+      Scalar theta_po4 = theta_sq * theta_sq;
+      imag_factor = Scalar(0.5) - Scalar(1.0 / 48.0) * theta_sq +
+                    Scalar(1.0 / 3840.0) * theta_po4;
+      real_factor = Scalar(1) - Scalar(1.0 / 8.0) * theta_sq +
+                    Scalar(1.0 / 384.0) * theta_po4;
+    } else {
+      Scalar sin_half_theta = sin(half_theta);
+      imag_factor = sin_half_theta / theta;
+      real_factor = cos(half_theta);
+    }
+
+    Eigen::Quaternion<Scalar> q(real_factor, imag_factor * omega.x(),
+                         imag_factor * omega.y(), imag_factor * omega.z());
+    // q.normalize(); // 这里不能强制给它归一化吗？
+    if(abs(q.squaredNorm() - Scalar(1)) > ellison) {
+        std::cout << "SO3::exp failed! omega: " << omega.transpose() 
+            << " real, img: " << real_factor << ", " << imag_factor << std::endl;
+        exit(-1);
+    }
+    return q;
+  }
 
 void Assert(bool a, const std::string &s);
 
@@ -160,7 +192,7 @@ void varifyTriangulate();
 std::vector<Eigen::Vector2d> CannyEdgeDetect(const cv::Mat &img, cv::Mat &edgeImg, const Camera &cam);
 
 size_t LoadImages(const std::string& strDirectory, std::vector<std::string>& vstrImages, 
-    std::vector<double>& vTimeStamps, const std::string &imgSuffix=".jpg");
+    std::vector<double>& vTimeStamps, const std::string &imgSuffix=".jpg", const bool readDepth = 0);
 
 size_t LoadPriorOdom(const std::string &strDirectory, std::vector<Eigen::Matrix<double, 8, 1>> &vPriorPose);
 
@@ -171,6 +203,8 @@ void FindImageAndPose(const int idx, const std::vector<std::string> &vstrImages,
 void GetImageAndPose(const int idx, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, 
     const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, 
     Pose &Twc);
+
+bool GetDepthImage(const double rgbTime, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, cv::Mat &depth);
 
 double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
 
@@ -212,13 +246,16 @@ void ShowLocalMap(const std::vector<Pose> &vTwc);
 
 void ShowCameraCone(const std::vector<Pose> &vTwc, const std::vector<cv::Mat> &imgs, const Camera &cam);
 
+// 画边缘点的垂直与平行方向
+char DrawPerpendicularAndParallelDirectionOFedge(const cv::Mat &edgeImg, const cv::Mat &dxImg, const cv::Mat &dyImg);
+
 enum KeyboardEvent{Reset, StepByStep};
 
 class InteractionParam {
 public:
     bool stepBystep = false;
-    KeyFrame visualCurF;
-    KeyFrame visualCurFinit;
+    KeyFrame visualCurF;     // 进行pose优化后的当前帧
+    KeyFrame visualCurFinit; // 未进行pose优化前的当前帧
     KeyFrame *visualLastKF = nullptr;
     bool resetWindow = false;
     cv::viz::Viz3d *window; // ("Local Map Viewer"); 
@@ -228,6 +265,7 @@ public:
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
     bool drawEpipolarMatch = false;
+    std::vector<cv::Point3d> trajectory;
 };
 extern InteractionParam *interaction;
 #endif

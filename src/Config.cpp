@@ -84,6 +84,8 @@ Config::Config(const std::string &yamlFilePath) {
     maxDTdistOFkeyPoint = f["maxDTdistOFkeyPoint"].as<double>();
     maxFailObvTimeBeforeCreateDepth = f["maxFailObvTimeBeforeCreateDepth"].as<int>();
     minGradientOFkeyPoint = f["minGradientOFkeyPoint"].as<double>();
+    useDepthImage = f["useDepthImage"].as<bool>();
+    depthFactor = f["depthFactor"].as<double>();
 }
 
 Config *config = nullptr;

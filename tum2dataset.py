@@ -3,12 +3,12 @@
 import os
 import shutil
 
-dataDir = "/home/laijinxiang/edge-slam/rgbd_dataset_freiburg2_xyz"
-imgDir = dataDir + "/rgb"
+dataDir = "/home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg2_xyz"
+imgDir = dataDir + "/depth" # "/rgb"
 odomFile = dataDir + "/groundtruth.txt"
 
 # 创建图像保存文件夹
-newImgDir = dataDir + "/image"
+newImgDir = dataDir + "/depth_image" # "/image"
 if(not os.path.exists(newImgDir)):
     os.mkdir(newImgDir)
 
@@ -18,7 +18,7 @@ if(not os.path.exists(newOdomFile)):
     shutil.copy(odomFile, newOdomFile)
 
 # 创建图像时间戳文件
-imgTimestampFile = dataDir + "/image_timestamp.csv"
+imgTimestampFile = dataDir + "/depth_image_timestamp.csv"
 with open(imgTimestampFile, 'w') as time:
     # clear all
     pass

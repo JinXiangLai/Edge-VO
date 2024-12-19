@@ -1,4 +1,5 @@
 #include "Pose.h"
+#include "Utils.h"
 
 using namespace std;
 
@@ -29,8 +30,9 @@ Eigen::Vector3d Pose::operator*(const Eigen::Vector3d &p) const {
 int Pose::Size() const {return 6;}
 
 void Pose::Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t) {
-    const Eigen::Matrix3d deltaR = Eigen::AngleAxisd(delta_q.norm(), delta_q.normalized()).toRotationMatrix();
-    q_wb_ *= Eigen::Quaterniond(deltaR);
+    // const Eigen::Matrix3d deltaR = Eigen::AngleAxisd(delta_q.norm(), delta_q.normalized()).toRotationMatrix();
+    // q_wb_ *= Eigen::Quaterniond(deltaR);
+    q_wb_ *= Exp<double>(delta_q);
     t_wb_ += delta_t;
 }
 

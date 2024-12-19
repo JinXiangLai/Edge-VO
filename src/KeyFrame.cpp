@@ -67,6 +67,7 @@ KeyFrame::KeyFrame(const KeyFrame &f)
         landmark_.back()->host_ = this;
     }
     debugGrayImg_ = f.debugGrayImg_;
+    depthImage_ = f.depthImage_;
 }
 
 KeyFrame::~KeyFrame() {
@@ -117,22 +118,29 @@ void KeyFrame::operator =(const KeyFrame &f) {
     // 这样会导致cv::Mat等堆内存无法释放
     new (this) KeyFrame(f);
 #endif
+    depthImage_ = f.depthImage_;
 }
 
 
 void KeyFrame::CannyEdgeDetect() {
 #ifdef Undistort
-    Mat D;
-    if(config->model == "fisheye") {
-        D = (cv::Mat_<float>(4, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_);
-    } else if (config->model == "pinhole") {
-        D = (cv::Mat_<float>(5, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_, cam_->k5_);
+    static Mat map1, map2;
+
+    if(map1.empty() ) {
+        Mat D;
+        if(config->model == "fisheye") {
+            D = (cv::Mat_<float>(4, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_);
+        } else if (config->model == "pinhole") {
+            D = (cv::Mat_<float>(5, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_, cam_->k5_);
+        }
+        Mat R = cv::Mat::eye(3, 3, CV_32F);
+        // 去畸变后，可以使用原有的内参，也可以使用自己定义的新内参，rebvo就是自己定义了新的 zf=(fx+fy)*0.5
+        Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
+        
+        // 畸变模板应该只需要计算一次！！！
+        cv::initUndistortRectifyMap(K, D, cv::Mat(), K, cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
     }
-    Mat R = cv::Mat::eye(3, 3, CV_32F);
-    Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
-    Mat map1, map2;
-    cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
-		cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
+
 	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 #endif
 
@@ -249,28 +257,32 @@ void KeyFrame::CannyEdgeDetect() {
 
 void KeyFrame::ExtractEdge() {
 #ifdef Undistort
-    Mat D;
-    if(config->model == "fisheye") {
-        D = (cv::Mat_<float>(4, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_);
-    } else if (config->model == "pinhole") {
-        D = (cv::Mat_<float>(5, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_, cam_->k5_);
+    static Mat map1, map2;
+    if(map1.empty() ) {
+        Mat D;
+        if(config->model == "fisheye") {
+            D = (cv::Mat_<float>(4, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_);
+        } else if (config->model == "pinhole") {
+            D = (cv::Mat_<float>(5, 1) << cam_->k1_, cam_->k2_, cam_->k3_, cam_->k4_, cam_->k5_);
+        }
+        Mat R = cv::Mat::eye(3, 3, CV_32F);
+        // 去畸变后，可以使用原有的内参，也可以使用自己定义的新内参，rebvo就是自己定义了新的 zf=(fx+fy)*0.5
+        Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
+        
+        // 畸变模板应该只需要计算一次！！！
+        cv::initUndistortRectifyMap(K, D, cv::Mat(), K, cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
     }
-    Mat R = cv::Mat::eye(3, 3, CV_32F);
-    Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
-    Mat map1, map2;
-    cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
-		cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
 	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 #endif
 
+#define USE_CANNY 1
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-#if 0
+#if USE_CANNY
     cv::Mat blurred = grayImg_.clone();
+    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
 #else
     Mat blurred = grayImg_;
 #endif
-    // 应用高斯滤波来平滑边缘
-    // cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
 
     debugGrayImg_ = grayImg_.clone();
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -279,7 +291,6 @@ void KeyFrame::ExtractEdge() {
     const double upperThreshold = config->cannyupperTh; // 上限阈值，越小提取边缘越多
     int apertureSize = 3;        // 应用Sobel算子的窗口大小
 
-    const int minGrant = config->minGradientOFkeyPoint;
     for(int lvl = 0; lvl < level_; ++lvl) {
         Mat blur_i;
         double ratio = 1./pow(2, lvl);
@@ -288,12 +299,11 @@ void KeyFrame::ExtractEdge() {
         else
             blur_i = blurred;
 
-#define USE_CANNY 0
 #if USE_CANNY
         Canny(blur_i, edgeImg_[lvl], lowerThreshold, upperThreshold, apertureSize, true);
 
         vector<Eigen::Vector2i> edgePx;
-        constexpr int jump = 6;
+        constexpr int jump = 26;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
                 if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
@@ -317,7 +327,8 @@ void KeyFrame::ExtractEdge() {
         constexpr int jump = 6;
         float *datax = dx.ptr<float>(), *datay = dy.ptr<float>();
         uchar *dataEdge = edgeImg_[lvl].data, *dataDebug = debugGrayImg_.data;
-
+        
+        const int minGrant = config->minGradientOFkeyPoint;
         for(int i = jump; i < h - jump; ++i)
             for(int j = jump; j < w - jump; ++j) {
                 const int id = i*w+j;
@@ -327,7 +338,10 @@ void KeyFrame::ExtractEdge() {
                         dataDebug[id] = 255;
                     }
                 }
-            }    
+            } 
+
+        // if(lvl==0)
+        //     DrawPerpendicularAndParallelDirectionOFedge(edgeImg_[0], dx, dy);
 #endif
 
 #ifndef Undistort
@@ -396,18 +410,42 @@ size_t KeyFrame::InitializeLandmark() {
         // initialKF会有该种情况
         landmark_.resize(unPx_[0].size(), nullptr);
     }
+
+    const int w = grayImg_.cols;
+    const int h = grayImg_.rows;
     
     for(int i = 0; i < unPx_[0].size(); ++i) {
-        if(landmark_[i] != nullptr) {
+        if(landmark_[i] != nullptr && !config->useDepthImage) {
             continue;
         }
+        const int x = unPx_[0][i].x();
+        const int y = unPx_[0][i].y();
         // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
         // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
         // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
+        
         const uint64_t descriptor = 0;
-        landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
-        // host帧也要增加与landmark的相互观测
-        landmark_[i]->target_.insert({this, unPx_[0][i]}); 
+        if(!config->useDepthImage) {
+            landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
+            // host帧也要增加与landmark的相互观测
+            landmark_[i]->target_.insert({this, unPx_[0][i]}); 
+
+        } else {
+            // double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
+            double d = static_cast<double>(depthImage_.at<ushort>(y, x) );
+            if(d == 0) {
+                landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
+                // host帧也要增加与landmark的相互观测
+                landmark_[i]->target_.insert({this, unPx_[0][i]}); 
+            } else {
+                d /= config->depthFactor;
+                landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, d);
+                landmark_[i]->target_.insert({this, unPx_[0][i]}); 
+                landmark_[i]->depthCov_ = 0.005;
+                landmark_[i]->obvTime_ = 1e3;
+                landmark_[i]->UpdateUncertainty(true);
+            }
+        }
     }
 
     return landmark_.size();
@@ -419,7 +457,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     int findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
-    if(Tc1c2.t_wb_.norm() < 0.02) {
+    if(Tc1c2.t_wb_.norm() < 0.02 || config->useDepthImage) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -707,6 +745,9 @@ void KeyFrame::SetTwc(const Pose &Twc) {
 }
 
 double KeyFrame::CullingBadDepth(KeyFrame *kf2) {
+    if(config->useDepthImage) {
+        return 0.;
+    }
     int convergeNum = 0, badNum = 0;
     const Pose T21 = kf2->Twc_.Inverse() * Twc_;
     for(int i = 0; i < landmark_.size(); ++i) {
@@ -1145,6 +1186,9 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
+    if(config->useDepthImage) {
+        return;
+    }
     const int fusePatchLen = 5;
     const int midLen = fusePatchLen/2;
     static vector<vector<double> > weights(fusePatchLen, vector<double>(fusePatchLen, 0));

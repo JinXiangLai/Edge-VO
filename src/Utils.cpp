@@ -28,8 +28,16 @@ Mat GetDistanceTransform(Mat img) {
     // https://blog.csdn.net/kakiebu/article/details/82967085
     distanceTransform(img, res, DIST_L2, 0);
     Assert(res.type() == CV_32FC1, "Assert distance transform type error!");
-    // TODO: 是否需要归一化呢
+    // TODO: 是否需要归一化呢，不用
     // cv::normalize(res, res, 0, 1);
+    
+    // 归一化显示距离变换结果
+    // cv::Mat showDist;
+    // cv::normalize(res, showDist, 0, 255, cv::NORM_MINMAX);
+    // showDist.convertTo(showDist, CV_8U);
+    // cv::imshow("edge", img);
+    // cv::imshow("dist", showDist);
+    // cv::waitKey(0);
     return res;
 }
 
@@ -43,39 +51,6 @@ vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, vector<Eigen::Vector3d>
     return pc;
 }
 
-// template<typename  C>
-// void CaculateDerivative(const Mat &dist, Mat &dx, Mat &dy, const int cvType) {
-//     const int row = dist.rows;
-//     const int col = dist.cols;
-    
-//     dx = Mat(row, col, cvType, 0.);
-//     dy = dx.clone();
-//     for(int i = 0; i < row; ++i) {
-//         // 遍历一行
-//         for(int j = 1; j < col-1; ++j) {
-//              dx.at<C>(i, j) = 0.5 * (dist.at<C>(i, j+1) - dist.at<C>(i, j-1));
-//             //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
-//         }
-//     }
-//     for(int j = 0; j < col; ++j) {
-//         // 遍历一列
-//         for(int i = 1; i < row-1; ++i) {
-//              dy.at<C>(i, j) = 0.5 * (dist.at<C>(i+1, j) - dist.at<C>(i-1, j));
-//             //dy.at<float>(i, j) = (dist.at<float>(i+1, j) - dist.at<float>(i, j));
-//         }
-//     }
-// }
-
-// 短小且频繁调用则定义为内联函数
-// bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
-//     // 边缘行、列忽略
-//     // return p.x() >= kDescriptorPatchLen && p.x() < img.cols-kDescriptorPatchLen && 
-//     //         p.y() >= kDescriptorPatchLen && p.y() < img.rows-kDescriptorPatchLen;
-//     const double imgScale = config->imageScale;
-//     return p.x() >= 6*imgScale && p.x() < img.cols-6*imgScale && 
-//             p.y() >= 6*imgScale && p.y() < img.rows-6*imgScale; // 把车头像素滤掉
-// }
-
 Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
     Eigen::Matrix3d m;
     m.setZero();
@@ -84,42 +59,6 @@ Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v) {
          -v[1], v[0], 0;
     return m;
 }
-
-// TODO: 可以预先对每个像素进行10等分，然后通过查表获得值
-
-//double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
-//    if(!InRange(img, p.cast<int>())) {
-//        return 0;
-//    }
-    
-//    const int col = img.cols;
-//    const int row = img.rows;
-//    const int x = int(p.x());
-//    const int y = int(p.y());
-//    if(x == col-1 || x == 0 || y == row-1 || y == 0) {
-//        return img.at<float>(y, x);
-//    }
-
-//    /****** 双线性插值 ******
-//    * +---+---+
-//    * + v1+ v2+
-//    * +---+---+
-//    * + v3+ v4+
-//    * +---+---+
-//    ***********************/
-//    float v1 = img.at<float>(y, x);
-//    float v2 = img.at<float>(y, x+1);
-//    float v3 = img.at<float>(y+1, x);
-//    float v4 = img.at<float>(y+1, x+1);
-//    const double wx = p.x() - x;
-//    const double wy = p.y() - y;
-//    const double w1 = (1-wx) * (1-wy);
-//    const double w2 = wx * (1-wy);
-//    const double w3 = (1-wx) * wy;
-//    const double w4 = wx * wy;
-//    // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
-//    return w1*v1 + w2*v2 + w3*v3 + w4*v4;
-//}
 
 void Assert(bool a, const string &s) {
     if(!a) {
@@ -169,8 +108,8 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond &_q){
 }
 
 ostream& operator<<(ostream &cout, const Pose& T){
-    cout << setprecision(3) << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg 
-         << " | " << T.t_wb_.transpose();
+    cout << setprecision(3) << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg << " deg"
+         << " | " << T.t_wb_.transpose() * 1000 << " mm";
     return cout;
 }
 
@@ -632,76 +571,6 @@ bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector
     return true;
 }
 
-// bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk) {
-//     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
-//     const Pose T12 = T21.Inverse();
-
-//     const Eigen::Vector2d kp1 = lk.uv_.cast<double>();
-//     vector<double> depth;
-//     // cout << "current triangulated depth: ";
-//     double sumDepth = 0, maxDepth = 0, minDepth = DBL_MAX;
-//     Eigen::Vector2d specialPc2;
-//     for(const Eigen::Vector2d &p : kp2) {
-
-//        const Eigen::Vector3d pc1 = Triangulate(kp1, p, T21, cam);
-//     //    cout << pc1.z() << " ";
-//         if(CheckDepthQuality(lk, T12, p, pc1.z()) ) {
-//             depth.push_back(pc1.z());
-//             if(pc1.z() < minDepth) {
-//                 minDepth = pc1.z();
-//             }
-//             if(pc1.z() > maxDepth) {
-//                 maxDepth = pc1.z();
-//             }
-//             sumDepth += pc1.z();
-//             specialPc2 = p;
-//         }
-//     }
-//     // cout << endl;
-
-//     double u2 = -1, cov2 = -1;
-//     constexpr double minCov = 0.01;
-//     if(depth.size() > 1) {
-//         // TODO: 这里应该如何更新呢？
-//         u2 = sumDepth / depth.size();
-//         cov2 = max(minCov, pow(0.5 * (maxDepth - minDepth), 2)) ;
-//         // cout << "std-2 of [" << minDepth << ", " << maxDepth << "]: " << 0.5 * (maxDepth - minDepth) << endl;
-//     } else if(depth.size() == 1 ) {
-//         const double std = GetOnePixelUncertainty(T21.Inverse().t_wb_, 
-//             cam.InverseProject(kp1.cast<int>(), depth[0]), min(cam.fy_, cam.fx_) );
-//         u2 = depth[0];
-//         cov2 = max(minCov, pow(std, 2));
-//         // cout << "std-1: " << std << endl;
-//     } else {
-//         return false;
-//     }
-
-//     const double u1 = lk.z_, cov1 = lk.depthCov_; 
-//     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " " 
-//     //     << depth.size() << " " << cov1 << endl;
-//     // 信息融合，标准差一直减小
-//     lk.z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
-//     lk.depthCov_ = (cov1 * cov2)/(cov1 + cov2);
-//     //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
-//     //     << " " << landmark.z_ << endl;
-//     lk.UpdateUncertainty();
-
-    
-//     static ofstream unf;
-//     static bool first = 1;
-//     if(first) {
-//         unf.open("depth_uncertainty.csv");
-//         unf.close();
-//         first = false;
-//     }
-//     unf.open("depth_uncertainty.csv", ios::app);
-//     unf << fixed << &lk << " [" << lk.depthRange_[0] << ", " << lk.depthRange_[1] << "] std, depth: " 
-//         << lk.uncertainty_ << " " << lk.z_ << endl;
-//     unf.close();
-//     return true;
-// }
-
-
 bool UpdateLandmarkDepth(const vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk,
     const Eigen::Vector2d &deltaPx2) {
     // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
@@ -805,9 +674,13 @@ void varifyTriangulate() {
 }
 
 size_t LoadImages(const string& strDirectory, vector<string>& vstrImages, vector<double>& vTimeStamps,
-    const std::string &imgSuffix) {
-    const string imageDirectory = strDirectory + "/image";
-    const string imageTimestampFile = strDirectory + "/image_timestamp.csv";
+    const std::string &imgSuffix, const bool readDepth) {
+    string imageDirectory = strDirectory + "/image";
+    string imageTimestampFile = strDirectory + "/image_timestamp.csv";
+    if(readDepth) {
+        imageDirectory = strDirectory + "/depth_image";
+        imageTimestampFile = strDirectory + "/depth_image_timestamp.csv";
+    }
     
     ifstream fImgTimestamp;
     fImgTimestamp.open(imageTimestampFile.c_str());
@@ -952,6 +825,25 @@ void GetImageAndPose(const int idx, const vector<string> &vstrImages, const vect
     cv::resize(img, img, cv::Size(newW, newH) );
     Twc = InterpolatePose(vTimeStamps[idx] + config->imgTimeOffset);
 }
+
+bool GetDepthImage(const double rgbTime, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, cv::Mat &depth) {
+    // 保证O(1)复杂度
+    static int id = 1;
+    if(rgbTime < vTimeStamps[id] || rgbTime > vTimeStamps.back()) {
+        return false;
+    }
+    while (1) {
+        if(rgbTime >= vTimeStamps[id-1] && rgbTime <= vTimeStamps[id]) {
+            depth = imread(vstrImages[id], IMREAD_UNCHANGED); // 不能使用 CV_16sc1
+            // cv::imshow("depth", depth);
+            // cv::waitKey();
+            --id;
+            return true;
+        }
+        ++id;
+    }
+}
+
 
 double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2) {
     /****************
@@ -1383,6 +1275,57 @@ double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::
     return sum/count;
 }
 
+char DrawPerpendicularAndParallelDirectionOFedge(const Mat &edgeImg, const Mat &dxImg, const cv::Mat &dyImg) {
+    // 以一元二次函数为例，(dx, dy)组成了某点处的切线方向，而
+    // dx = (x+Δ)-x，y = f(x+Δ)-f(x)，所以：
+    // 垂线方向应该要垂直于梯度方向才对???
+    // !!!!!!!!!!!!!!!!
+    // 但是图像边缘的垂直方向显示就是其梯度(dx, dy)的方向，
+    // 边缘的定义就是灰度变化剧烈的地方，
+    // 与这里的区别是，一元二次函数的dx是自变量，
+    // 而灰度差分这里的dx同dy一样都是因变量
+    // 参考讨论： https://zhuanlan.zhihu.com/p/62718992
+    // 最终显示：灰度变化的方向就是边缘的法向量
+    Mat img;
+    cvtColor(edgeImg, img, COLOR_GRAY2BGR);
+
+    uchar *edata = edgeImg.data;
+    const float *xdata = dxImg.ptr<float>();
+    const float *ydata = dyImg.ptr<float>();
+    const int lineLen = 10;
+    const Vec3b perColor{0, 255, 0}; // 绿线垂直边缘
+    const Vec3b parColor{0, 0, 255}; // 红线平行边缘
+    // 跳过一些边缘点
+    const int xJump = 10, yJump = 10;
+    const int w = img.cols, h = img.rows;
+    int count = 0;
+    for(int i = 30; i < h - 30; ++i)
+        for(int j = 30; j < w-30; ++j) {
+            const int id = i*w + j;
+            if(edata[id] == 0) {
+                const float dx = xdata[id];
+                const float dy = ydata[id];
+                const float len = sqrt(dx*dx+dy*dy);
+                // 归一化方向，
+                // 根据前述及实际显示，图像灰度差分(dx, dy)组成的方向垂直于其边缘像素
+                float perDir[2] = {dx/len, dy/len};
+                float parDir[2] = {-dy/len, dx/len};
+
+                Point2i o(j, i);
+                Point2i per{j+int(perDir[0]*lineLen+0.5), i+int(perDir[1]*lineLen+0.5)};
+                Point2i par{j+int(parDir[0]*lineLen+0.5), i+int(parDir[1]*lineLen+0.5)};
+
+                cv::line(img, o, per, perColor, 1);
+                cv::line(img, o, par, parColor, 1);
+                ++count;
+            }
+        }
+    cout << "draw " << count << "lines" << endl;
+    cv::imshow("edge structure", img);
+    return cv::waitKey(0);
+}
+
+
 void ShowPointCloud(const vector<Landmark*> &ps) {
     viz::Viz3d window("One Frame Point Cloud Viewer");
     cv::Affine3d viewPose;
@@ -1524,7 +1467,8 @@ void ShowPointCloud(const set<Landmark* > &ps) {
 
 void ShowLocalMap(const vector<Pose> &vTwc) {
 
-    if(interaction->drawEpipolarMatch) {
+    if(interaction->drawEpipolarMatch || interaction->visualCurF.grayImg_.empty() || interaction->visualCurFinit.grayImg_.empty()
+        || interaction->visualLastKF->grayImg_.empty()) {
         sleep(1);
         return;
     }
@@ -1655,6 +1599,7 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     constexpr double ratio = 0.5;
     const int w = curImg.cols * ratio, h = curImg.rows * ratio;
     if(curf!=nullptr) {
+        cv::putText(curInitImg, "init", Point(10, curInitImg.rows-10), cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget("curInitImage", cv::viz::WImageOverlay(curInitImg, cv::Rect(0, 0, w, h)) );
         window.showWidget("curImage", cv::viz::WImageOverlay(curImg, cv::Rect(w+10, 0, w, h)) );
 

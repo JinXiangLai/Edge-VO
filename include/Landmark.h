@@ -55,7 +55,7 @@ public:
 
 	//std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame *host_; // cnchor frame
-    Eigen::Vector2i uv_; // host帧下的像素坐标
+    Eigen::Vector2i uv_; // host帧下的像素坐标z
 
 	std::map<KeyFrame*, Eigen::Vector2i> target_;
     std::shared_ptr<Camera> cam_;

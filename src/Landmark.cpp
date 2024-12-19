@@ -88,7 +88,7 @@ void Landmark::ResetFEJ() {
 bool Landmark::ManySupport() const{
 
 #if 1
-    return initFromPropagate_;
+    return initFromPropagate_ || 1;
 #else
     const int w = host_->grayImg_.cols, h = host_->grayImg_.rows;
     constexpr int minNearSupport = 5;

@@ -86,6 +86,9 @@ public:
     bool outOfRange_ = false;
     int convergeEdgeNum_ = 0;
     int updateFrameCount_ = 0;
+
+    // debug 优化算法
+    cv::Mat depthImage_;
 };
 
 #endif

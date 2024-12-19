@@ -49,10 +49,16 @@ int main(int argc, char** argv){
     // 读取外部数据
     vector<string> vstrImages;
     vector<double> vTimeStamps;
+    vector<string> vDepthImgs;
+    vector<double> vDepthImgTimes;
+
     // TODO:需要将轮速系转换为相机系，所以倒不如直接在ORBSLAM3下的框架进行开发呢！！！
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
     if(config->model == "pinhole") {
         LoadImages(config->dataDir, vstrImages, vTimeStamps, ".png");
+        if(config->useDepthImage) {
+            LoadImages(config->dataDir, vDepthImgs, vDepthImgTimes, ".png", true);
+        }
     } else {
         LoadImages(config->dataDir, vstrImages, vTimeStamps);
     }
@@ -81,9 +87,18 @@ int main(int argc, char** argv){
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
+        Mat depthImg;
+        if(config->useDepthImage) {
+            bool success = GetDepthImage(vTimeStamps[i], vDepthImgs, vDepthImgTimes, depthImg);
+            if(!success) {
+                continue;
+            }
+        }
         cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 
         KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
+        curF.depthImage_ = depthImg;
+
 #if 0
         curF.CannyEdgeDetect();
         curF.GenerateDTandDerivative();
@@ -160,7 +175,7 @@ int main(int argc, char** argv){
             const double  t = 0 * transNorm/3 * config->SimErrorRatio;
             cout << "add noise ang, trans: " << ang * kRad2Deg << "deg, " << t*1000 << "mm." << endl;
             noise = ConvertRPYandPostion2Pose({ang, ang, ang}, {t, t, t}, kDeg2Rad);
-            curF.SetTwc(lastF.Twc_ * Tc1c2 * noise);
+            curF.SetTwc(lastF.Twc_ * _Tc1c2 * noise);
         }
 
         const double trans = (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
@@ -177,7 +192,8 @@ int main(int argc, char** argv){
             const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
             if(config->messageLevel <= MessageLevel::Error)
                 cout << "kfConvergeEdgeRatio, accDist: " << kfConvergeEdgeRatio << ", " << accDist << endl;
-            if(kfConvergeEdgeRatio > 0.1 || (accDist > 0.1 && (curF.id_ - initFrame->id_ > 30) ) || accDist > config->needNewKFtrans) {
+            if(kfConvergeEdgeRatio > 0.1 || (accDist > 0.1 && (curF.id_ - initFrame->id_ > 30) ) || accDist > config->needNewKFtrans
+                || config->useDepthImage ) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;
@@ -190,7 +206,7 @@ int main(int argc, char** argv){
 #if 1
         // Step: 利用当前帧更新深度图
         // step1: 优化当前帧pose
-        optimizer.SetInitLambda(0.);
+        optimizer.SetInitLambda(0.1);
         // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
         optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准
