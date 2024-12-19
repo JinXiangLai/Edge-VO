@@ -303,10 +303,10 @@ void KeyFrame::ExtractEdge() {
         Canny(blur_i, edgeImg_[lvl], lowerThreshold, upperThreshold, apertureSize, true);
 
         vector<Eigen::Vector2i> edgePx;
-        constexpr int jump = 26;
+        constexpr int jump = 6;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
-                if(edgeImg_[lvl].at<uchar>(y, x) != 0 ) {
+                if(edgeImg_[lvl].at<uchar>(y, x) == 255 ) {
                     edgePx.push_back({x, y});
                 }
             }
@@ -314,7 +314,7 @@ void KeyFrame::ExtractEdge() {
 
         edgeImg_[lvl] = Mat::ones(edgeImg_[lvl].rows, edgeImg_[lvl].cols, CV_8UC1) * 255;
         for(const Eigen::Vector2i &p : edgePx) {
-            edgeImg_[lvl].at<uchar>(p.y(), p.x()) = 0;
+            edgeImg_[lvl].ptr<uchar>(p.y())[p.x()] = 0;
             if(lvl == 0) {
                 debugGrayImg_.at<uchar>(p.y(), p.x() ) = 255;
             }
@@ -360,8 +360,19 @@ void KeyFrame::ExtractEdge() {
 void KeyFrame::GenerateDTandDerivative() {
     for(int lvl = 0; lvl < level_; ++lvl) {
         dist_[lvl] = GetDistanceTransform(edgeImg_[lvl]);
-        CaculateDerivative<uchar>(dist_[lvl], dx_[lvl], dy_[lvl]);
+        CaculateDerivative<float>(dist_[lvl], dx_[lvl], dy_[lvl]);
     }
+
+    // 归一化显示梯度结果
+    // cv::Mat showGx = cv::abs(dx_[0]), 
+    //    showGy = cv::abs(dy_[0]);
+    // cv::normalize(showGx, showGx, 0, 255, cv::NORM_MINMAX);
+    // cv::normalize(showGy, showGy, 0, 255, cv::NORM_MINMAX);
+    // showGx.convertTo(showGx, CV_8U);
+    // showGy.convertTo(showGy, CV_8U);
+    // cv::imshow("showGx", showGx);
+    // cv::imshow("showGy", showGy);
+    // cv::waitKey(0);
 }
 
 void KeyFrame::GenerateKeyPoint() {
@@ -578,7 +589,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     unf.close();
 
     if(config->messageLevel <= MessageLevel::Error)
-        cout << setprecision(3) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
+        cout << setprecision(5) << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum 
             << " " << convergeEdgeNum_ << endl;
     cout << "successful findMatchNum: " << findMatchNum << endl;
     return double(convergeEdgeNum_) / landmark_.size();

@@ -242,13 +242,13 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(vector<Landmark*> &l
             if( abs(diffItensity) > 10 && 0) {
                w = 10.0/abs(diffItensity);
             }
-            H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w * rho[1] * 0.01;
+            H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w * rho[1];
             /******** -J.T * b的size为[J.cols() x 1]**************
             * | A.T  C.T  E.T |       | A.T*b1 + C.T*b2 + E.T*b3|
             * | B.T  D.T  F.T | * b = | B.T*b1 + D.T*b2 + F.T*b3|
             *
             *****************************************************/
-            g.middleRows(aj, A.cols()) -= A.transpose() * r * w * rho[1] * 0.01;
+            g.middleRows(aj, A.cols()) -= A.transpose() * r * w * rho[1];
 
             if(!onlyPoseUpdate_) {
                 Eigen::MatrixXd B = J_res_px2 * J_px2_Pc2 * J_Pc2_Pc1 * J_Pc1_z1;
@@ -371,14 +371,14 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd &H, const Ei
     Eigen::VectorXd deltaPoint = Dinv * (new_b.middleRows(poseSize, pointSize) - C * deltaPose);
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
-    // cout << setprecision(3) << "deltaPoint: "<< deltaPoint.transpose() << endl;
+    // cout << setprecision(5) << "deltaPoint: "<< deltaPoint.transpose() << endl;
 
     Eigen::VectorXd deltaX(deltaPose.rows() + deltaPoint.rows());
     deltaX.middleRows(0, poseSize) = deltaPose;
     deltaX.middleRows(poseSize, pointSize) = deltaPoint;
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
     
-    cout << setprecision(3) << "deltaPose: " << deltaPose.transpose() << endl;
+    cout << setprecision(5) << "deltaPose: " << deltaPose.transpose() << endl;
 
     cout << "calculate D.inv spend: " << to_string(chrono::duration<double>(t1 - t0).count() ) << endl;
     cout << "calculate E mat spend: " << to_string(chrono::duration<double>(t1_1 - t1).count() ) << endl;
@@ -435,11 +435,11 @@ bool Optimizer::ExecuteLMoptimize() {
                 cout << "H_: [" << H_.rows() << "x" << H_.cols() << "]" << endl;
                 cout << "g_: [" << g_.rows() << "x1]" << endl;
             }
-            cout << "Hp_[6x6]: " << setprecision(3) << Hp_.diagonal().head(6).transpose() << endl;
+            cout << "Hp_[6x6]: " << setprecision(5) << Hp_.diagonal().head(6).transpose() << endl;
             H_ += Hp_;
             g_ += g_p_;
-            //cout << setprecision(3) << "Hp_: " << Hp_.diagonal().transpose() << endl;
-            //cout << setprecision(3) << "g_p_: " << g_p_.transpose() << endl;
+            //cout << setprecision(5) << "Hp_: " << Hp_.diagonal().transpose() << endl;
+            //cout << setprecision(5) << "g_p_: " << g_p_.transpose() << endl;
             cout << "Prior Message Added!!!" << endl;;
         } else {
             _lambda.head(6).setConstant(DBL_MAX); // 首帧的约束足够大
@@ -456,7 +456,7 @@ bool Optimizer::ExecuteLMoptimize() {
         } else {
             delta_x = H_.colPivHouseholderQr().solve(g_);
         }
-        // cout << setprecision(3) << "delta_x: " << delta_x.transpose() << endl; 
+        // cout << setprecision(5) << "delta_x: " << delta_x.transpose() << endl; 
         
         // 保留状态备份
         vector<Landmark> pcBackup(optLandmark_.size());
@@ -584,14 +584,14 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
             // Eigen::VectorXd _g = -J.transpose() * b;
             // const Eigen::MatrixXd dH = H-_H;
             // const Eigen::VectorXd dg = g-_g;
-            // cout << setprecision(3) << "H-_H:\n " << dH.diagonal().transpose() << endl << endl;
-            // cout << setprecision(3) << "g-_g:\n " << dg.transpose() << endl << endl;
+            // cout << setprecision(5) << "H-_H:\n " << dH.diagonal().transpose() << endl << endl;
+            // cout << setprecision(5) << "g-_g:\n " << dg.transpose() << endl << endl;
             // cout << "dH, dg norm: " << dH.norm() << " " << dg.norm() << endl;
             // H = _H;
             // g = _g;
 
-            cout << setprecision(3) << "H_:\n " << H_ << endl << endl;
-            cout << setprecision(3) << "g_:\n " << g_ << endl << endl;
+            //cout << setprecision(5) << "H_:\n " << H_ << endl << endl;
+            //cout << setprecision(5) << "g_:\n " << g_ << endl << endl;
 
             H_.diagonal() += _lambda;
             Eigen::VectorXd delta_x;
@@ -603,10 +603,10 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
                 // delta_x = H_.colPivHouseholderQr().solve(g_);
                 // delta_x = H_.inverse() * g_;
                 delta_x = H_.ldlt().solve(g_);
-                cout << setprecision(3) << "delta_pose: " << delta_x.transpose() << endl; 
+                cout << setprecision(5) << "delta_pose: " << delta_x.transpose() << endl; 
 
             }
-            // cout << setprecision(3) << "delta_x: " << delta_x.transpose() << endl; 
+            // cout << setprecision(5) << "delta_x: " << delta_x.transpose() << endl; 
             
             vector<Landmark> lkBackup(lk1s.size());
             for(int i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
@@ -1081,7 +1081,7 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     const Eigen::MatrixXd invA = A.inverse();
     const Eigen::MatrixXd temp = -C * invA;
     Hp_ = -temp*B + D;
-    cout << "debug A: " << setprecision(3) << A.diagonal().transpose() << endl
+    cout << "debug A: " << setprecision(5) << A.diagonal().transpose() << endl
          << "debug B: " << B.diagonal().transpose() << endl
          << "debug D: " << D.diagonal().head(12).transpose() << endl
          << "debug invA: " << invA.diagonal().transpose() << endl

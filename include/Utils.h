@@ -54,7 +54,7 @@ void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy) {
     float* datax = dx.ptr<float>();
     float* datay = dy.ptr<float>();
 
-    for(int i = 0; i < h; ++i) {
+    for(int i = 0; i < h-1; ++i) {
         // 遍历一行
         for(int j = 1; j < w-1; ++j) {
             //  dx.at<C>(i, j) = 0.5 * (dist.at<C>(i, j+1) - dist.at<C>(i, j-1));
@@ -62,7 +62,7 @@ void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy) {
             //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
         }
     }
-    for(int j = 0; j < w; ++j) {
+    for(int j = 0; j < w-1; ++j) {
         // 遍历一列
         for(int i = 1; i < h-1; ++i) {
             //  dy.at<C>(i, j) = 0.5 * (dist.at<C>(i+1, j) - dist.at<C>(i-1, j));
