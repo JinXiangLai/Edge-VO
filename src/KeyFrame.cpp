@@ -275,7 +275,7 @@ void KeyFrame::ExtractEdge() {
 	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 #endif
 
-#define USE_CANNY 1
+#define USE_CANNY 0
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 #if USE_CANNY
     cv::Mat blurred = grayImg_.clone();

@@ -41,7 +41,7 @@ needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.1 # 匹配边缘点数量小于该阈值时，需要选定新KF
 # TODO: 这个误差模型将极大的影响深度估计，这里直接是将其当作误差角度使用，值为1时不行
 filterPixelError: 10 # 按1个像素误差推导深度三角化不确定度
-maxIteration: 30000 # LM算法迭代次数
+maxIteration: 30 # LM算法迭代次数
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
@@ -68,9 +68,9 @@ minDepthCompareRatio: 0.7
 maxDepthCompareRatio: 1.4
 pyrLevel: 1
 # 任何标准差在这范围之外的，都是不正常的
-maxObvDepthStd: 200.0 # 2.0
-minObvDepthStd: 0.001 # 0.1
-minObvTime: 10
+maxObvDepthStd: 2.0 # 2.0
+minObvDepthStd: 0.1 # 0.1
+minObvTime: 1
 
 
 minGradientOFkeyPoint: 8
@@ -80,7 +80,7 @@ maxDTdistOFkeyPoint: 0.1 # DT图像上值不超过该数的选为关键点，用
 
 # 因为是小基线恢复深度，所以该值影响很大，若是设的太大，就应该允许深度使用更多的帧进行初始化，即放大failObv次数
 # 若是设的太小，就会产生很多异常点，所以我宁愿设置大点，且不用failObv次数也不愿设置小些
-minGoodTriangulateAngle: 0.0 # deg, // 这个角度限制会卡住很多深度估计值
+minGoodTriangulateAngle: 0.5 # deg, // 这个角度限制会卡住很多深度估计值
 
 maxGoodTriangulateAngle: 90.0
 minTranslation: 0.5 # m, 每隔多少米取1帧图像进行三角化，视差过小时，三角化的距离受噪声影响极大[LSD-SLAM]

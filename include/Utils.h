@@ -265,7 +265,7 @@ public:
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
     bool drawEpipolarMatch = false;
-    std::vector<cv::Point3d> trajectory;
+    std::vector<Eigen::Vector3d> trajectory;
 };
 extern InteractionParam *interaction;
 #endif
