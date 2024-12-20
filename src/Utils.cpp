@@ -1607,6 +1607,12 @@ void ShowLocalMap(const vector<Pose> &vTwc) {
     }
     window.showWidget("lastKFimg", cv::viz::WImageOverlay(curKFimg, cv::Rect(2*w+20, 0, w, h)) );
 
+    // 显示轨迹
+    vector<cv::Point3d> traj;
+    for(const Eigen::Vector3d &p : interaction->trajectory)
+        traj.push_back({p.x(), p.y(), p.z()});
+    cv::viz::WPolyLine trajPolyline(traj, cv::viz::Color::green());
+    window.showWidget("Trajectory", trajPolyline);
 
     // 显示当前帧的视锥
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> K = curf->cam_->K_[0];

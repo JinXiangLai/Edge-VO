@@ -206,7 +206,7 @@ int main(int argc, char** argv){
 #if 1
         // Step: 利用当前帧更新深度图
         // step1: 优化当前帧pose
-        optimizer.SetInitLambda(0.001);
+        optimizer.SetInitLambda(1.0);
         // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
         optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准
@@ -307,6 +307,7 @@ int main(int argc, char** argv){
 
         lastLastF = lastF;
         lastF = curF;
+        interaction->trajectory.push_back({curF.Twc_.t_wb_});
 
         cout << "ExtractEdge spend: " << chrono::duration<double>(t2 - t1).count() << "s" << endl
             << "GenerateDTandDerivative spend: " << chrono::duration<double>(t3 - t2).count() << "s" << endl
