@@ -1623,7 +1623,7 @@ double Optimizer::HuberLoss(const double chi2, Eigen::Vector2d &rho, const int l
     const double huberDelta = config->huberDelta * scale;
 
     const double huberDelta2 = huberDelta * huberDelta;
-    if(chi2 > huberDelta2 && 0) {
+    if(chi2 > huberDelta2) {
         // r = δ*(|a|-0.5*δ), 这里的loss形式为：
         // loss = hb*|f(x) - obv| - 0.5*hb^2{写成向量乘法为0.5*hb.T*hb}, f(x)非线性，在x0处展开有：
         // loss = hb*|f(x0) + J*Δx -obv| - 0.5*hb^2，记: r = f(x0) - obv，则：
