@@ -436,7 +436,7 @@ size_t KeyFrame::InitializeLandmark() {
         // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
         
         const uint64_t descriptor = 0;
-        if(!config->useDepthImage) {
+        if(!config->useDepthImage && depthImage_.empty()) {
             landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
             // host帧也要增加与landmark的相互观测
             landmark_[i]->target_.insert({this, unPx_[0][i]}); 

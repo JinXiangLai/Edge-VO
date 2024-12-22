@@ -56,7 +56,7 @@ int main(int argc, char** argv){
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
     if(config->model == "pinhole") {
         LoadImages(config->dataDir, vstrImages, vTimeStamps, ".png");
-        if(config->useDepthImage) {
+        if(config->useDepthImage || config->initWithTrueDepth) {
             LoadImages(config->dataDir, vDepthImgs, vDepthImgTimes, ".png", true);
         }
     } else {
@@ -88,7 +88,7 @@ int main(int argc, char** argv){
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img, Twc);
         Mat depthImg;
-        if(config->useDepthImage) {
+        if(config->useDepthImage || (config->initWithTrueDepth && !isInitialized)) {
             bool success = GetDepthImage(vTimeStamps[i], vDepthImgs, vDepthImgTimes, depthImg);
             if(!success) {
                 continue;
@@ -97,7 +97,9 @@ int main(int argc, char** argv){
         cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i]) << endl;
 
         KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
-        curF.depthImage_ = depthImg;
+        if(config->useDepthImage){
+            curF.depthImage_ = depthImg;
+        }
 
 #if 0
         curF.CannyEdgeDetect();
@@ -116,6 +118,7 @@ int main(int argc, char** argv){
             initFrame = new KeyFrame(curF);
             // 首帧设置为单位矩阵
             initFrame->SetTwc(Pose());
+            initFrame->depthImage_ = depthImg;
             lastF = *initFrame;
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
@@ -148,7 +151,7 @@ int main(int argc, char** argv){
 #else
             // 使用匀速模型，即上上帧的pose与上一帧的pose之间的位姿估计
             Tc1c2 = lastLastF.priorTwc_.Inverse() * lastF.priorTwc_;
-            Pose _Tc1c2;// = lastLastF.Twc_.Inverse() * lastF.Twc_; 
+            Pose _Tc1c2 = Tc1c2 ; // = lastLastF.Twc_.Inverse() * lastF.Twc_; 
             // TODO：基于边缘的残差和基于图像光度的残差有很大区别，首先位姿优化不会在图像光度投影中使其集中到一小块地方，因为这不会是残差显著变小
             // 但是基于边缘的却有可能，一旦pose估计不准，那么就会使得相机pose远离场景，使得其想尽量让投影集中到一小块区域，
             // 解决办法是：1、在重投影点新加一个距离残差项，使得Landmark只能在一段有效的范围内搜索，
