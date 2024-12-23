@@ -86,6 +86,7 @@ Config::Config(const std::string &yamlFilePath) {
     minGradientOFkeyPoint = f["minGradientOFkeyPoint"].as<double>();
     useDepthImage = f["useDepthImage"].as<bool>();
     depthFactor = f["depthFactor"].as<double>();
+    initWithTrueDepth = f["initWithTrueDepth"].as<bool>();
 }
 
 Config *config = nullptr;
