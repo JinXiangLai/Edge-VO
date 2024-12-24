@@ -150,7 +150,8 @@ int main(int argc, char** argv){
             //Pose noise()
 #else
             // 使用匀速模型，即上上帧的pose与上一帧的pose之间的位姿估计
-            Tc1c2 = lastLastF.priorTwc_.Inverse() * lastF.priorTwc_;
+            Tc1c2 = lastLastF.Twc_.Inverse() * lastF.Twc_;
+            // Tc1c2 = lastF.priorTwc_.Inverse() * Twc2;
             Pose _Tc1c2 = Tc1c2 ; // = lastLastF.Twc_.Inverse() * lastF.Twc_; 
             // TODO：基于边缘的残差和基于图像光度的残差有很大区别，首先位姿优化不会在图像光度投影中使其集中到一小块地方，因为这不会是残差显著变小
             // 但是基于边缘的却有可能，一旦pose估计不准，那么就会使得相机pose远离场景，使得其想尽量让投影集中到一小块区域，

@@ -22,6 +22,7 @@
 
 #define USE_SSD
 // #define Undistort // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
+#define USE_INV_DEPTH
 
 class KeyFrame;
 class Landmark;

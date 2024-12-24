@@ -73,6 +73,8 @@ public:
     std::vector<Eigen::Matrix<double, 3, 6>> J_Pc2_T12_;
 
     bool noUsed_ = false;
+
+    Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 };
 
 #endif

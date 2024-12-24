@@ -693,6 +693,9 @@ bool Optimizer::Optimize(vector<Landmark*> &lk1s, vector<Pose> &T12) {
             << (double(lastCost.usefulNum)/optLandmark_.size()) * 100 << "%" << endl;
         cout << lvl << "Total Optimize spend " << spendTime << "s\n" << endl;
 
+        if(firstCost.cost > lastCost.cost) {
+            AssignTrackedFeature(lk1s, T12[0]);
+        }
     
     }
 
@@ -1845,6 +1848,24 @@ double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame *kf2) {
         }
     }
     return convergeNum / kf2->landmark_.size();
+}
+
+void Optimizer::AssignTrackedFeature(const std::vector<Landmark*> &lk1s, const Pose &T12, const int lvl) {
+    const Camera &cam = *cam_;
+    const Pose T21 = T12.Inverse();
+    const cv::Mat dist = dist_[0][lvl];
+
+    for(int j = 0; j < lk1s.size(); ++j) {
+        if(lk1s[j]->noUsed_) {
+            continue;
+        }
+        const Eigen::Vector3d pc = T21 * lk1s[j]->GetPc();
+        const Eigen::Vector2d px = cam.Project2PixelPlane(pc, lvl);
+        const bool inRange = InRange(dist, px.cast<int>());
+        if(inRange && dist.ptr<float>(int(px.y()+0.5))[int(px.x()+0.5)] < 1.0 ) {
+            lk1s[j]->matchNextPixel_ = px;
+        } 
+    }
 }
 
 void Optimizer::ShowLocalMap() {

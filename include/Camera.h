@@ -28,6 +28,16 @@ public:
     double k1_, k2_, k3_, k4_;
     double k5_; // 针对TUM数据集的针孔相机
     const double xStart_, yStart_, xStep_, yStep_, xEnd_, yEnd_; // 归一化平面上的显示范围
+
+    void UpdateIntrinsicParam(const double fx, const double fy) {
+        for(int i = 0; i < config->pyrLevel; ++i) {
+            const double ratio = 1.0/pow(2, i);
+            K_[i] << fx*ratio, 0, cx_*ratio,
+                    0, fy*ratio, cy_*ratio,
+                    0, 0, 1;
+            Kinv_[i] = K_[i].inverse();
+        }
+    }
 };
 
 #endif

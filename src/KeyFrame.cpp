@@ -268,9 +268,15 @@ void KeyFrame::ExtractEdge() {
         Mat R = cv::Mat::eye(3, 3, CV_32F);
         // 去畸变后，可以使用原有的内参，也可以使用自己定义的新内参，rebvo就是自己定义了新的 zf=(fx+fy)*0.5
         Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_ , cam_->cy_, 0, 0, 1);
+
+        // 使用新的内参投影，避免出现黑色的部分
+        double newFx = max(cam_->fx_, cam_->fy_) * 1.1;
+        Mat newK = (cv::Mat_<float>(3, 3) << newFx, 0, cam_->cx_, 0, newFx , cam_->cy_, 0, 0, 1);
         
         // 畸变模板应该只需要计算一次！！！
-        cv::initUndistortRectifyMap(K, D, cv::Mat(), K, cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
+        cv::initUndistortRectifyMap(K, D, cv::Mat(), newK, cv::Size(grayImg_.cols, grayImg_.rows), CV_8UC1, map1, map2);
+
+        cam_->UpdateIntrinsicParam(newFx, newFx);
     }
 	cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 #endif
@@ -468,6 +474,7 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
     int findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
+    const Pose Tc2c1 = Tc1c2.Inverse();
     if(Tc1c2.t_wb_.norm() < 0.02 || config->useDepthImage) {
         // 位移过小，不能进行更新
         return 0;
@@ -485,6 +492,33 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
         if(lk1->Converge()) {
             convergeEdgeNum_ += 1;
         }
+
+        if(!lk1->noUsed_ && !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
+            const double bestDepth = TriangulateDepth(lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1, *cam_);
+            Eigen::Vector2d disturb{1.0, 1.0};
+            const double d = TriangulateDepth(lk1->uv_.cast<double>(), lk1->matchNextPixel_+disturb, Tc2c1, *cam_);
+            const double std = abs(d-bestDepth);
+
+            // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
+            //     && std < config->maxObvDepthStd) {
+            if(1){ 
+                double u2 = bestDepth, cov2 = std * std; // 考虑基线的影响
+                double u1 = lk1->z_, cov1 = lk1->depthCov_; 
+                if(lk1->obvTime_ == 0) {
+                    // 首次初始化
+                    u1 = u2;
+                    cov1 = cov2;
+                } 
+                lk1->z_ = (u2*cov1 + u1*cov2) / (cov1 + cov2);
+                const double newCov = (cov1 * cov2)/(cov1 + cov2);
+                lk1->depthCov_ = min(lk1->depthCov_, newCov);
+                //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
+                //     << " " << landmark.z_ << endl;
+                lk1->UpdateUncertainty(true);
+                continue;
+            }
+        }
+
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
         double bestDepth, std;

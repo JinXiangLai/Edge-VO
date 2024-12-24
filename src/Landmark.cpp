@@ -83,6 +83,7 @@ void Landmark::ResetFEJ() {
     J_Pw_Twc1.clear(); 
     J_Pc2_T12_.clear(); 
     noUsed_ = false;
+    matchNextPixel_.setZero();
 }
 
 bool Landmark::ManySupport() const{
