@@ -184,7 +184,7 @@ void KeyFrame::CannyEdgeDetect() {
         vector<Eigen::Vector2i> px;
         // 取出边缘像素点
         // 这里跳过了6个图像边缘的像素
-        constexpr int jump = 2;
+        constexpr int jump = 6;
         for(int x = jump; x < edgeImg_[lvl].cols-jump; ++x) {
             for(int y = jump; y < edgeImg_[lvl].rows-jump; ++y) {
                 if(edgeImg_[lvl].at<uchar>(y, x) != 0 && ( lvl!=0 || IsFastPoint(grayImg_, {x, y}) )) {
@@ -495,9 +495,11 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
 
         if(!lk1->noUsed_ && !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
             const double bestDepth = TriangulateDepth(lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1, *cam_);
-            Eigen::Vector2d disturb{1.0, 1.0};
+            Eigen::Vector2d disturb{2.0, 2.0};
+            // TODO: 不确定度的设计非常重要！！！关乎数学模型的正确性
+            // 同时，需要完善Keyframe的管理，后面有时间再搞
             const double d = TriangulateDepth(lk1->uv_.cast<double>(), lk1->matchNextPixel_+disturb, Tc2c1, *cam_);
-            const double std = abs(d-bestDepth);
+            const double std = abs(d-bestDepth) * 2;
 
             // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
             //     && std < config->maxObvDepthStd) {
@@ -515,6 +517,23 @@ double KeyFrame::UpdateDepth(const KeyFrame &kf2) {
                 //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2 
                 //     << " " << landmark.z_ << endl;
                 lk1->UpdateUncertainty(true);
+
+                {
+                    static ofstream unf;
+                    static bool first = 1;
+                    if(first) {
+                        unf.open("depth_uncertainty_new.csv");
+                        unf << "#std, d" << endl;
+                        unf.close();
+                        first = false;
+                    }
+                    unf.open("depth_uncertainty_new.csv", ios::app);
+                    // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: " 
+                    if(i%1000 == 0)
+                        unf << lk1->uncertainty_ << " " << lk1->z_ << endl;
+                    unf.close();
+                }
+
                 continue;
             }
         }

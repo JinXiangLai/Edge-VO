@@ -21,7 +21,7 @@
 #include "KeyFrame.h"
 
 #define USE_SSD
-// #define Undistort // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
+#define Undistort // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
 class KeyFrame;
@@ -77,7 +77,7 @@ inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
     const double imgScale = config->imageScale;
     int jumpPxNum = 6;
     #ifdef Undistort
-        jumpPxNum = 26;
+        // jumpPxNum = 26;
     #endif
     return p.x() >= jumpPxNum*imgScale && p.x() < img.cols-jumpPxNum*imgScale && 
             p.y() >= jumpPxNum*imgScale && p.y() < img.rows-jumpPxNum*imgScale; // 把车头像素滤掉

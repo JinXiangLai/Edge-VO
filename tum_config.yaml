@@ -98,4 +98,4 @@ maxFailObvTimeBeforeCreateDepth: 10
 
 useDepthImage: false # 验证位姿估计算法
 depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
-initWithTrueDepth: true
+initWithTrueDepth: false
