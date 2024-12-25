@@ -55,12 +55,12 @@ target_link_libraries(edge_slam
 )
 
 
-add_executable(edge_slam_main main_edge_slam.cpp)
-target_link_libraries(edge_slam_main
-    edge_slam
-    -lpthread
-    -lyaml-cpp
-)
+# add_executable(edge_slam_main main_edge_slam.cpp)
+# target_link_libraries(edge_slam_main
+#     edge_slam
+#     -lpthread
+#     -lyaml-cpp
+# )
 
 add_executable(rgbd_slam main_rgbd_slam.cpp)
 target_link_libraries(rgbd_slam

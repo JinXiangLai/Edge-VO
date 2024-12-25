@@ -77,7 +77,7 @@ public:
 
     void ConstructRelativePoseConstraint(Eigen::MatrixXd &H, Eigen::VectorXd &g);
 
-    bool TrackLocalMap(KeyFrame *kf2);
+    bool TrackLocalMap(KeyFrame *kf2, bool &needNewKFbySight);
 
     double TransformDepthMap2CurrentFrame(KeyFrame *kf2);
 

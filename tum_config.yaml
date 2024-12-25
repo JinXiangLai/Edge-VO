@@ -66,7 +66,7 @@ cannyupperTh: 60 # 160
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
 minDepthCompareRatio: 0.7
 maxDepthCompareRatio: 1.4
-pyrLevel: 1
+pyrLevel: 2
 # 任何标准差在这范围之外的，都是不正常的
 maxObvDepthStd: 2.0 # 2.0
 minObvDepthStd: 0.1 # 0.1

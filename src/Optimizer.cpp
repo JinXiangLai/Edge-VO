@@ -192,7 +192,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(vector<Landmark*> &l
             Eigen::Matrix<double, 3, 6> J_Pc2_T12 = Eigen::Matrix<double, 3, 6>::Zero();
             // FEJ
             // TODO: 使用不同的lvl层时，需要重置FEJ
-            if(p.J_Pc2_T12_.empty() || 1) {
+            if(p.J_Pc2_T12_.empty()) {
                 const Eigen::Vector3d dt = Pc1 - T12[i].t_wb_;
                 // * Pc2 w.r.t R12
                 J_Pc2_T12.block(0, 0, 3, 3) = skewSymmetric(T21.q_wb_ * dt);
@@ -1723,7 +1723,7 @@ int Optimizer::SelectOneKF2Marginalization() {
     return smallId;
 }
 
-bool Optimizer::TrackLocalMap(KeyFrame *kf2){
+bool Optimizer::TrackLocalMap(KeyFrame *kf2, bool &needNewKFbySight){
     KeyFrame *ref = window_.back();
     constexpr double needLandmarkRatio = 200;
     // TODO: 使用多线程时，需要注意后端也会使用optLandmark_，因此最好用不同的变量表示
@@ -1745,6 +1745,7 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
     }
 #else
     Pose T21 = kf2->Twc_.Inverse() * ref->Twc_;
+    double noInrangeCount = 0;
     for(int i = 0; i < window_.size(); ++i) {
         ref = window_[i];
         // 最新KF帧未进行外点滤除
@@ -1762,6 +1763,7 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
                 const Eigen::Vector2i px = cam_->Project2PixelPlane(pc2).cast<int>();
                 const double depthRatio = pc2.z() / pc1.z();
                 if(!InRange(kf2->dist_[0], px)) {
+                    noInrangeCount += 1;
                     continue;
                 }
                 if(kf2->dist_[0].at<float>(px.y(), px.x()) < config->abnormalProjectResidual || 1) {
@@ -1807,6 +1809,8 @@ bool Optimizer::TrackLocalMap(KeyFrame *kf2){
     Pose beforeTwc2 = kf2->Twc_;
     kf2->SetTwc(ref->Twc_ * optPose[0]);
     cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_ << endl;
+
+    needNewKFbySight = noInrangeCount/ref->landmark_.size() > 0.1;
 
     return true;
 }

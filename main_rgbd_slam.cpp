@@ -213,7 +213,8 @@ int main(int argc, char** argv){
         optimizer.SetInitLambda(1.0);
         // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        optimizer.TrackLocalMap(&curF); // TODO: 问题是这里的pose估计不准
+        bool needKFbySight = false;
+        optimizer.TrackLocalMap(&curF, needKFbySight); // TODO: 问题是这里的pose估计不准
         
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
@@ -270,7 +271,7 @@ int main(int argc, char** argv){
         // 必须保证当前KF收敛足够多的点了
         cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " " << case4 << " " << case5 << " accdist: " << accDist << endl;
         chrono::steady_clock::time_point t10, t11;
-        if((case1 || case3 || case4 || case5) && case2 && case6) {
+        if(( (case1 || case3 || case4 || case5) && case2 && case6) || needKFbySight) {
             {
                 static bool first = true;
                 ofstream f;
