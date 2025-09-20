@@ -177,8 +177,8 @@ int main(int argc, char** argv) {
         // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
         bool needKFbySight = false;
-        optimizer.TrackLocalMap(
-            &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+        //optimizer.TrackLocalMap(
+        //    &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
 
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
         // step2
         optimizer.SetInitLambda(0);
-        optimizer.TrackLocalMap(&curF);
+        //optimizer.TrackLocalMap(&curF);
 #endif
 
         // 显示线程更新使用
