@@ -627,13 +627,16 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d>& kp2, const Pose& T21,
     const double deltaDepth =
         GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
     // const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
-    double u2 = pc1.z(), cov2 = deltaDepth * deltaDepth;  // 考虑基线的影响
+    double u2 = 1.0 / pc1.z(),
+           cov2 = std::pow(1.0 / pc1.z() - 1.0 / (pc1.z() + deltaDepth),
+                           2);  // 考虑基线的影响
 #else
     // 这样反而结果正常，why?建模不准
     const double u2 = pc1.z(),
                  cov2 = 50 * max(0.1, 1 - double(lk.obvTime_) / 5);
 #endif
-    double u1 = lk.z_, cov1 = lk.depthCov_;
+    double u1 = lk.invZ_, cov1 = lk.invDepthCov_;
+    const double std1 = sqrt(cov1);
     if (lk.obvTime_ == 0) {
         // 首次初始化
         u1 = u2;
@@ -641,7 +644,7 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d>& kp2, const Pose& T21,
         // cov2 = cov1 * 0.25; // 不完全信赖第一次的三角化
     } else {
         // 一致性校验
-        if (u2 < u1 - lk.uncertainty_ * 3 || u2 > u1 + lk.uncertainty_ * 3) {
+        if (u2 < u1 - std1 * 3 || u2 > u1 + std1 * 3) {
             return false;
         }
         cov1 *= 1.1;  // KF propagate
@@ -649,8 +652,8 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d>& kp2, const Pose& T21,
     //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " "
     //     << depth.size() << " " << cov1 << endl;
     // 信息融合，标准差一直减小
-    lk.z_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-    lk.depthCov_ = (cov1 * cov2) / (cov1 + cov2);
+    lk.invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
+    lk.invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
     //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
     //     << " " << landmark.z_ << endl;
     lk.UpdateUncertainty(true);
@@ -664,8 +667,8 @@ bool UpdateLandmarkDepth(const vector<Eigen::Vector2d>& kp2, const Pose& T21,
     }
     unf.open("depth_uncertainty.csv", ios::app);
     unf << fixed << &lk << " [" << lk.depthRange_[0] << ", "
-        << lk.depthRange_[1] << "] std, depth: " << lk.uncertainty_ << " "
-        << lk.z_ << endl;
+        << lk.depthRange_[1] << "] std, depth: " << lk.invDepthCov_ << " "
+        << lk.invZ_ << endl;
     unf.close();
     return true;
 }
@@ -1218,7 +1221,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
 
         Eigen::Vector3d Pc1_norm = lk1->GetPc();
         Pc1_norm /= Pc1_norm.z();
-        const double z1 = lk1->z_, std = lk1->uncertainty_;
+        const double invZ1 = lk1->invZ_, std1 = sqrt(lk1->invDepthCov_);
 
         for (int j = 0; j < 1; ++j) {
             if (!lk1->Converge() && j != 0) {
@@ -1226,7 +1229,8 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
                 continue;
             }
 
-            const Eigen::Vector3d Pc1 = Pc1_norm * (z1 + j * std);
+            const Eigen::Vector3d Pc1 =
+                Pc1_norm * GetPositiveDepth(invZ1 + j * std1);
             if (Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
                 continue;
             }
@@ -1273,11 +1277,11 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
             //     continue;
             // }
 
-            if (lk2->obvTime_ > 0 && Pc2.z() < lk2->z_) {
+            if (lk2->obvTime_ > 0 && Pc2.z() < GetPositiveDepth(lk2->invZ_)) {
                 // 使用较近的点替代
-                lk2->z_ = Pc2.z();
+                lk2->invZ_ = 1.0 / Pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+                lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
                 lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
                 // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
                 lk2->obvTime_ = lk1->obvTime_;
@@ -1285,9 +1289,9 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
                 lk2->initFromPropagate_ = true;
 
             } else if (lk2->obvTime_ == 0) {
-                lk2->z_ = Pc2.z();
+                lk2->invZ_ = 1.0 / Pc2.z();
                 // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+                lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
                 lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
                 // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
                 lk2->obvTime_ = lk1->obvTime_;
@@ -1340,6 +1344,10 @@ double CalculatePatchSSD(const KeyFrame* kf1, const KeyFrame* kf2,
         }
     }
     return sum / count;
+}
+
+double GetPositiveDepth(const double invZ) {
+    return invZ < 1.0 / config->maxDepth ? 1.0 / config->maxDepth : 1.0 / invZ;
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,

@@ -298,6 +298,8 @@ char DrawPerpendicularAndParallelDirectionOFedge(const cv::Mat& edgeImg,
                                                  const cv::Mat& dxImg,
                                                  const cv::Mat& dyImg);
 
+double GetPositiveDepth(const double invZ);
+
 enum KeyboardEvent { Reset, StepByStep };
 
 class InteractionParam {

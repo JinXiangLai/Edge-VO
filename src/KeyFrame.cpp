@@ -484,7 +484,7 @@ size_t KeyFrame::InitializeLandmark() {
                 landmark_[i] =
                     new Landmark(unPx_[0][i], this, cam_, descriptor, d);
                 landmark_[i]->target_.insert({this, unPx_[0][i]});
-                landmark_[i]->depthCov_ = 0.005;
+                landmark_[i]->invDepthCov_ = 0.005;
                 landmark_[i]->obvTime_ = 1e3;
                 landmark_[i]->UpdateUncertainty(true);
             }
@@ -529,23 +529,19 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             const double d =
                 TriangulateDepth(lk1->uv_.cast<double>(),
                                  lk1->matchNextPixel_ + disturb, Tc2c1, *cam_);
-            const double std = abs(d - bestDepth) * 2;
+            //const double std = abs(d - bestDepth) * 2;
+            const double std =
+                abs(1.0 / bestDepth - 1.0 / d);  // 逆深度的不确定度
 
             // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
             //     && std < config->maxObvDepthStd) {
             if (1) {
                 double u2 = bestDepth, cov2 = std * std;  // 考虑基线的影响
-                double u1 = lk1->z_, cov1 = lk1->depthCov_;
-                if (lk1->obvTime_ == 0) {
-                    // 首次初始化
-                    u1 = u2;
-                    cov1 = cov2;
-                }
-                lk1->z_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-                const double newCov = (cov1 * cov2) / (cov1 + cov2);
-                lk1->depthCov_ = min(lk1->depthCov_, newCov);
-                //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
-                //     << " " << landmark.z_ << endl;
+                double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_;
+                lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
+                lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
+                cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
+                     << " " << u1 << endl;
                 lk1->UpdateUncertainty(true);
 
                 {
@@ -560,7 +556,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                     unf.open("depth_uncertainty_new.csv", ios::app);
                     // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
                     if (i % 1000 == 0)
-                        unf << lk1->uncertainty_ << " " << lk1->z_ << endl;
+                        unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
                     unf.close();
                 }
 
@@ -570,10 +566,11 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        double bestDepth, std;
+        double bestInvDepth, std;
         Eigen::Vector2d bestPx2;
+        // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestDepth, std, bestPx2);
+            &kf2, lk1, bestInvDepth, std, bestPx2);
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
@@ -597,7 +594,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             }
         }
 
-        constexpr double varianceExpand[2] = {1, 1};  // {1.01, 1.1};
+        constexpr double varianceExpand[2] = {1.01, 1.01};  // {1.01, 1.1};
 
         // 深度量测更新
         if (error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
@@ -605,53 +602,45 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         } else if (error == EpipolarMatchType::repeatTextureORbadDepth) {
             ++lk1->failObvTime_;
-            lk1->depthCov_ *= varianceExpand[1];
+            lk1->invDepthCov_ *= varianceExpand[1];
             lk1->UpdateUncertainty(false);
             continue;
 
         } else if (error == EpipolarMatchType::occulsionORnoBestMatch) {
-            lk1->depthCov_ *= varianceExpand[0];
+            lk1->invDepthCov_ *= varianceExpand[0];
             lk1->UpdateUncertainty(false);
             continue;
 
         } else if (std > config->maxObvDepthStd ||
                    std < config->minObvDepthStd) {
             // 深度标准差异常
-            lk1->depthCov_ *= varianceExpand[0];
+            lk1->invDepthCov_ *= varianceExpand[0];
             lk1->UpdateUncertainty(false);
         } else {
-            const double diff = lk1->z_ - bestDepth;
-            if (diff * diff > std * std + lk1->depthCov_) {
-                lk1->depthCov_ *= varianceExpand[1];
-                lk1->UpdateUncertainty(false);
-                continue;
-            }
+            //const double diff = lk1->z_ - bestDepth;
+            //if (diff * diff > std * std + lk1->depthCov_) {
+            //    lk1->depthCov_ *= varianceExpand[1];
+            //    lk1->UpdateUncertainty(false);
+            //    continue;
+            //}
 
-            if (!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
-                lk1->depthCov_ *= varianceExpand[0];
-                lk1->UpdateUncertainty(false);
-                continue;
-            }
+            //if (!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
+            //    lk1->depthCov_ *= varianceExpand[0];
+            //    lk1->UpdateUncertainty(false);
+            //    continue;
+            //}
 
-            double u2 = bestDepth, cov2 = std * std;  // 考虑基线的影响
-            double u1 = lk1->z_, cov1 = lk1->depthCov_ * varianceExpand[0];
-            if (lk1->obvTime_ == 0) {
-                // 首次初始化
-                u1 = u2;
-                cov1 = cov2;
-            }
+            double u2 = bestInvDepth, cov2 = std * std;  // 考虑基线的影响
+            double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_ * varianceExpand[0];
 
-            lk1->z_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-            const double newCov = (cov1 * cov2) / (cov1 + cov2);
-            lk1->depthCov_ = min(lk1->depthCov_, newCov);
-            //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
-            //     << " " << landmark.z_ << endl;
+            lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
+            lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
             lk1->UpdateUncertainty(true);
             ++findMatchNum;
         }
 
         // 三角化后的深度异常值过大
-        if (lk1->uncertainty_ > config->maxObvDepthStd) {
+        if (lk1->invDepthCov_ > config->maxObvDepthStd) {
             lk1->SetOutOfRange();
         }
 
@@ -666,7 +655,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
         unf.open("depth_uncertainty.csv", ios::app);
         // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
         if (i % 1000 == 0)
-            unf << lk1->uncertainty_ << " " << lk1->z_ << endl;
+            unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
         unf.close();
     }
 
@@ -893,7 +882,7 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
             // 投影点误差大的就给它重置
             // lk1->depthCov_ = pow(config->maxDepth, 2);
             ++lk1->checkTime_;
-            lk1->depthCov_ *=
+            lk1->invDepthCov_ *=
                 1.2;  // sqrt(dist)*sqrt(dist) pow(1.1, int(dist));
             isBad = true;
         }
@@ -917,7 +906,7 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 }
 
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
-    const KeyFrame* kf2, Landmark* lk1, double& bestDepth, double& std,
+    const KeyFrame* kf2, Landmark* lk1, double& bestInvDepth, double& std,
     Eigen::Vector2d& bestPx2) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
@@ -943,7 +932,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     ep1.normalize();
 
     const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
-    const double depthScale = priorPc2.z() / lk1->z_;
+    const double depthScale = priorPc2.z() * lk1->invZ_;
     if (!(depthScale > 0.7f && depthScale < 1.4f)) {
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
@@ -959,8 +948,9 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
-    double maxZ1 = lk1->z_ + 2 * lk1->uncertainty_;
-    double minZ1 = max(0.1, lk1->z_ - 2 * lk1->uncertainty_);
+    const double stddev = sqrt(lk1->invDepthCov_);
+    double maxZ1 = GetPositiveDepth(lk1->invZ_ - 3.0 * stddev);
+    double minZ1 = max(0.1, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_, maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_, minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;
@@ -1153,8 +1143,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         // 对于深度小于0.5米的，结果是 d: [0.829857 0.203911 0.78017] 深度比例也差很大
         const double ratio1 = dm1 > d1 ? (dm1 - d1) / dm1 : (d1 - dm1) / d1;
         const double ratio2 = dp1 > d1 ? (dp1 - d1) / dp1 : (d1 - dp1) / d1;
-        const double uncertainty1 = dm1 > d1 ? (dm1 - d1) : (d1 - dm1);
-        const double uncertainty2 = dp1 > d1 ? (dp1 - d1) : (d1 - dp1);
+        const double uncertainty1 = abs(1.0 / dm1 - 1.0 / d1);
+        const double uncertainty2 = abs(1.0 / dp1 - 1.0 / d1);
         const double maxUncertainty = 1e9;  // 0.5
         if (ratio1 > 0.6 || ratio2 > 0.6 || uncertainty1 > maxUncertainty ||
             uncertainty2 > maxUncertainty) {
@@ -1183,7 +1173,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
             }
         }
 
-        bestDepth = d1;
+        bestInvDepth = 1.0 / d1;
         std = max(uncertainty1, uncertainty2);  // 考虑像素测量误差
         bestPx2 = bestP2;
 
@@ -1304,6 +1294,7 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
+/*
     if (config->useDepthImage) {
         return;
     }
@@ -1393,4 +1384,5 @@ void KeyFrame::FuseDepth() {
             lk1->UpdateUncertainty(false);
         }
     }
+*/
 }

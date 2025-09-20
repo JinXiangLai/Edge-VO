@@ -24,31 +24,18 @@ class Landmark {
     int Size() const;  // 优化变量的维度
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty(const bool updateObv = false);
-    bool Converge() const {
-        // 这个标准差是很不准的，所以不能用其判断
-        // return uncertainty_ < config->maxDepthConvergeStd &&
-        //     z_ > config->minDepth && z_ < config->maxDepth;
-        // TODO：考虑把后续找不到匹配的深度估计值剔除才能最终实现一个基础版
-        // OK，那些<0.5m深度的点，可以在一次观测收敛，但是被观测次数确实很少的，据此可以剔除
-        return uncertainty_ < config->maxDepthConvergeStd && !outOfRange_ &&
-               obvTime_ > config->minObvTime && z_ > config->minDepth &&
-               z_ < config->maxDepth;
-        ;
-        // return initFromPropagate_;
-    }
+    bool Converge() const;
     bool ManySupport() const;
 
-    void SetOutOfRange() { outOfRange_ = true; }
+    void SetOutOfRange() {  //outOfRange_ = true;
+    }
     bool IsOutOfRange() const { return outOfRange_; }
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame& kf2);
 
-    double z_ = 1.0;
-    double depthCov_ = 1e10;
     double invZ_ = 1.0;
-    double invDepthCov_ = 1e-10;
+    double invDepthCov_ = 10.0 * 10.0;
 
     double depthRange_[2] = {0, 0};
-    double uncertainty_ = 0;
     uint64_t descriptor_ = 0;
     // TODO: 结合光度残差分布给定优化的权重值
     int obvTime_ = 0;      // 路标点被看的次数可以反映其可信度

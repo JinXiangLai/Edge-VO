@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
              << "FuseDepth spend: " << chrono::duration<double>(t9 - t8).count()
              << "s" << endl
              << "AddOneKeyFeame transform spend: "
-             << chrono::duration<double>(t11 - t10).count() << "s" << endl;
+             << chrono::duration<double>(t11 - t10).count() << "s\n\n" << endl;
 
         while (interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i

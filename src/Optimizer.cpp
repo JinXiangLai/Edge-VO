@@ -101,7 +101,8 @@ Optimizer::ResidualInfo Optimizer::CalculateResidual(
                 info.cost += exp(-kPriorDepthWeight / lk1s[i]->invZ_);
                 continue;
             }
-            info.cost += exp(-kPriorDepthWeight * lk1s[i]->z_);
+            info.cost +=
+                exp(-kPriorDepthWeight * GetPositiveDepth(lk1s[i]->invZ_));
         }
     }
     info.cost /= info.usefulNum;
@@ -246,7 +247,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(
             const int diffItensity =
                 int(p.host_->grayImg_.at<uchar>(p.uv_.y(), p.uv_.x()) -
                     grayImg_.at<uchar>(px2.y() * ratio, px2.x() * ratio));
-            double w = 1.0 / lk1s[i]->depthCov_;  // / p.depthCov_;
+            double w = 1.0 / lk1s[i]->invDepthCov_;  // / p.depthCov_;
             if (abs(diffItensity) > 10) {
                 w = 10.0 / abs(diffItensity);
             }
@@ -296,8 +297,9 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(
                 B << kPriorDepthWeight / pow(lk1s[i]->invZ_, 2) *
                          exp(-kPriorDepthWeight / lk1s[i]->invZ_);
             } else {
-                r = exp(-kPriorDepthWeight * lk1s[i]->z_);
-                B << -kPriorDepthWeight * exp(-kPriorDepthWeight * lk1s[i]->z_);
+                r = exp(-kPriorDepthWeight * GetPositiveDepth(lk1s[i]->invZ_));
+                B << -kPriorDepthWeight * exp(-kPriorDepthWeight *
+                                              GetPositiveDepth(lk1s[i]->invZ_));
             }
             // 先验z为正的信息，最终还是叠加到了H矩阵和g向量!!!
             H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B;
@@ -809,7 +811,7 @@ int Optimizer::TransferLandmarkOwnership() {
                     // 可以转移landmark控制权，更新量测、深度及不确定度
                     p->host_ = kf;
                     p->uv_ = p->target_[kf];
-                    p->z_ = pc2.z();
+                    p->invZ_ = 1.0 / pc2.z();
                     p->UpdateUncertainty(false);
                     ++transformNum;
                     break;  // 需要及时撤出哦
@@ -878,8 +880,8 @@ void Optimizer::RemoveOldestKeyFrame() {
                         Landmark* lk = kf2->landmark_[kf2->pointMapId_[id]];
 #endif
                         // TODO: 使用融合而非替代
-                        lk->z_ = 0.7 * lk->z_ + 0.3 * pc2.z();
-                        lk->depthCov_ = p->depthCov_ * 4;
+                        lk->invZ_ = 0.7 * lk->invZ_ + 0.3 * 1.0 / pc2.z();
+                        lk->invDepthCov_ = p->invDepthCov_ * 4;
                         lk->UpdateUncertainty(false);
                         ++count[i];
                     }

@@ -68,8 +68,8 @@ minDepthCompareRatio: 0.7
 maxDepthCompareRatio: 1.4
 pyrLevel: 2
 # 任何标准差在这范围之外的，都是不正常的
-maxObvDepthStd: 2.0 # 2.0
-minObvDepthStd: 0.1 # 0.1
+maxObvDepthStd: 10000.0 # 2.0
+minObvDepthStd: 0.000000001 # 0.1
 minObvTime: 3
 
 
@@ -96,6 +96,6 @@ drawAllEpipolarMatch: false
 drawEpipolarMatchStartCol: 300
 maxFailObvTimeBeforeCreateDepth: 10
 
-useDepthImage: false # 验证位姿估计算法
+useDepthImage: true # 验证位姿估计算法
 depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
 initWithTrueDepth: false
