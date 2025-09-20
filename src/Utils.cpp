@@ -1347,7 +1347,7 @@ double CalculatePatchSSD(const KeyFrame* kf1, const KeyFrame* kf2,
 }
 
 double GetPositiveDepth(const double invZ) {
-    return invZ < 1.0 / config->maxDepth ? 1.0 / config->maxDepth : 1.0 / invZ;
+    return invZ < 1e-9 ? 100.0 : 1.0 / invZ;
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,

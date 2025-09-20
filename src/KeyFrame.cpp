@@ -495,6 +495,7 @@ size_t KeyFrame::InitializeLandmark() {
 }
 
 double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
+
     double matchEdgeNum = 0;
     convergeEdgeNum_ = 0;  // 重新统计当前KF的收敛边缘点集
     int findMatchNum = 0;
@@ -523,7 +524,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
             const double bestDepth = TriangulateDepth(
                 lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1, *cam_);
-            Eigen::Vector2d disturb{2.0, 2.0};
+            Eigen::Vector2d disturb{2.0, 5.0};
             // TODO: 不确定度的设计非常重要！！！关乎数学模型的正确性
             // 同时，需要完善Keyframe的管理，后面有时间再搞
             const double d =
@@ -532,16 +533,20 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             //const double std = abs(d - bestDepth) * 2;
             const double std =
                 abs(1.0 / bestDepth - 1.0 / d);  // 逆深度的不确定度
+            if (i % 1000 == 0)
+                cout << "0th invz: " << lk1->invZ_
+                     << ", cov: " << lk1->invDepthCov_
+                     << ", bestInvDepth: " << 1.0 / bestDepth
+                     << ", std: " << std << endl;
 
             // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
             //     && std < config->maxObvDepthStd) {
             if (1) {
-                double u2 = bestDepth, cov2 = std * std;  // 考虑基线的影响
+                double u2 = 1.0 / bestDepth,
+                       cov2 = std * std;  // 考虑基线的影响
                 double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_;
                 lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
                 lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
-                cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
-                     << " " << u1 << endl;
                 lk1->UpdateUncertainty(true);
 
                 {
@@ -566,11 +571,21 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        double bestInvDepth, std;
+        double bestInvDepth = -1, std = -1;
         Eigen::Vector2d bestPx2;
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
             &kf2, lk1, bestInvDepth, std, bestPx2);
+        if (bestInvDepth < 0 || std < 0) {
+            // 深度异常
+            cout << "error: " << error;
+            ++lk1->failObvTime_;
+            continue;
+        }
+        if (i % 1000 == 0)
+            cout << "1th invz: " << lk1->invZ_ << ", cov: " << lk1->invDepthCov_
+                 << ", bestInvDepth: " << bestInvDepth << ", std: " << std
+                 << endl;
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
@@ -631,7 +646,8 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             //}
 
             double u2 = bestInvDepth, cov2 = std * std;  // 考虑基线的影响
-            double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_ * varianceExpand[0];
+            double u1 = lk1->invZ_,
+                   cov1 = lk1->invDepthCov_ * varianceExpand[0];
 
             lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
             lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
@@ -949,8 +965,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
     const double stddev = sqrt(lk1->invDepthCov_);
-    double maxZ1 = GetPositiveDepth(lk1->invZ_ - 3.0 * stddev);
-    double minZ1 = max(0.1, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
+    double maxZ1 = min(100.0, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
+    double minZ1 = max(0.1, GetPositiveDepth(lk1->invZ_ + 3.0 * stddev));
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_, maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_, minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;
@@ -1294,7 +1310,7 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
-/*
+    /*
     if (config->useDepthImage) {
         return;
     }

@@ -13,7 +13,7 @@ Landmark::Landmark(const Eigen::Vector2i& px, KeyFrame* host,
                    const shared_ptr<Camera> cam, const uint64_t desc,
                    const double z)
     : invZ_(1.0 / z), descriptor_(desc), host_(host), uv_(px), cam_(cam) {
-    invDepthCov_ = std::pow(1. / config->maxDepth, 2);
+    //invDepthCov_ = std::pow(1. / config->maxDepth, 2);
     depthRange_[0] = config->minDepth;
     depthRange_[1] = config->maxDepth;
 }
