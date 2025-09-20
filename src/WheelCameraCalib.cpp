@@ -2,7 +2,9 @@
 
 using namespace std;
 
-WheelCameraCalib::WheelCameraCalib(const vector<double> &Qcg, const vector<double> &Pcg, const double radius) {
+WheelCameraCalib::WheelCameraCalib(const vector<double>& Qcg,
+                                   const vector<double>& Pcg,
+                                   const double radius) {
     Eigen::Quaterniond q_cg(Qcg[3], Qcg[0], Qcg[1], Qcg[2]);
     q_cg.normalize();
     Eigen::Vector3d t_cg_(Pcg[0], Pcg[1], Pcg[2]);

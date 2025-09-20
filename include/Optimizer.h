@@ -5,38 +5,48 @@
 #include <vector>
 
 #include "Config.h"
+#include "KeyFrame.h"
 #include "Landmark.h"
 #include "Pose.h"
-#include "KeyFrame.h"
 
 class Optimizer {
-public:
+   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Optimizer(const std::vector<cv::Mat> &dist, const std::vector<cv::Mat> &dx, const std::vector<cv::Mat> &dy, 
-        std::shared_ptr<Camera> cam, const double lambda = 1.0, const int maxIte = 100, const bool useInvDepth = false, 
-        const bool onlyPoseUpdate = false);
+    Optimizer(const std::vector<cv::Mat>& dist, const std::vector<cv::Mat>& dx,
+              const std::vector<cv::Mat>& dy, std::shared_ptr<Camera> cam,
+              const double lambda = 1.0, const int maxIte = 100,
+              const bool useInvDepth = false,
+              const bool onlyPoseUpdate = false);
 
-    Optimizer(std::shared_ptr<Camera> cam, const double lambda = 1.0, const int maxIte = 100, const bool useInvDepth = false, 
-        const bool onlyPoseUpdate = false);
+    Optimizer(std::shared_ptr<Camera> cam, const double lambda = 1.0,
+              const int maxIte = 100, const bool useInvDepth = false,
+              const bool onlyPoseUpdate = false);
 
     ~Optimizer();
 
-    struct ResidualInfo{
+    struct ResidualInfo {
         double cost = 0;
         int usefulNum = 0;
     };
-    
-    bool Optimize(std::vector<Landmark*> &lk1s, std::vector<Pose> &T12);
 
-    ResidualInfo CalculateResidual(const std::vector<Landmark*> &lk1s, const std::vector<Pose> &T12, const bool allowSetLandmark = false,
-        const int lvl = 0);
+    bool Optimize(std::vector<Landmark*>& lk1s, std::vector<Pose>& T12);
 
-    ResidualInfo CalculateJacobianAndCost(std::vector<Landmark* > &lk1s, const std::vector<Pose> &T12, 
-        Eigen::MatrixXd &H, Eigen::VectorXd &g, const int lvl);
+    ResidualInfo CalculateResidual(const std::vector<Landmark*>& lk1s,
+                                   const std::vector<Pose>& T12,
+                                   const bool allowSetLandmark = false,
+                                   const int lvl = 0);
 
-    Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd &H, const Eigen::VectorXd &b, const int poseNum, const int pointNum, 
-        const int poseDim = 6, const int pointDim = 1);
+    ResidualInfo CalculateJacobianAndCost(std::vector<Landmark*>& lk1s,
+                                          const std::vector<Pose>& T12,
+                                          Eigen::MatrixXd& H,
+                                          Eigen::VectorXd& g, const int lvl);
+
+    Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
+                                       const Eigen::VectorXd& b,
+                                       const int poseNum, const int pointNum,
+                                       const int poseDim = 6,
+                                       const int pointDim = 1);
 
     // TODO： 先不考虑边缘化，而是直接丢弃首帧
     void MarginalizeOldestKeyFrame();
@@ -45,17 +55,19 @@ public:
 
     void ShowLocalMap();
 
-    void AddOneKeyFeame(KeyFrame *kf);
+    void AddOneKeyFeame(KeyFrame* kf);
 
     ResidualInfo ConstructJ_H_b_g();
 
     double ConstructJ_H_b_g_byMatch();
 
-    KeyFrame* GetLastKF() {return window_.back();}
+    KeyFrame* GetLastKF() { return window_.back(); }
 
     bool ExecuteLMoptimize();
 
-    ResidualInfo CalculateResidual(const std::vector<Landmark*> &optLandmark, const std::vector<KeyFrame*> &win, const bool allowSetLandmark = false);
+    ResidualInfo CalculateResidual(const std::vector<Landmark*>& optLandmark,
+                                   const std::vector<KeyFrame*>& win,
+                                   const bool allowSetLandmark = false);
 
     bool SlidingWindowOptimize();
 
@@ -63,7 +75,8 @@ public:
 
     // rho[0]经胡伯核的损失函数值，rho[1]胡伯核关于chi2的一阶导数
     // 注意：胡伯核函数只能处理标量
-    double HuberLoss(const double chi2, Eigen::Vector2d &rho, const int lvl = 0);
+    double HuberLoss(const double chi2, Eigen::Vector2d& rho,
+                     const int lvl = 0);
 
     int SelectOneKF2Marginalization();
 
@@ -71,32 +84,32 @@ public:
 
     int TransferLandmarkOwnership();
 
-    void UpdatePriorConstraint(Eigen::VectorXd &delta_x) {
+    void UpdatePriorConstraint(Eigen::VectorXd& delta_x) {
         g_p_.noalias() += Hp_ * delta_x;
     }
 
-    void ConstructRelativePoseConstraint(Eigen::MatrixXd &H, Eigen::VectorXd &g);
+    void ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
+                                         Eigen::VectorXd& g);
 
-    bool TrackLocalMap(KeyFrame *kf2, bool &needNewKFbySight);
+    bool TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight);
 
-    double TransformDepthMap2CurrentFrame(KeyFrame *kf2);
+    double TransformDepthMap2CurrentFrame(KeyFrame* kf2);
 
-    void SetInitLambda(const double lambda) {
-        lambda_ = lambda;
-    }
+    void SetInitLambda(const double lambda) { lambda_ = lambda; }
 
-    void CullingErrorLandmark(KeyFrame *curF=nullptr);
+    void CullingErrorLandmark(KeyFrame* curF = nullptr);
 
     void UpdateDepthInWindow() {
         // 使用之前的KF对新的KF进行深度滤波
-        for(int i = 0; i < int(window_.size() ) - 1; ++i) {
+        for (int i = 0; i < int(window_.size()) - 1; ++i) {
             window_.back()->UpdateDepth(*window_[i]);
         }
     }
 
-    void AssignTrackedFeature(const std::vector<Landmark*> &lk1s, const Pose &T12, const int lvl = 0);
+    void AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
+                              const Pose& T12, const int lvl = 0);
 
-private:
+   private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小
     double lambda_ = 1.0;
@@ -105,18 +118,19 @@ private:
     cv::Mat grayImg_;
     int maxIte_ = 100;
     bool useInvDepth_ = false;
-    bool onlyPoseUpdate_ = false; 
+    bool onlyPoseUpdate_ = false;
     std::shared_ptr<Camera> cam_;
 
-public:
+   public:
     // edge slam使用
     // 关键帧滑窗优化使用
     std::vector<KeyFrame*> window_;
     std::vector<KeyFrame*> historicalKF_;
-    Pose *margTwc_ = nullptr;
-    std::vector<Landmark*> optLandmark_; // 投影到最新帧能被观测到的才加入，以减小问题规模
-    Eigen::MatrixXd J_, H_, Hp_; // J_的行维度无法预知
-    Eigen::VectorXd g_, g_p_; // b_，残差的行维度一般是无法提前预知的
+    Pose* margTwc_ = nullptr;
+    std::vector<Landmark*>
+        optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
+    Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法预知
+    Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
 };
 
 #endif

@@ -2,10 +2,10 @@
 
 using namespace std;
 
-Config::Config(const std::string &yamlFilePath) {
+Config::Config(const std::string& yamlFilePath) {
 
     YAML::Node f = YAML::LoadFile(yamlFilePath);
-    if(f.IsNull()) {
+    if (f.IsNull()) {
         cerr << "Load yaml file at: {" << yamlFilePath << "} Error!" << endl;
         exit(-1);
     }
@@ -24,8 +24,9 @@ Config::Config(const std::string &yamlFilePath) {
     minDepth = f["minDepth"].as<double>();
     minGoodTriangulateAngle = f["minGoodTriangulateAngle"].as<double>();
     maxGoodTriangulateAngle = f["maxGoodTriangulateAngle"].as<double>();
-    
-    maxDescriptorDist = f["maxDescriptorDist"].as<double>(); // 可能和int类型比较哦
+
+    maxDescriptorDist =
+        f["maxDescriptorDist"].as<double>();  // 可能和int类型比较哦
     goodDescriptorDistRatio = f["goodDescriptorDistRatio"].as<double>();
     goodDescriptorDist = maxDescriptorDist * goodDescriptorDistRatio;
 
@@ -41,7 +42,7 @@ Config::Config(const std::string &yamlFilePath) {
     keepLastKFnumInWindow = f["keepLastKFnumInWindow"].as<int>();
     maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
     imgTimeOffset = f["imgTimeOffset"].as<double>();
-    
+
     needNewKFtrans = f["needNewKFtrans"].as<double>();
     needNewKFrot = f["needNewKFrot"].as<double>();
     needNewKFMaxMatchEdgeRatio = f["needNewKFMaxMatchEdgeRatio"].as<double>();
@@ -51,7 +52,8 @@ Config::Config(const std::string &yamlFilePath) {
     maxIteration = f["maxIteration"].as<int>();
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
-    relativePoseConstraintWeight = f["relativePoseConstraintWeight"].as<double>();
+    relativePoseConstraintWeight =
+        f["relativePoseConstraintWeight"].as<double>();
 
     model = f["Camera.model"].as<string>();
     maxKeepEpilorMatchPointNum = f["maxKeepEpilorMatchPointNum"].as<int>();
@@ -82,11 +84,12 @@ Config::Config(const std::string &yamlFilePath) {
     minObvDepthStd = f["minObvDepthStd"].as<double>();
     minObvTime = f["minObvTime"].as<int>();
     maxDTdistOFkeyPoint = f["maxDTdistOFkeyPoint"].as<double>();
-    maxFailObvTimeBeforeCreateDepth = f["maxFailObvTimeBeforeCreateDepth"].as<int>();
+    maxFailObvTimeBeforeCreateDepth =
+        f["maxFailObvTimeBeforeCreateDepth"].as<int>();
     minGradientOFkeyPoint = f["minGradientOFkeyPoint"].as<double>();
     useDepthImage = f["useDepthImage"].as<bool>();
     depthFactor = f["depthFactor"].as<double>();
     initWithTrueDepth = f["initWithTrueDepth"].as<bool>();
 }
 
-Config *config = nullptr;
+Config* config = nullptr;

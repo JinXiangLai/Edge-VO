@@ -4,15 +4,15 @@
 #include <memory>
 
 #include "Camera.h"
-#include "Pose.h"
 #include "Landmark.h"
+#include "Pose.h"
 
 #define USE_POINT_MAP_ID 0
 
 class Landmark;
 
 struct TupleHash {
-    size_t operator()(const Eigen::Vector2i &v) const{
+    size_t operator()(const Eigen::Vector2i& v) const {
         const int v1 = v[0];
         const int v2 = v[1];
         return (v1 << 1) + (v2 >> 1);
@@ -20,43 +20,54 @@ struct TupleHash {
 };
 
 namespace EpipolarMatchType {
-    constexpr float outOFboundaryORabnormalDepth = -1;
-    constexpr float repeatTextureORbadDepth = -2;
-    constexpr float occulsionORnoBestMatch = -3;
-    constexpr float nanValueNOstereoVisionIssue = -4;
-}
+constexpr float outOFboundaryORabnormalDepth = -1;
+constexpr float repeatTextureORbadDepth = -2;
+constexpr float occulsionORnoBestMatch = -3;
+constexpr float nanValueNOstereoVisionIssue = -4;
+}  // namespace EpipolarMatchType
 
 class KeyFrame {
-public:
+   public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    KeyFrame(const cv::Mat &img, const Pose &Twc, std::shared_ptr<Camera> cam, const int id, const int level = 1);
+    KeyFrame(const cv::Mat& img, const Pose& Twc, std::shared_ptr<Camera> cam,
+             const int id, const int level = 1);
     ~KeyFrame();
-    KeyFrame(){}
-    KeyFrame(const KeyFrame &f);
-    void operator =(const KeyFrame &f);
+    KeyFrame() {}
+    KeyFrame(const KeyFrame& f);
+    void operator=(const KeyFrame& f);
 
     // 可能需要corase2fine的配准
     void CannyEdgeDetect();
     void ExtractEdge();
     void GenerateDTandDerivative();
-    size_t GenerateLandmark(KeyFrame &kf1, std::vector<std::vector<Eigen::Vector2d> > &debugGoodKp1, 
-        std::vector<std::vector<Eigen::Vector2d> >&debugGoodKp2, const int equalparts);
+    size_t GenerateLandmark(
+        KeyFrame& kf1, std::vector<std::vector<Eigen::Vector2d> >& debugGoodKp1,
+        std::vector<std::vector<Eigen::Vector2d> >& debugGoodKp2,
+        const int equalparts);
     size_t InitializeLandmark();
-    int ReuseLandmark(KeyFrame *kf1);
-    double UpdateDepth(const KeyFrame &kf2);
-    void SetOutOfRange() {outOfRange_ = true;}
-    bool IsOutOfRange() const {return outOfRange_;}
-    void Update(const Eigen::Vector3d &delta_q, const Eigen::Vector3d &delta_t);
-    void SetTwc(const Pose &Twc);
-    int TrackLandmarkByEpilorLine(const KeyFrame &kf1);
-    double CullingBadDepth(KeyFrame *kf2);
-    double CalculateSSD(double *v1, double *v2, double avg1, double avg2, const int desLen);
-    std::vector<double> CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2d &px, const Eigen::Vector2d &epNorm, const int len=5);
+    int ReuseLandmark(KeyFrame* kf1);
+    double UpdateDepth(const KeyFrame& kf2);
+    void SetOutOfRange() { outOfRange_ = true; }
+    bool IsOutOfRange() const { return outOfRange_; }
+    void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
+    void SetTwc(const Pose& Twc);
+    int TrackLandmarkByEpilorLine(const KeyFrame& kf1);
+    double CullingBadDepth(KeyFrame* kf2);
+    double CalculateSSD(double* v1, double* v2, double avg1, double avg2,
+                        const int desLen);
+    std::vector<double> CalculateDescriptor(const cv::Mat& grayImg,
+                                            const Eigen::Vector2d& px,
+                                            const Eigen::Vector2d& epNorm,
+                                            const int len = 5);
     void ReleaseMat();
     void FuseDepth();
-    bool MoveNearPx2IntoBoundary(Eigen::Vector2d &pClose, const Eigen::Vector2d &ep2, const Eigen::Vector2d &pFar);
+    bool MoveNearPx2IntoBoundary(Eigen::Vector2d& pClose,
+                                 const Eigen::Vector2d& ep2,
+                                 const Eigen::Vector2d& pFar);
 
-    double FindMatchesWithEpipolarConstraintOnImagePlane(const KeyFrame* kf2, Landmark* lk1, double &bestDepth, double &std, Eigen::Vector2d &bestPx2);
+    double FindMatchesWithEpipolarConstraintOnImagePlane(
+        const KeyFrame* kf2, Landmark* lk1, double& bestDepth, double& std,
+        Eigen::Vector2d& bestPx2);
 
     void GenerateKeyPoint();
 
@@ -71,16 +82,18 @@ public:
     Pose Tcw_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<std::vector<Eigen::Vector2i> > unPx_; // 像素平面上的去畸变点
-    std::vector<Landmark* > landmark_; // 成员变量内存在指针，需要手写拷贝构造函数
+    std::vector<std::vector<Eigen::Vector2i> > unPx_;  // 像素平面上的去畸变点
+    std::vector<Landmark*>
+        landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
     // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
-    std::vector<uint64_t> descriptor_; 
+    std::vector<uint64_t> descriptor_;
     static constexpr int descDim = 63;
 
 #if USE_POINT_MAP_ID
-    std::unordered_map<Eigen::Vector2i, int, TupleHash> pointMapId_; // 像素坐标与vector索引的映射
+    std::unordered_map<Eigen::Vector2i, int, TupleHash>
+        pointMapId_;  // 像素坐标与vector索引的映射
 #else
-    std::unordered_map<int, int> pointMapId_; // key: y*width + x
+    std::unordered_map<int, int> pointMapId_;  // key: y*width + x
 #endif
 
     bool outOfRange_ = false;

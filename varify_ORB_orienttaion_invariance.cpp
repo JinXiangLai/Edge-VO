@@ -21,8 +21,8 @@ constexpr double kDeg2Rad = 180 * M_1_PI;
 * step2: 利用R’旋转图像，并计算最终旋转后的描述子
 *****************************************************************/
 
-int main(int argc, char **argv) {
-    if(argc !=2) {
+int main(int argc, char** argv) {
+    if (argc != 2) {
         cerr << "Usage: ./orb ang(deg)" << endl;
         exit(-1);
     }
@@ -33,27 +33,28 @@ int main(int argc, char **argv) {
     //Mat invR = R.inv();
 
     const int imgCol = 10, imgRow = 10;
-    const int halfCol = imgCol/2, halfRow = imgRow/2;
+    const int halfCol = imgCol / 2, halfRow = imgRow / 2;
     Mat img(imgRow, imgCol, CV_32F);
-    for(int i = 0; i < imgRow; ++i) {
-        for(int j = 0; j < imgCol; ++j) {
-            img.at<float>(i, j) = i * imgRow + j/2;
+    for (int i = 0; i < imgRow; ++i) {
+        for (int j = 0; j < imgCol; ++j) {
+            img.at<float>(i, j) = i * imgRow + j / 2;
         }
     }
     cout << setprecision(1) << "img:\n" << img << endl;
 
     Mat img2(imgRow, imgCol, CV_32F, 0.);
-    for(int x = 0; x < imgCol; ++x) {
-        for(int y = 0; y < imgRow; ++y) {
-            Point2i p(x-halfCol, y-halfRow);
-            Point2i p2(ca*p.x-sa*p.y + halfCol, sa*p.x+ca*p.y+halfRow);
+    for (int x = 0; x < imgCol; ++x) {
+        for (int y = 0; y < imgRow; ++y) {
+            Point2i p(x - halfCol, y - halfRow);
+            Point2i p2(ca * p.x - sa * p.y + halfCol,
+                       sa * p.x + ca * p.y + halfRow);
             p.x += halfCol;
             p.y += halfRow;
             // Point2i 类型索引为{x, y}
             // 旋转后的图像 = 旋转前图像对应坐标的像素
             //cout << "p1: {" << p.x << ", " << p.y << "}" << endl;
             //cout << "p2: {" << p2.x << ", " << p2.y << "}" << endl;
-            if(p2.x>=0 && p2.x<imgCol && p2.y>=0 && p2.y<imgRow) {
+            if (p2.x >= 0 && p2.x < imgCol && p2.y >= 0 && p2.y < imgRow) {
                 // 由于整数，所以肯定很多像素无法得到填充
                 img2.at<float>(p2) = img.at<float>(p);
             }
@@ -62,17 +63,18 @@ int main(int argc, char **argv) {
     cout << fixed << setprecision(1) << "img2:\n" << img2 << endl;
 
     Mat img3(imgRow, imgCol, CV_32F, 0.);
-    for(int x = 0; x < imgCol; ++x) {
-        for(int y = 0; y < imgRow; ++y) {
-            Point2i p(x-halfCol, y-halfRow);
-            Point2i p2(ca*p.x+sa*p.y + halfCol, -sa*p.x+ca*p.y+halfRow);
+    for (int x = 0; x < imgCol; ++x) {
+        for (int y = 0; y < imgRow; ++y) {
+            Point2i p(x - halfCol, y - halfRow);
+            Point2i p2(ca * p.x + sa * p.y + halfCol,
+                       -sa * p.x + ca * p.y + halfRow);
             p.x += halfCol;
             p.y += halfRow;
             // Point2i 类型索引为{x, y}
             // 旋转后的图像 = 旋转前图像对应坐标的像素
             //cout << "p1: {" << p.x << ", " << p.y << "}" << endl;
             //cout << "p2: {" << p2.x << ", " << p2.y << "}" << endl;
-            if(p2.x>=0 && p2.x<imgCol && p2.y>=0 && p2.y<imgRow) {
+            if (p2.x >= 0 && p2.x < imgCol && p2.y >= 0 && p2.y < imgRow) {
                 // 由于整数，所以肯定很多像素无法得到填充
                 img3.at<float>(p2) = img2.at<float>(p);
             }
@@ -86,8 +88,8 @@ int main(int argc, char **argv) {
     m.col(1)[1] /= 0;
     cout << "m\n" << m << endl;
     cout << "m.hasNaN(): " << m.hasNaN() << endl;
-    
-    m.col(1)[1] = sqrt(-1);// -0. / 0;
+
+    m.col(1)[1] = sqrt(-1);  // -0. / 0;
     cout << "m\n" << m << endl;
     cout << "m.hasNaN(): " << m.hasNaN() << endl;
     return 0;

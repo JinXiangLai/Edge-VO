@@ -1,24 +1,23 @@
 #ifndef CONFIG
 #define CONFIG
 
-#include <iostream>
 #include <math.h>
+#include <iostream>
 #include <string>
 #include <vector>
 
-
 #include <yaml-cpp/yaml.h>
 
-constexpr double kRad2Deg = 180/M_PI;
-constexpr double kDeg2Rad = M_PI/180;
+constexpr double kRad2Deg = 180 / M_PI;
+constexpr double kDeg2Rad = M_PI / 180;
 constexpr int kDescriptorPatchSize = 9;
-enum MessageLevel {Debug, Info, Error};
+enum MessageLevel { Debug, Info, Error };
 
 class Config {
-public:
+   public:
     // 注意： static, extern都只是声明，要在任何函数外进行定义才行
     // 所以，这里只能使用单例模式创建了
-    Config(const std::string &yamlFilePath);
+    Config(const std::string& yamlFilePath);
 
     std::string dataDir;
     std::vector<double> intrinstic, distortion;
@@ -77,13 +76,10 @@ public:
     bool initWithTrueDepth;
 };
 
-extern Config *config; // 外部可以定义及使用的全局变量，只在main函数初始化一次
+extern Config* config;  // 外部可以定义及使用的全局变量，只在main函数初始化一次
 
 constexpr int FASTpoint[16][2] = {
-    {0, 3}, {1, 3}, {2, 2}, {3, 1},
-    {3, 0}, {3, -1}, {2, -2}, {1, -3},
-    {0, -3}, {-1, -3}, {-2, -2}, {-3, -1},
-    {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}
-};
+    {0, 3},  {1, 3},   {2, 2},   {3, 1},   {3, 0},  {3, -1}, {2, -2}, {1, -3},
+    {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3, 1}, {-2, 2}, {-1, 3}};
 
 #endif

@@ -1,28 +1,29 @@
 #include "Landmark.h"
 
+#include <cstdint>
 #include "Pose.h"
 #include "Utils.h"
-#include <cstdint>
 
 using namespace std;
 using namespace cv;
 
 class KeyFrame;
 
-Landmark::Landmark(const Eigen::Vector2i &px, KeyFrame *host, const shared_ptr<Camera> cam, 
-    const uint64_t desc, const double z)
-    : z_(z)
-    , invZ_(1.0/z)
-    , descriptor_(desc)
-    , host_(host)
-    , uv_(px)
-    , cam_(cam){
-        depthCov_ = std::pow(config->maxDepth, 2);
-        invDepthCov_ = std::pow(1./config->maxDepth, 2);
-        depthRange_[0] = config->minDepth;
-        depthRange_[1] = config->maxDepth;
-        uncertainty_ = config->maxDepth;
-    }
+Landmark::Landmark(const Eigen::Vector2i& px, KeyFrame* host,
+                   const shared_ptr<Camera> cam, const uint64_t desc,
+                   const double z)
+    : z_(z),
+      invZ_(1.0 / z),
+      descriptor_(desc),
+      host_(host),
+      uv_(px),
+      cam_(cam) {
+    depthCov_ = std::pow(config->maxDepth, 2);
+    invDepthCov_ = std::pow(1. / config->maxDepth, 2);
+    depthRange_[0] = config->minDepth;
+    depthRange_[1] = config->maxDepth;
+    uncertainty_ = config->maxDepth;
+}
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
     return cam_->InverseProject(uv_, 1.0);
@@ -36,25 +37,27 @@ Eigen::Vector3d Landmark::GetPw() const {
     return host_->Twc_ * GetPc();
 }
 
-int Landmark::Size() const {return 1;}
+int Landmark::Size() const {
+    return 1;
+}
 
 void Landmark::Update(const double delta_z, const bool useInvDepth) {
     double z = z_;
     double invZ = invZ_;
-    if(useInvDepth) {
+    if (useInvDepth) {
         invZ += delta_z;
-        z = 1/invZ_;
+        z = 1 / invZ_;
     } else {
-        z += delta_z; 
-        invZ = 1/z_;
+        z += delta_z;
+        invZ = 1 / z_;
     }
 
     // 为了保证优化算法的连续性，这里必须要修改
-    if(z > depthRange_[0] && z < depthRange_[1] || 1) {
+    if (z > depthRange_[0] && z < depthRange_[1] || 1) {
         z_ = z;
         invZ_ = invZ;
         // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
-        depthCov_ *= 0.9; 
+        depthCov_ *= 0.9;
         UpdateUncertainty(false);
     }
 }
@@ -64,11 +67,11 @@ void Landmark::UpdateUncertainty(const bool updateObv) {
     invZ_ = 1.0 / z_;
     depthRange_[0] = max(config->minDepth, z_ - 3 * uncertainty_);
     depthRange_[1] = min(config->maxDepth, z_ + 3 * uncertainty_);
-    if(updateObv)
+    if (updateObv)
         ++obvTime_;
 }
 
-vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
+vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame& kf2) {
     // TODO: 考虑不是host帧而是其他观测帧投影呢？
     const Pose T21 = kf2.Tcw_ * host_->Twc_;
     // 需要全局函数作用符"::"以实现类外全局函数的调用
@@ -77,16 +80,16 @@ vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame &kf2) {
 }
 
 void Landmark::ResetFEJ() {
-    J_Pc2_Twc2.clear(); 
-    J_Pc2_Pw.clear(); 
-    J_Pw_z.clear(); 
-    J_Pw_Twc1.clear(); 
-    J_Pc2_T12_.clear(); 
+    J_Pc2_Twc2.clear();
+    J_Pc2_Pw.clear();
+    J_Pw_z.clear();
+    J_Pw_Twc1.clear();
+    J_Pc2_T12_.clear();
     noUsed_ = false;
     matchNextPixel_.setZero();
 }
 
-bool Landmark::ManySupport() const{
+bool Landmark::ManySupport() const {
 
 #if 1
     return initFromPropagate_ || 1;
@@ -95,23 +98,23 @@ bool Landmark::ManySupport() const{
     constexpr int minNearSupport = 5;
     int nearSupport = 0;
     const int x = uv_.x(), y = uv_.y();
-    for(int i = -1; i < 2; ++i) {
-        for(int j = -1; j < 2; ++j) {
-            Eigen::Vector2i px{x+j, y+i};
+    for (int i = -1; i < 2; ++i) {
+        for (int j = -1; j < 2; ++j) {
+            Eigen::Vector2i px{x + j, y + i};
 #if USE_POINT_MAP_ID
-            if(host_->pointMapId_.count(px) ) {
+            if (host_->pointMapId_.count(px)) {
                 const int id = host_->pointMapId_.at(px);
 #else
-            const int id = px.y()*w + px.x();
-            if(host_->pointMapId_.count(id) ) {
+            const int id = px.y() * w + px.x();
+            if (host_->pointMapId_.count(id)) {
                 const int id = host_->pointMapId_.at(id);
 #endif
-                Landmark *lk = host_->landmark_[id];
-                if(lk==nullptr || lk->IsOutOfRange()) {
+                Landmark* lk = host_->landmark_[id];
+                if (lk == nullptr || lk->IsOutOfRange()) {
                     continue;
                 }
                 const double diff = abs(z_ - lk->z_);
-                if(diff < 2*uncertainty_) {
+                if (diff < 2 * uncertainty_) {
                     ++nearSupport;
                 }
             }
@@ -120,5 +123,3 @@ bool Landmark::ManySupport() const{
     return nearSupport > minNearSupport;
 #endif
 }
-
-

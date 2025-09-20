@@ -8,28 +8,26 @@
 #include <set>
 #include <vector>
 
+#include <Eigen/Dense>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/viz.hpp>
-#include <Eigen/Dense>
 
+#include "Camera.h"
 #include "Config.h"
+#include "KeyFrame.h"
+#include "Landmark.h"
 #include "Pose.h"
 #include "WheelCameraCalib.h"
-#include "Camera.h"
-#include "Landmark.h"
-#include "KeyFrame.h"
 
 #define USE_SSD
-#define Undistort // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
+#define Undistort  // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
 class KeyFrame;
 class Landmark;
 
-enum COLOR {
-    red, orange, yellow, green, blue, purple, pink
-};
+enum COLOR { red, orange, yellow, green, blue, purple, pink };
 
 extern std::map<int, cv::Vec3b> Color;
 
@@ -38,15 +36,16 @@ void InitColor();
 
 cv::Mat GetDistanceTransform(cv::Mat img);
 
-std::vector<Eigen::Vector3d> TransformPoint2Pc(const Pose &T, std::vector<Eigen::Vector3d> &ps);
+std::vector<Eigen::Vector3d> TransformPoint2Pc(
+    const Pose& T, std::vector<Eigen::Vector3d>& ps);
 
 // template<typename  C>
 // void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy);
-template<typename  C>
-void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy) {
+template <typename C>
+void CaculateDerivative(const cv::Mat& dist, cv::Mat& dx, cv::Mat& dy) {
     const int h = dist.rows;
     const int w = dist.cols;
-    
+
     // 差分肯定是float类型
     dx = cv::Mat(h, w, CV_32FC1, 0.);
     dy = dx.clone();
@@ -55,73 +54,77 @@ void CaculateDerivative(const cv::Mat &dist, cv::Mat &dx, cv::Mat &dy) {
     float* datax = dx.ptr<float>();
     float* datay = dy.ptr<float>();
 
-    for(int i = 0; i < h-1; ++i) {
+    for (int i = 0; i < h - 1; ++i) {
         // 遍历一行
-        for(int j = 1; j < w-1; ++j) {
+        for (int j = 1; j < w - 1; ++j) {
             //  dx.at<C>(i, j) = 0.5 * (dist.at<C>(i, j+1) - dist.at<C>(i, j-1));
-            datax[i*w+j] = 0.5 * (data[i*w+j+1] - data[i*w+j-1]);
+            datax[i * w + j] =
+                0.5 * (data[i * w + j + 1] - data[i * w + j - 1]);
             //dx.at<float>(i, j) = (dist.at<float>(i, j+1) - dist.at<float>(i, j));
         }
     }
-    for(int j = 0; j < w-1; ++j) {
+    for (int j = 0; j < w - 1; ++j) {
         // 遍历一列
-        for(int i = 1; i < h-1; ++i) {
+        for (int i = 1; i < h - 1; ++i) {
             //  dy.at<C>(i, j) = 0.5 * (dist.at<C>(i+1, j) - dist.at<C>(i-1, j));
             //dy.at<float>(i, j) = (dist.at<float>(i+1, j) - dist.at<float>(i, j));
-            datay[i*w+j] = 0.5 * (data[(i+1)*w+j] - data[(i-1)*w+j]);
+            datay[i * w + j] =
+                0.5 * (data[(i + 1) * w + j] - data[(i - 1) * w + j]);
         }
     }
 }
 
-inline bool InRange(const cv::Mat &img, const Eigen::Vector2i &p) {
+inline bool InRange(const cv::Mat& img, const Eigen::Vector2i& p) {
     const double imgScale = config->imageScale;
     int jumpPxNum = 6;
-    #ifdef Undistort
-        // jumpPxNum = 26;
-    #endif
-    return p.x() >= jumpPxNum*imgScale && p.x() < img.cols-jumpPxNum*imgScale && 
-            p.y() >= jumpPxNum*imgScale && p.y() < img.rows-jumpPxNum*imgScale; // 把车头像素滤掉
+#ifdef Undistort
+    // jumpPxNum = 26;
+#endif
+    return p.x() >= jumpPxNum * imgScale &&
+           p.x() < img.cols - jumpPxNum * imgScale &&
+           p.y() >= jumpPxNum * imgScale &&
+           p.y() < img.rows - jumpPxNum * imgScale;  // 把车头像素滤掉
 }
 
-Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d &v);
+Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v);
 
-template<typename T>
-    double BilinearInterpolate(const cv::Mat &img, const Eigen::Vector2d &p) {
-        if(!InRange(img, p.cast<int>())) {
-            return 0;
-        }
-        
-        const int col = img.cols;
-        const int row = img.rows;
-        const int x = int(p.x());
-        const int y = int(p.y());
-        if(x == col-1 || x == 0 || y == row-1 || y == 0 || 1) {
-            return img.at<T>(y, x);
-        }
+template <typename T>
+double BilinearInterpolate(const cv::Mat& img, const Eigen::Vector2d& p) {
+    if (!InRange(img, p.cast<int>())) {
+        return 0;
+    }
 
-        /****** 双线性插值 ******
+    const int col = img.cols;
+    const int row = img.rows;
+    const int x = int(p.x());
+    const int y = int(p.y());
+    if (x == col - 1 || x == 0 || y == row - 1 || y == 0 || 1) {
+        return img.at<T>(y, x);
+    }
+
+    /****** 双线性插值 ******
         * +---+---+
         * + v1+ v2+
         * +---+---+
         * + v3+ v4+
         * +---+---+
         ***********************/
-        float v1 = img.at<T>(y, x);
-        float v2 = img.at<T>(y, x+1);
-        float v3 = img.at<T>(y+1, x);
-        float v4 = img.at<T>(y+1, x+1);
-        const double wx = p.x() - x;
-        const double wy = p.y() - y;
-        const double w1 = (1-wx) * (1-wy);
-        const double w2 = wx * (1-wy);
-        const double w3 = (1-wx) * wy;
-        const double w4 = wx * wy;
-        // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
-        return w1*v1 + w2*v2 + w3*v3 + w4*v4;
-    }
+    float v1 = img.at<T>(y, x);
+    float v2 = img.at<T>(y, x + 1);
+    float v3 = img.at<T>(y + 1, x);
+    float v4 = img.at<T>(y + 1, x + 1);
+    const double wx = p.x() - x;
+    const double wy = p.y() - y;
+    const double w1 = (1 - wx) * (1 - wy);
+    const double w2 = wx * (1 - wy);
+    const double w3 = (1 - wx) * wy;
+    const double w4 = wx * wy;
+    // cout << "w1+w2+w3+w4: " << (w1+w2+w3+w4) << endl; // equal to 1
+    return w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4;
+}
 
-template<typename Scalar>
-Eigen::Quaternion<Scalar> Exp(const Eigen::Matrix<Scalar, 3, 1> & omega) {
+template <typename Scalar>
+Eigen::Quaternion<Scalar> Exp(const Eigen::Matrix<Scalar, 3, 1>& omega) {
     Scalar theta_sq = omega.squaredNorm();
     Scalar theta = sqrt(theta_sq);
     Scalar half_theta = Scalar(0.5) * theta;
@@ -129,137 +132,182 @@ Eigen::Quaternion<Scalar> Exp(const Eigen::Matrix<Scalar, 3, 1> & omega) {
     Scalar imag_factor;
     Scalar real_factor;
     const Scalar ellison = Scalar(1e-10);
-    if (theta < ellison ) {
-      Scalar theta_po4 = theta_sq * theta_sq;
-      imag_factor = Scalar(0.5) - Scalar(1.0 / 48.0) * theta_sq +
-                    Scalar(1.0 / 3840.0) * theta_po4;
-      real_factor = Scalar(1) - Scalar(1.0 / 8.0) * theta_sq +
-                    Scalar(1.0 / 384.0) * theta_po4;
+    if (theta < ellison) {
+        Scalar theta_po4 = theta_sq * theta_sq;
+        imag_factor = Scalar(0.5) - Scalar(1.0 / 48.0) * theta_sq +
+                      Scalar(1.0 / 3840.0) * theta_po4;
+        real_factor = Scalar(1) - Scalar(1.0 / 8.0) * theta_sq +
+                      Scalar(1.0 / 384.0) * theta_po4;
     } else {
-      Scalar sin_half_theta = sin(half_theta);
-      imag_factor = sin_half_theta / theta;
-      real_factor = cos(half_theta);
+        Scalar sin_half_theta = sin(half_theta);
+        imag_factor = sin_half_theta / theta;
+        real_factor = cos(half_theta);
     }
 
     Eigen::Quaternion<Scalar> q(real_factor, imag_factor * omega.x(),
-                         imag_factor * omega.y(), imag_factor * omega.z());
+                                imag_factor * omega.y(),
+                                imag_factor * omega.z());
     // q.normalize(); // 这里不能强制给它归一化吗？
-    if(abs(q.squaredNorm() - Scalar(1)) > ellison) {
-        std::cout << "SO3::exp failed! omega: " << omega.transpose() 
-            << " real, img: " << real_factor << ", " << imag_factor << std::endl;
+    if (abs(q.squaredNorm() - Scalar(1)) > ellison) {
+        std::cout << "SO3::exp failed! omega: " << omega.transpose()
+                  << " real, img: " << real_factor << ", " << imag_factor
+                  << std::endl;
         exit(-1);
     }
     return q;
-  }
+}
 
-void Assert(bool a, const std::string &s);
+void Assert(bool a, const std::string& s);
 
-void ShowImage(const cv::Mat &img, const std::string &name, const bool show = true);
+void ShowImage(const cv::Mat& img, const std::string& name,
+               const bool show = true);
 
-Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond &_q);
+Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond& _q);
 
-std::ostream& operator<<(std::ostream &cout, const Pose& T);
+std::ostream& operator<<(std::ostream& cout, const Pose& T);
 
-cv::Mat DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2i> &kp1, 
-    const std::vector<Eigen::Vector2i> &kp2, const std::string &name = "matches", 
-    const int ratio = 1, const int jump = 10);
-    
-int DrawMatch(KeyFrame *kf1, KeyFrame *kf2, const std::string &name="Last track first kf matches");
+cv::Mat DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
+                  const std::vector<Eigen::Vector2i>& kp1,
+                  const std::vector<Eigen::Vector2i>& kp2,
+                  const std::string& name = "matches", const int ratio = 1,
+                  const int jump = 10);
 
-int DrawMatch(std::vector<Landmark*> &ps, KeyFrame *kf2, const std::string &name="Project landmark to last frame");
+int DrawMatch(KeyFrame* kf1, KeyFrame* kf2,
+              const std::string& name = "Last track first kf matches");
 
-char DrawMatch(const cv::Mat &img1, const cv::Mat &img2, const std::vector<Eigen::Vector2i> &trajKp1, 
-    const std::vector<Eigen::Vector2i> &trajKp2, const std::vector<Eigen::Vector2i> &goodKp2,
-    const std::string &name = "epipolar matches", const int ratio = 1, const int jump = 10);
+int DrawMatch(std::vector<Landmark*>& ps, KeyFrame* kf2,
+              const std::string& name = "Project landmark to last frame");
 
-std::vector<Eigen::Vector2d> FindMatches(const Landmark &lk1, const KeyFrame &kf2, const Pose &T21, const Camera &cam);
+char DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
+               const std::vector<Eigen::Vector2i>& trajKp1,
+               const std::vector<Eigen::Vector2i>& trajKp2,
+               const std::vector<Eigen::Vector2i>& goodKp2,
+               const std::string& name = "epipolar matches",
+               const int ratio = 1, const int jump = 10);
 
-std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(const Eigen::Vector2d &kp1, const cv::Mat &edgeImg, 
-    const Pose &T21, const Camera &cam);
+std::vector<Eigen::Vector2d> FindMatches(const Landmark& lk1,
+                                         const KeyFrame& kf2, const Pose& T21,
+                                         const Camera& cam);
 
-Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
+std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(
+    const Eigen::Vector2d& kp1, const cv::Mat& edgeImg, const Pose& T21,
+    const Camera& cam);
 
-Eigen::Vector3d Triangulate(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
+Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp2, const Pose& T21,
+                            const Camera& cam);
 
-double TriangulateDepth(const Eigen::Vector2d &kp1, const Eigen::Vector2d &kp2, const Pose &T21, const Camera &cam);
+Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp1,
+                            const Eigen::Vector2d& kp2, const Pose& T21,
+                            const Camera& cam);
 
-bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d> &kp2, const Pose &T21, const Camera &cam, Landmark &lk,
-    const Eigen::Vector2d &deltaPx2);
+double TriangulateDepth(const Eigen::Vector2d& kp1, const Eigen::Vector2d& kp2,
+                        const Pose& T21, const Camera& cam);
 
-Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d &rpy, const Eigen::Vector3d &t, const double deg2rad = kDeg2Rad);
+bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d>& kp2,
+                         const Pose& T21, const Camera& cam, Landmark& lk,
+                         const Eigen::Vector2d& deltaPx2);
+
+Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d& rpy,
+                               const Eigen::Vector3d& t,
+                               const double deg2rad = kDeg2Rad);
 
 void varifyTriangulate();
 
-std::vector<Eigen::Vector2d> CannyEdgeDetect(const cv::Mat &img, cv::Mat &edgeImg, const Camera &cam);
+std::vector<Eigen::Vector2d> CannyEdgeDetect(const cv::Mat& img,
+                                             cv::Mat& edgeImg,
+                                             const Camera& cam);
 
-size_t LoadImages(const std::string& strDirectory, std::vector<std::string>& vstrImages, 
-    std::vector<double>& vTimeStamps, const std::string &imgSuffix=".jpg", const bool readDepth = 0);
+size_t LoadImages(const std::string& strDirectory,
+                  std::vector<std::string>& vstrImages,
+                  std::vector<double>& vTimeStamps,
+                  const std::string& imgSuffix = ".jpg",
+                  const bool readDepth = 0);
 
-size_t LoadPriorOdom(const std::string &strDirectory, std::vector<Eigen::Matrix<double, 8, 1>> &vPriorPose);
+size_t LoadPriorOdom(const std::string& strDirectory,
+                     std::vector<Eigen::Matrix<double, 8, 1>>& vPriorPose);
 
-void FindImageAndPose(const int idx, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, 
-    const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, std::vector<cv::Mat> &imgs, 
-    std::vector<Pose> &vTwc, const int needNum = 2);
+void FindImageAndPose(const int idx, const std::vector<std::string>& vstrImages,
+                      const std::vector<double> vTimeStamps,
+                      const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose,
+                      const WheelCameraCalib& calib, std::vector<cv::Mat>& imgs,
+                      std::vector<Pose>& vTwc, const int needNum = 2);
 
-void GetImageAndPose(const int idx, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, 
-    const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose, const WheelCameraCalib &calib, cv::Mat &img, 
-    Pose &Twc);
+void GetImageAndPose(const int idx, const std::vector<std::string>& vstrImages,
+                     const std::vector<double> vTimeStamps,
+                     const std::vector<Eigen::Matrix<double, 8, 1>> vPriorPose,
+                     const WheelCameraCalib& calib, cv::Mat& img, Pose& Twc);
 
-bool GetDepthImage(const double rgbTime, const std::vector<std::string> &vstrImages, const std::vector<double> vTimeStamps, cv::Mat &depth);
+bool GetDepthImage(const double rgbTime,
+                   const std::vector<std::string>& vstrImages,
+                   const std::vector<double> vTimeStamps, cv::Mat& depth);
 
-double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d1, const Eigen::Matrix<float, kDescriptorPatchSize, 1> &d2);
+double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1>& d1,
+                      const Eigen::Matrix<float, kDescriptorPatchSize, 1>& d2);
 
-uint64_t CalculateDescriptor(const cv::Mat &grayImg, const Eigen::Vector2i &px);
+uint64_t CalculateDescriptor(const cv::Mat& grayImg, const Eigen::Vector2i& px);
 
 int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2);
 
-void GetProjectRange(const Landmark &lp, const Pose& T21, const Camera &cam, Eigen::Vector2i &xRange, 
-    Eigen::Vector2i &yRange);
+void GetProjectRange(const Landmark& lp, const Pose& T21, const Camera& cam,
+                     Eigen::Vector2i& xRange, Eigen::Vector2i& yRange);
 
-void ShowPointCloud(const std::vector<Landmark*> &ps);
+void ShowPointCloud(const std::vector<Landmark*>& ps);
 
-void ShowPointCloud(const std::vector<Landmark*> &ps1, const std::vector<Landmark*> &ps2, 
-    const std::string &windowName = "Point cloud", const double zOffset = 0.0);
+void ShowPointCloud(const std::vector<Landmark*>& ps1,
+                    const std::vector<Landmark*>& ps2,
+                    const std::string& windowName = "Point cloud",
+                    const double zOffset = 0.0);
 
-double GetOnePixelUncertainty(const Eigen::Vector3d &t12, const Eigen::Vector3d &pc1, const double f);
+double GetOnePixelUncertainty(const Eigen::Vector3d& t12,
+                              const Eigen::Vector3d& pc1, const double f);
 
-double GetDepthUncertainty(const Eigen::Vector2d &px2, const Eigen::Vector2d &deltaPix2, const double d,  const Camera &cam);
+double GetDepthUncertainty(const Eigen::Vector2d& px2,
+                           const Eigen::Vector2d& deltaPix2, const double d,
+                           const Camera& cam);
 
-bool NeedNewKF(const KeyFrame *kf, const KeyFrame *f);
+bool NeedNewKF(const KeyFrame* kf, const KeyFrame* f);
 
-void ShowPointCloud(const std::set<Landmark* > &ps);
+void ShowPointCloud(const std::set<Landmark*>& ps);
 
-bool IsFastPoint(const cv::Mat &gray, const Eigen::Vector2i px);
+bool IsFastPoint(const cv::Mat& gray, const Eigen::Vector2i px);
 
-Eigen::Vector3d LogSO3(const Eigen::Matrix3d &R);
+Eigen::Vector3d LogSO3(const Eigen::Matrix3d& R);
 
-Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d &v); // BCH近似使用
+Eigen::Matrix3d InverseRightJacobianSO3(
+    const Eigen::Vector3d& v);  // BCH近似使用
 
-void VizInteraction(const cv::viz::KeyboardEvent &event, void *b);
+void VizInteraction(const cv::viz::KeyboardEvent& event, void* b);
 
-double TransformDepthMap2CurrentFrame(KeyFrame *kf1, KeyFrame *kf2, Camera &cam);
+double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
+                                      Camera& cam);
 
-bool CheckDepthQuality(const Landmark &lk1, const Pose &T12, const Eigen::Vector2d &p2, const double z);
+bool CheckDepthQuality(const Landmark& lk1, const Pose& T12,
+                       const Eigen::Vector2d& p2, const double z);
 
-double CalculatePatchSSD(const KeyFrame *kf1, const KeyFrame *kf2, const Eigen::Vector2i &px1, const Eigen::Vector2i &px2);
+double CalculatePatchSSD(const KeyFrame* kf1, const KeyFrame* kf2,
+                         const Eigen::Vector2i& px1,
+                         const Eigen::Vector2i& px2);
 
-void ShowLocalMap(const std::vector<Pose> &vTwc);
+void ShowLocalMap(const std::vector<Pose>& vTwc);
 
-void ShowCameraCone(const std::vector<Pose> &vTwc, const std::vector<cv::Mat> &imgs, const Camera &cam);
+void ShowCameraCone(const std::vector<Pose>& vTwc,
+                    const std::vector<cv::Mat>& imgs, const Camera& cam);
 
 // 画边缘点的垂直与平行方向
-char DrawPerpendicularAndParallelDirectionOFedge(const cv::Mat &edgeImg, const cv::Mat &dxImg, const cv::Mat &dyImg);
+char DrawPerpendicularAndParallelDirectionOFedge(const cv::Mat& edgeImg,
+                                                 const cv::Mat& dxImg,
+                                                 const cv::Mat& dyImg);
 
-enum KeyboardEvent{Reset, StepByStep};
+enum KeyboardEvent { Reset, StepByStep };
 
 class InteractionParam {
-public:
+   public:
     bool stepBystep = false;
-    KeyFrame visualCurF;     // 进行pose优化后的当前帧
-    KeyFrame visualCurFinit; // 未进行pose优化前的当前帧
-    KeyFrame *visualLastKF = nullptr;
+    KeyFrame visualCurF;      // 进行pose优化后的当前帧
+    KeyFrame visualCurFinit;  // 未进行pose优化前的当前帧
+    KeyFrame* visualLastKF = nullptr;
     bool resetWindow = false;
-    cv::viz::Viz3d *window; // ("Local Map Viewer"); 
+    cv::viz::Viz3d* window;  // ("Local Map Viewer");
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
     std::set<Landmark*> activePoints;
     std::set<Landmark*> localPoints;
@@ -268,5 +316,5 @@ public:
     bool drawEpipolarMatch = false;
     std::vector<Eigen::Vector3d> trajectory;
 };
-extern InteractionParam *interaction;
+extern InteractionParam* interaction;
 #endif

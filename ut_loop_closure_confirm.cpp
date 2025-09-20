@@ -1,10 +1,9 @@
-#include <memory>
 #include <unistd.h>
-
+#include <memory>
 
 #include "Landmark.h"
-#include "Utils.h"
 #include "Optimizer.h"
+#include "Utils.h"
 
 using namespace std;
 using namespace cv;
@@ -14,23 +13,27 @@ using namespace cv;
 // 结论，仅靠两帧生成的3D点存在很大的不确定性，而其为了剔除误匹配还是使用了描述子，
 // 描述子都难以区分误匹配点，估计光度残差更难些
 
-int main(int argc, char** argv){
+int main(int argc, char** argv) {
 
     // 读取程序参数
     // 读取程序参数
     string configFilePath = "../config.yaml";
 
-    if (argc < 5){
-        cerr << "[Error] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
+    if (argc < 5) {
+        cerr << "[Error] Usage: ./main  useInverseDepth  showImage "
+                "first_img_index loop_closure_img_index configFile"
+             << endl;
         exit(-1);
-    } else if(argc < 6) {
-        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage first_img_index loop_closure_img_index configFile" << endl;
+    } else if (argc < 6) {
+        cerr << "[Warning] Usage: ./main  useInverseDepth  showImage "
+                "first_img_index loop_closure_img_index configFile"
+             << endl;
         cout << "Default config: " << configFilePath << endl;
-    }  else {
-        configFilePath = string (argv[5]);
+    } else {
+        configFilePath = string(argv[5]);
     }
-    
-    const bool useInvZ = bool (stoi(argv[1]));
+
+    const bool useInvZ = bool(stoi(argv[1]));
     const bool showImg = bool(stoi(argv[2]));
     const int firstImgIdx = int(stoi(argv[3]));
     const int loopClosureImgIdx = int(stoi(argv[4]));
@@ -49,18 +52,19 @@ int main(int argc, char** argv){
     vector<Pose> vTwc;
     WheelCameraCalib calib(config->Qcg, config->Pcg, config->wheelRadius);
     const int getImgNum = 30;
-    FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib, imgs, vTwc, getImgNum);
+    FindImageAndPose(firstImgIdx, vstrImages, vTimeStamps, vPriorPose, calib,
+                     imgs, vTwc, getImgNum);
 
     shared_ptr<Camera> cam = make_shared<Camera>(config);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     // 初始化关键帧
     vector<KeyFrame*> kfs;
-    for(int i = 0; i < vTwc.size(); ++i) {
+    for (int i = 0; i < vTwc.size(); ++i) {
         kfs.push_back(new KeyFrame(imgs[i], vTwc[i], cam, i, 1));
         kfs[i]->CannyEdgeDetect();
         kfs[i]->GenerateDTandDerivative();
         cout << "vTwc[" << i << "]: " << vTwc[i] << endl;
-        ShowImage(kfs[i]->edgeImg_[0], "edgeImg"+to_string(i), showImg);
+        ShowImage(kfs[i]->edgeImg_[0], "edgeImg" + to_string(i), showImg);
     }
 
     // 头两帧进行地图点生成
@@ -72,12 +76,14 @@ int main(int argc, char** argv){
     optimizer.AddOneKeyFeame(kfs[0]);
 
     const int maxUpdateId = kfs.size();
-    for(int i = 1; i < maxUpdateId; ++i) {
+    for (int i = 1; i < maxUpdateId; ++i) {
         // kfs[0].UpdateDepth(kfs[i]);
-        const double coverRatio = optimizer.window_.back()->UpdateDepth(*kfs[i]);
+        const double coverRatio =
+            optimizer.window_.back()->UpdateDepth(*kfs[i]);
         // 产生新KF
-        if(i%10 == 0) {
-            const int reuseLandmarkNum = kfs[i]->ReuseLandmark(optimizer.window_.back());
+        if (i % 10 == 0) {
+            const int reuseLandmarkNum =
+                kfs[i]->ReuseLandmark(optimizer.window_.back());
             cout << i << " th reuseLandmarkNum: " << reuseLandmarkNum << endl;
             kfs[i]->InitializeLandmark();
             optimizer.AddOneKeyFeame(kfs[i]);
