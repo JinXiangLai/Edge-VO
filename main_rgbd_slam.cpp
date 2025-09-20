@@ -279,10 +279,15 @@ int main(int argc, char** argv){
                 if(first) {
                     f.open(name.c_str(), ios::out);
                     first = false;
+                    f << "#timestamp, qw, qx, qy, qz, x, y, z" << endl;
                     f.close();
                 }
                 f.open(name.c_str(), ios::app);
-                f << "(" <<case1 << " || " << case3 << " || " << case4 << " || " << case5 << ") && " << case2 << endl;
+                //f << "(" <<case1 << " || " << case3 << " || " << case4 << " || " << case5 << ") && " << case2 << endl;
+                const Eigen::Quaterniond& q = curF.priorTwc_.q_wb_;
+                const Eigen::Vector3d& p = curF.priorTwc_.t_wb_;
+                f << to_string(vTimeStamps[i]) << ", " << q.w() << ", " << q.x() << ", " << q.y() << ", " << q.z() << ", "
+                    << p.x() << ", " << p.y() << ", " << p.z() << endl;
                 f.close();
                 
             }
