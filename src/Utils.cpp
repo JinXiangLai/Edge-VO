@@ -1691,11 +1691,16 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
         window.showWidget(
             "curInitImage",
             cv::viz::WImageOverlay(curInitImg, cv::Rect(0, 0, w, h)));
+        cv::putText(curImg, "curImg", Point(10, curInitImg.rows - 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget("curImage", cv::viz::WImageOverlay(
                                           curImg, cv::Rect(w + 10, 0, w, h)));
 
         // cv::imshow("curProjImg", curImg);
     }
+
+    cv::putText(curKFimg, "curKFimg", Point(10, curInitImg.rows - 10),
+                cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
     window.showWidget(
         "lastKFimg",
         cv::viz::WImageOverlay(curKFimg, cv::Rect(2 * w + 20, 0, w, h)));
