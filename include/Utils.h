@@ -24,6 +24,13 @@
 #define Undistort  // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
+inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
+    {"red", {0, 0, 255}},       {"green", {0, 255, 0}},
+    {"blue", {255, 0, 0}},      {"white", {255, 255, 255}},
+    {"yellow", {0, 255, 255}},  {"orange", {0, 165, 255}},
+    {"purple", {226, 43, 138}}, {"pink", {255, 0, 255}},
+    {"gray", {100, 100, 100}}};
+
 class KeyFrame;
 class Landmark;
 

@@ -1,7 +1,7 @@
 
 %YAML: 1.0
 
-dataDir: /home/laijinxiang/edge-slam/rgbd_dataset_freiburg2_xyz # /home/laijinxiang/docker-0105/dataset/TUMdataset/rgbd_dataset_freiburg1_desk2 # 
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz 
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -99,3 +99,5 @@ maxFailObvTimeBeforeCreateDepth: 10
 useDepthImage: false # 验证位姿估计算法
 depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
 initWithTrueDepth: false
+
+debugMessageSaveFolder: "./"

@@ -254,6 +254,21 @@ char DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
                              trajKp1.back().y() * ratio);
     cv::circle(im, epipolarPoint1, radius, bestMatchColor, 1);
 
+    // 初始化边缘匹配的debug视频写入器
+    if (!KeyFrame::debugVideoWriter.isOpened()) {
+        const string videoPath = config->debugMessageSaveFolder +
+                                 "/edge_host_match_cur_frame_video.mp4";
+        // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
+        int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+        int fps = 30;
+        KeyFrame::debugVideoWriter.open(videoPath, fourcc, fps, im.size(),
+                                        true);
+        if (!KeyFrame::debugVideoWriter.isOpened()) {
+            cerr << "Open debug video path: " << videoPath << " failed";
+            exit(-1);
+        }
+    }
+    KeyFrame::debugVideoWriter.write(im);
     cv::namedWindow(name);
     cv::imshow(name, im);
     cv::imwrite(name + ".png", im);

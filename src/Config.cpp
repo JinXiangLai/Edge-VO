@@ -90,6 +90,7 @@ Config::Config(const std::string& yamlFilePath) {
     useDepthImage = f["useDepthImage"].as<bool>();
     depthFactor = f["depthFactor"].as<double>();
     initWithTrueDepth = f["initWithTrueDepth"].as<bool>();
+    debugMessageSaveFolder = f["debugMessageSaveFolder"].as<string>();
 }
 
 Config* config = nullptr;

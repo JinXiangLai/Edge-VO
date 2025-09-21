@@ -16,6 +16,8 @@
 using namespace std;
 using namespace cv;
 
+cv::VideoWriter KeyFrame::debugVideoWriter;
+
 class Landmark;
 
 KeyFrame::KeyFrame(const Mat& img, const Pose& Twc, std::shared_ptr<Camera> cam,
@@ -425,6 +427,62 @@ void KeyFrame::GenerateKeyPoint() {
         }
 }
 
+void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
+                                      const Eigen::Vector2i& matchKp2,
+                                      const cv::Mat& debugImg2) {
+    if (videoBestMatchDebugImg_.empty()) {
+        videoBestMatchDebugImg_ =
+            cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+        Mat im1, im2;
+        cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+        cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
+        im1.copyTo(videoBestMatchDebugImg_.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(videoBestMatchDebugImg_.colRange(
+            debugGrayImg_.cols, videoBestMatchDebugImg_.cols));
+    }
+
+    cv::Scalar pColor = kColor.at("blue");
+    int radius = 1;
+    cv::Scalar lColor = kColor.at("green");
+    cv::Scalar bestMatchColor = kColor.at("yellow");
+
+    cv::Point p1(kp1.x(), kp1.y());
+    cv::circle(videoBestMatchDebugImg_, p1, radius, pColor, 1);
+    cv::Point bestMatchP2 =
+        cv::Point(debugGrayImg_.cols + matchKp2.x(), matchKp2.y());
+    cv::circle(videoBestMatchDebugImg_, bestMatchP2, radius, bestMatchColor, 1);
+    cv::line(videoBestMatchDebugImg_, p1, bestMatchP2, lColor, 1);
+}
+
+void KeyFrame::WriteBestMatch2VideoEachFrame() {
+    if (videoBestMatchDebugImg_.empty()) {
+        return;
+    }
+    // 初始化边缘匹配的debug视频写入器
+    if (!KeyFrame::debugVideoWriter.isOpened()) {
+        string videoPath = config->debugMessageSaveFolder;
+        const string debugVideoName("edge_host_match_cur_frame_video.avi");
+        if (config->debugMessageSaveFolder.back() == '/') {
+            videoPath += debugVideoName;
+        } else {
+            videoPath += "/" + debugVideoName;
+        };
+        // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
+        int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+        int fps = 30;
+        KeyFrame::debugVideoWriter.open(videoPath, fourcc, fps,
+                                        videoBestMatchDebugImg_.size(), true);
+        if (!KeyFrame::debugVideoWriter.isOpened()) {
+            cerr << "Open debug video path: " << videoPath << " failed" << endl;
+            exit(-1);
+        }
+        cout << "Open debug video path: " << videoPath << endl;
+    }
+    KeyFrame::debugVideoWriter.write(videoBestMatchDebugImg_);
+    videoBestMatchDebugImg_.release();
+}
+
 size_t KeyFrame::GenerateLandmark(
     KeyFrame& kf2, vector<vector<Eigen::Vector2d> >& debugGoodKp1,
     vector<vector<Eigen::Vector2d> >& debugGoodKp2, const int equalparts) {
@@ -524,7 +582,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
             const double bestDepth = TriangulateDepth(
                 lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1, *cam_);
-            Eigen::Vector2d disturb{2.0, 5.0};
+            Eigen::Vector2d disturb{2.0, 3.0};
             // TODO: 不确定度的设计非常重要！！！关乎数学模型的正确性
             // 同时，需要完善Keyframe的管理，后面有时间再搞
             const double d =
@@ -575,10 +633,10 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
         Eigen::Vector2d bestPx2;
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestInvDepth, std, bestPx2);
+            &kf2, lk1, bestInvDepth, std, bestPx2, true);
         if (bestInvDepth < 0 || std < 0) {
             // 深度异常
-            cout << "error: " << error;
+            // cout << "error: " << error;
             ++lk1->failObvTime_;
             continue;
         }
@@ -674,6 +732,9 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
         unf.close();
     }
+
+    // 将各个最优匹配写入视频
+    WriteBestMatch2VideoEachFrame();
 
     ++updateFrameCount_;
     ofstream unf;
@@ -923,7 +984,7 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const KeyFrame* kf2, Landmark* lk1, double& bestInvDepth, double& std,
-    Eigen::Vector2d& bestPx2) {
+    Eigen::Vector2d& bestPx2, const bool drawMatch) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
@@ -1192,6 +1253,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         bestInvDepth = 1.0 / d1;
         std = max(uncertainty1, uncertainty2);  // 考虑像素测量误差
         bestPx2 = bestP2;
+        if (drawMatch) {
+            DrawBestMatchEachFrame(lk1->uv_, bestP2.cast<int>(),
+                                   kf2->debugGrayImg_);
+        }
 
         // if(d1 < 0.5 || d1 > 5.0) {
         if (d1 < 0.5 && std > config->minObvDepthStd) {
