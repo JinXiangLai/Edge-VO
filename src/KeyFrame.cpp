@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <fstream>
 #include <opencv2/highgui.hpp>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -16,7 +17,10 @@
 using namespace std;
 using namespace cv;
 
+#if defined(WRITE_MATCH_PAIR_IMAGE)
 cv::VideoWriter KeyFrame::debugVideoWriter;
+constexpr int kDrawMatchNumEachFrame = 100;
+#endif
 
 class Landmark;
 
@@ -427,6 +431,7 @@ void KeyFrame::GenerateKeyPoint() {
         }
 }
 
+#if defined(WRITE_MATCH_PAIR_IMAGE)
 void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                       const Eigen::Vector2i& matchKp2,
                                       const cv::Mat& debugImg2) {
@@ -442,23 +447,35 @@ void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
             debugGrayImg_.cols, videoBestMatchDebugImg_.cols));
     }
 
-    cv::Scalar pColor = kColor.at("blue");
+    const int colorId = abs(rand()) % kColor.size();
+    int idx = -1;
+    cv::Vec3b color(0, 0, 0);
+    for (const auto& c : kColor) {
+        if (++idx == colorId) {
+            color = c.second;
+            break;
+        }
+    }
     int radius = 1;
-    cv::Scalar lColor = kColor.at("green");
-    cv::Scalar bestMatchColor = kColor.at("yellow");
 
     cv::Point p1(kp1.x(), kp1.y());
-    cv::circle(videoBestMatchDebugImg_, p1, radius, pColor, 1);
+    cv::circle(videoBestMatchDebugImg_, p1, radius, color, 1);
     cv::Point bestMatchP2 =
         cv::Point(debugGrayImg_.cols + matchKp2.x(), matchKp2.y());
-    cv::circle(videoBestMatchDebugImg_, bestMatchP2, radius, bestMatchColor, 1);
-    cv::line(videoBestMatchDebugImg_, p1, bestMatchP2, lColor, 1);
+    cv::circle(videoBestMatchDebugImg_, bestMatchP2, radius, color, 1);
+    cv::line(videoBestMatchDebugImg_, p1, bestMatchP2, color, 1);
 }
 
-void KeyFrame::WriteBestMatch2VideoEachFrame() {
+void KeyFrame::WriteBestMatch2VideoEachFrame(const int kf2Id) {
     if (videoBestMatchDebugImg_.empty()) {
         return;
     }
+    int start_text_row = 20;
+    int step_text_row = 10;
+    cv::putText(videoBestMatchDebugImg_, "keyframe2 id: " + to_string(kf2Id),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
+
     // 初始化边缘匹配的debug视频写入器
     if (!KeyFrame::debugVideoWriter.isOpened()) {
         string videoPath = config->debugMessageSaveFolder;
@@ -482,6 +499,7 @@ void KeyFrame::WriteBestMatch2VideoEachFrame() {
     KeyFrame::debugVideoWriter.write(videoBestMatchDebugImg_);
     videoBestMatchDebugImg_.release();
 }
+#endif
 
 size_t KeyFrame::GenerateLandmark(
     KeyFrame& kf2, vector<vector<Eigen::Vector2d> >& debugGoodKp1,
@@ -568,6 +586,14 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     // vector<Pose> vTwc{ Pose(), Tc1c2};
     // vector<Mat> imgs{ debugGrayImg_, kf2.debugGrayImg_ };
     // ShowCameraCone(vTwc, imgs, *cam_);
+    
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    int drawCount = 0;
+    // 使用随机设备对地图点进行乱序，避免debug图像生成的点对聚在一堆
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::shuffle(landmark_.begin(), landmark_.end(), gen);
+#endif
 
     for (int i = 0; i < landmark_.size(); ++i) {
         if (landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
@@ -731,10 +757,23 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
         if (i % 1000 == 0)
             unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
         unf.close();
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+        if (++drawCount % kDrawMatchNumEachFrame == 0) {
+            // 将各个最优匹配写入视频
+            WriteBestMatch2VideoEachFrame(kf2.id_);
+            drawCount = 0;
+        }
+#endif
     }
 
-    // 将各个最优匹配写入视频
-    WriteBestMatch2VideoEachFrame();
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    if (drawCount != 0) {
+        // 将各个最优匹配写入视频
+        WriteBestMatch2VideoEachFrame(kf2.id_);
+        drawCount = 0;
+    }
+#endif
 
     ++updateFrameCount_;
     ofstream unf;
@@ -1253,10 +1292,13 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         bestInvDepth = 1.0 / d1;
         std = max(uncertainty1, uncertainty2);  // 考虑像素测量误差
         bestPx2 = bestP2;
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
         if (drawMatch) {
             DrawBestMatchEachFrame(lk1->uv_, bestP2.cast<int>(),
                                    kf2->debugGrayImg_);
         }
+#endif
 
         // if(d1 < 0.5 || d1 > 5.0) {
         if (d1 < 0.5 && std > config->minObvDepthStd) {

@@ -80,7 +80,9 @@ int main(int argc, char** argv) {
 
     KeyFrame* initFrame = nullptr;
     KeyFrame lastF, lastLastF;
+#if defined(SHOW_ONLINE_3D_RESULT)
     thread* viewerThread;
+#endif
     bool isInitialized = false;
     vector<KeyFrame*>& win = optimizer.window_;
     double accDist = 0.;
@@ -130,7 +132,9 @@ int main(int argc, char** argv) {
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
+#if defined(SHOW_ONLINE_3D_RESULT)
             viewerThread = new thread(Run, &optimizer);
+#endif
             continue;  // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg" + to_string(i), showImg);
@@ -309,12 +313,16 @@ int main(int argc, char** argv) {
         }
     }
 
+#if defined(WRITE_MATCH_PAIR_IMAGE)
     if (KeyFrame::debugVideoWriter.isOpened()) {
         KeyFrame::debugVideoWriter.release();
     }
+#endif
 
+#if defined(SHOW_ONLINE_3D_RESULT)
     viewerThread->join();
     delete viewerThread;
+#endif
 
     return 0;
 }

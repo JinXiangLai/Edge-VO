@@ -71,12 +71,6 @@ class KeyFrame {
 
     void GenerateKeyPoint();
 
-    void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
-                                const Eigen::Vector2i& matchKp2,
-                                const cv::Mat& debugImg2);
-
-    void WriteBestMatch2VideoEachFrame();
-
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
     // canny边缘图像已经去畸变了
@@ -108,8 +102,16 @@ class KeyFrame {
 
     // debug 优化算法
     cv::Mat depthImage_;
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
+                                const Eigen::Vector2i& matchKp2,
+                                const cv::Mat& debugImg2);
+    
+    void WriteBestMatch2VideoEachFrame(const int kf2Id);
     cv::Mat videoBestMatchDebugImg_;
     static cv::VideoWriter debugVideoWriter;
+#endif
 };
 
 #endif
