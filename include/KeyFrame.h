@@ -107,9 +107,14 @@ class KeyFrame {
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                 const Eigen::Vector2i& matchKp2,
                                 const cv::Mat& debugImg2);
-    
+    void DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
+                                    const Eigen::Vector2i& lp2Start,
+                                    const Eigen::Vector2i& lp2End,
+                                    const Eigen::Vector2i& matchKp2,
+                                    const cv::Mat& debugImg2);
     void WriteBestMatch2VideoEachFrame(const int kf2Id);
     cv::Mat videoBestMatchDebugImg_;
+    cv::Mat videoEpipolarMatchDebugImg_;
     static cv::VideoWriter debugVideoWriter;
 #endif
 };

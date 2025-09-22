@@ -110,9 +110,13 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 0
+#if 1
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
         curF.GenerateDTandDerivative();
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 #else
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.ExtractEdge();

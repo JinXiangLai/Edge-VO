@@ -475,6 +475,10 @@ void KeyFrame::WriteBestMatch2VideoEachFrame(const int kf2Id) {
     cv::putText(videoBestMatchDebugImg_, "keyframe2 id: " + to_string(kf2Id),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
+    cv::putText(videoEpipolarMatchDebugImg_,
+                "keyframe2 id: " + to_string(kf2Id),
+                cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
+                kColor.at("red"), 1);
 
     // 初始化边缘匹配的debug视频写入器
     if (!KeyFrame::debugVideoWriter.isOpened()) {
@@ -496,8 +500,55 @@ void KeyFrame::WriteBestMatch2VideoEachFrame(const int kf2Id) {
         }
         cout << "Open debug video path: " << videoPath << endl;
     }
-    KeyFrame::debugVideoWriter.write(videoBestMatchDebugImg_);
+
+    debugVideoWriter.write(videoEpipolarMatchDebugImg_);
+    debugVideoWriter.write(videoBestMatchDebugImg_);
+    videoEpipolarMatchDebugImg_.release();
     videoBestMatchDebugImg_.release();
+}
+
+void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
+                                          const Eigen::Vector2i& lp2Start,
+                                          const Eigen::Vector2i& lp2End,
+                                          const Eigen::Vector2i& matchKp2,
+                                          const cv::Mat& debugImg2) {
+    if (videoEpipolarMatchDebugImg_.empty()) {
+        videoEpipolarMatchDebugImg_ =
+            cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+        Mat im1, im2;
+        cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+        cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
+        im1.copyTo(videoEpipolarMatchDebugImg_.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(videoEpipolarMatchDebugImg_.colRange(
+            debugGrayImg_.cols, videoEpipolarMatchDebugImg_.cols));
+    }
+
+    const int colorId = abs(rand()) % kColor.size();
+    int idx = -1;
+    cv::Vec3b matchColor(0, 0, 0);
+    for (const auto& c : kColor) {
+        if (++idx == colorId) {
+            matchColor = c.second;
+            break;
+        }
+    }
+    int radius = 2;
+
+    cv::Point p1(kp1.x(), kp1.y());
+    cv::circle(videoEpipolarMatchDebugImg_, p1, radius, matchColor, 1);
+    cv::Point bestMatchP2 =
+        cv::Point(debugGrayImg_.cols + matchKp2.x(), matchKp2.y());
+    cv::circle(videoEpipolarMatchDebugImg_, bestMatchP2, radius, matchColor,
+               1);
+    cv::line(videoEpipolarMatchDebugImg_, p1, bestMatchP2, matchColor, 1);
+
+    // 画极线起终点，起点绿色，终点红色，连线蓝色
+    const cv::Point lp1(debugGrayImg_.cols + lp2Start.x(), lp2Start.y());
+    const cv::Point lp2(debugGrayImg_.cols + lp2End.x(), lp2End.y());
+    cv::circle(videoEpipolarMatchDebugImg_, lp1, radius, kColor.at("green"), 1);
+    cv::circle(videoEpipolarMatchDebugImg_, lp2, radius, kColor.at("red"), 1);
+    cv::line(videoEpipolarMatchDebugImg_, lp1, lp2, kColor.at("blue"), 1);
 }
 #endif
 
@@ -586,7 +637,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     // vector<Pose> vTwc{ Pose(), Tc1c2};
     // vector<Mat> imgs{ debugGrayImg_, kf2.debugGrayImg_ };
     // ShowCameraCone(vTwc, imgs, *cam_);
-    
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     int drawCount = 0;
     // 使用随机设备对地图点进行乱序，避免debug图像生成的点对聚在一堆
@@ -1297,6 +1348,9 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         if (drawMatch) {
             DrawBestMatchEachFrame(lk1->uv_, bestP2.cast<int>(),
                                    kf2->debugGrayImg_);
+            DrawEpipolarMatchEachFrame(lk1->uv_, nearPx2.cast<int>(),
+                                       farPx2.cast<int>(), bestPx2.cast<int>(),
+                                       kf2->debugGrayImg_);
         }
 #endif
 
