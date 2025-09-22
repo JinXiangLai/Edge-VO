@@ -32,7 +32,7 @@ MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 add_compile_options(-Werror=return-type)
 
 # 添加一些debug 宏配置
-# add_definitions(-DSHOW_ONLINE_3D_RESULT)
+add_definitions(-DSHOW_ONLINE_3D_RESULT)
 add_definitions(-DWRITE_MATCH_PAIR_IMAGE)
 
 find_package(Eigen3 REQUIRED)

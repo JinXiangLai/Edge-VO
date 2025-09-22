@@ -146,10 +146,15 @@ void KeyFrame::CannyEdgeDetect() {
         Mat K = (cv::Mat_<float>(3, 3) << cam_->fx_, 0, cam_->cx_, 0, cam_->fy_,
                  cam_->cy_, 0, 0, 1);
 
+        const double fm = (cam_->fx_ + cam_->fy_) * 0.5 * 1.1;
+        Mat newK = (cv::Mat_<float>(3, 3) << fm, 0, cam_->cx_, 0, fm, cam_->cy_,
+                    0, 0, 1);
+
         // 畸变模板应该只需要计算一次！！！
-        cv::initUndistortRectifyMap(K, D, cv::Mat(), K,
+        cv::initUndistortRectifyMap(K, D, cv::Mat(), newK,
                                     cv::Size(grayImg_.cols, grayImg_.rows),
                                     CV_8UC1, map1, map2);
+        cam_->UpdateIntrinsicParam(fm, fm);
     }
 
     cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
@@ -291,7 +296,7 @@ void KeyFrame::ExtractEdge() {
                  cam_->cy_, 0, 0, 1);
 
         // 使用新的内参投影，避免出现黑色的部分
-        double newFx = max(cam_->fx_, cam_->fy_) * 1.1;
+        double newFx = (cam_->fx_ + cam_->fy_) * 0.5 * 1.1;
         Mat newK = (cv::Mat_<float>(3, 3) << newFx, 0, cam_->cx_, 0, newFx,
                     cam_->cy_, 0, 0, 1);
 
@@ -539,8 +544,7 @@ void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
     cv::circle(videoEpipolarMatchDebugImg_, p1, radius, matchColor, 1);
     cv::Point bestMatchP2 =
         cv::Point(debugGrayImg_.cols + matchKp2.x(), matchKp2.y());
-    cv::circle(videoEpipolarMatchDebugImg_, bestMatchP2, radius, matchColor,
-               1);
+    cv::circle(videoEpipolarMatchDebugImg_, bestMatchP2, radius, matchColor, 1);
     cv::line(videoEpipolarMatchDebugImg_, p1, bestMatchP2, matchColor, 1);
 
     // 画极线起终点，起点绿色，终点红色，连线蓝色
@@ -657,28 +661,30 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         if (!lk1->noUsed_ &&
             !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
-            const double bestDepth = TriangulateDepth(
-                lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1, *cam_);
-            Eigen::Vector2d disturb{2.0, 3.0};
-            // TODO: 不确定度的设计非常重要！！！关乎数学模型的正确性
-            // 同时，需要完善Keyframe的管理，后面有时间再搞
-            const double d =
-                TriangulateDepth(lk1->uv_.cast<double>(),
-                                 lk1->matchNextPixel_ + disturb, Tc2c1, *cam_);
-            //const double std = abs(d - bestDepth) * 2;
-            const double std =
-                abs(1.0 / bestDepth - 1.0 / d);  // 逆深度的不确定度
+            double estD1 = -1;
+            double estD2 = -1;
+            if (!GetHostAndCurFrameObservationDepth(
+                    lk1->uv_.cast<double>(), lk1->matchNextPixel_,
+                    cam_->Kinv_[0], Tc1c2, estD1, estD2)) {
+                cout << "Calculate d1: " << estD1 << " d2: " << estD2
+                     << " failed! no update!";
+                continue;
+            }
+            const double invD1 = 1.0 / estD1;
+            const double estCov = CalculateVariance(
+                invD1, lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1,
+                cam_->Kinv_[0], cam_->K_[0]);
             if (i % 1000 == 0)
                 cout << "0th invz: " << lk1->invZ_
                      << ", cov: " << lk1->invDepthCov_
-                     << ", bestInvDepth: " << 1.0 / bestDepth
-                     << ", std: " << std << endl;
+                     << ", bestInvDepth: " << invD1 << ", estCov: " << estCov
+                     << endl;
 
             // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
             //     && std < config->maxObvDepthStd) {
             if (1) {
-                double u2 = 1.0 / bestDepth,
-                       cov2 = std * std;  // 考虑基线的影响
+                double u2 = invD1,
+                       cov2 = estCov;  // 考虑基线的影响
                 double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_;
                 lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
                 lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
@@ -706,26 +712,14 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        double bestInvDepth = -1, std = -1;
-        Eigen::Vector2d bestPx2;
+        Eigen::Vector2d bestPx2(0, 0);
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestInvDepth, std, bestPx2, true);
-        if (bestInvDepth < 0 || std < 0) {
-            // 深度异常
-            // cout << "error: " << error;
-            ++lk1->failObvTime_;
-            continue;
-        }
-        if (i % 1000 == 0)
-            cout << "1th invz: " << lk1->invZ_ << ", cov: " << lk1->invDepthCov_
-                 << ", bestInvDepth: " << bestInvDepth << ", std: " << std
-                 << endl;
+            &kf2, lk1, bestPx2, true);
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
-            if (std > config->maxObvDepthStd || std < config->minObvDepthStd ||
-                error == EpipolarMatchType::repeatTextureORbadDepth ||
+            if (error == EpipolarMatchType::repeatTextureORbadDepth ||
                 error == EpipolarMatchType::occulsionORnoBestMatch) {
                 // 深度异常
                 ++lk1->failObvTime_;
@@ -761,26 +755,30 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             lk1->UpdateUncertainty(false);
             continue;
 
-        } else if (std > config->maxObvDepthStd ||
-                   std < config->minObvDepthStd) {
-            // 深度标准差异常
-            lk1->invDepthCov_ *= varianceExpand[0];
-            lk1->UpdateUncertainty(false);
-        } else {
-            //const double diff = lk1->z_ - bestDepth;
-            //if (diff * diff > std * std + lk1->depthCov_) {
-            //    lk1->depthCov_ *= varianceExpand[1];
-            //    lk1->UpdateUncertainty(false);
-            //    continue;
-            //}
+        } else if (!bestPx2.isApprox(Eigen::Vector2d::Zero())) {
+            double estD1 = -1;
+            double estD2 = -1;
+            if (!GetHostAndCurFrameObservationDepth(lk1->uv_.cast<double>(),
+                                                    bestPx2, cam_->Kinv_[0],
+                                                    Tc1c2, estD1, estD2)) {
+                cout << "2th Calculate d1: " << estD1 << " d2: " << estD2
+                     << " failed! no update!"
+                     << "kp1: " << lk1->uv_.transpose()
+                     << " bestPx2: " << bestPx2.transpose() << endl;
+                ++lk1->failObvTime_;
+                continue;
+            }
+            const double invD1 = 1.0 / estD1;
+            const double estCov =
+                CalculateVariance(invD1, lk1->uv_.cast<double>(), bestPx2,
+                                  Tc2c1, cam_->Kinv_[0], cam_->K_[0]);
+            if (i % 1000 == 0)
+                cout << "1th invz: " << lk1->invZ_
+                     << ", cov: " << lk1->invDepthCov_
+                     << ", bestInvDepth: " << invD1 << ", estCov: " << estCov
+                     << endl;
 
-            //if (!CheckDepthQuality(*lk1, Tc1c2, bestPx2, bestDepth)) {
-            //    lk1->depthCov_ *= varianceExpand[0];
-            //    lk1->UpdateUncertainty(false);
-            //    continue;
-            //}
-
-            double u2 = bestInvDepth, cov2 = std * std;  // 考虑基线的影响
+            double u2 = invD1, cov2 = estCov;  // 考虑基线的影响
             double u1 = lk1->invZ_,
                    cov1 = lk1->invDepthCov_ * varianceExpand[0];
 
@@ -1073,8 +1071,8 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 }
 
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
-    const KeyFrame* kf2, Landmark* lk1, double& bestInvDepth, double& std,
-    Eigen::Vector2d& bestPx2, const bool drawMatch) {
+    const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
+    const bool drawMatch) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
@@ -1286,42 +1284,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return EpipolarMatchType::repeatTextureORbadDepth;
     }
 
-    // const double maxMeasureDepth = fx * fy * T12.t_wb_.norm()/sqrt(fx*fx+fy*fy); // 1pixel
-    // const double minMeasureDepth = maxMeasureDepth / config->maxEpipolarSearchLine;
-
-    // if(pointMapId_.at(lk1->uv_) == 0)
-    // static int mea = 0;
-    // if(mea++%10000==0)
-    //     cout << "maxMeasureDepth, minMeasureDepth: [" << maxMeasureDepth << " " << minMeasureDepth << "]" << endl;
-
     if (goodScore && !badDist) {
-        const int time = config->best2SecondDist;
-        const double dm1 = TriangulateDepth(lk1->uv_.cast<double>(),
-                                            bestP2 - time * ep2, T21, *cam_);
-        const double d1 =
-            TriangulateDepth(lk1->uv_.cast<double>(), bestP2, T21, *cam_);
-        const double dp1 = TriangulateDepth(lk1->uv_.cast<double>(),
-                                            bestP2 + time * ep2, T21, *cam_);
-        // if(d1 < 0 || d1 > maxMeasureDepth || d1 < minMeasureDepth) {
-        if (d1 < 0) {
-            return EpipolarMatchType::repeatTextureORbadDepth;
-        }
-        // 对于深度大于5米的，发现深度差异会非常大
-        // 对于深度小于0.5米的，结果是 d: [0.829857 0.203911 0.78017] 深度比例也差很大
-        const double ratio1 = dm1 > d1 ? (dm1 - d1) / dm1 : (d1 - dm1) / d1;
-        const double ratio2 = dp1 > d1 ? (dp1 - d1) / dp1 : (d1 - dp1) / d1;
-        const double uncertainty1 = abs(1.0 / dm1 - 1.0 / d1);
-        const double uncertainty2 = abs(1.0 / dp1 - 1.0 / d1);
-        const double maxUncertainty = 1e9;  // 0.5
-        if (ratio1 > 0.6 || ratio2 > 0.6 || uncertainty1 > maxUncertainty ||
-            uncertainty2 > maxUncertainty) {
-            return EpipolarMatchType::outOFboundaryORabnormalDepth;
-        }
-
         if (config->drawGoddEpipolarMatch && interaction->drawEpipolarMatch &&
-            (lk1->uv_.x() > config->drawEpipolarMatchStartCol && d1 > 2.0)) {
+            (lk1->uv_.x() > config->drawEpipolarMatchStartCol)) {
             // if(interaction->drawEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
-            cout << " d: [" << dm1 << " " << d1 << " " << dp1 << "]" << endl;
             cout << "parallax: " << (lk1->uv_.cast<double>() - bestP2).norm()
                  << endl;
             cout << "bestScore, secondBestScore/desLen: " << bestScore / desLen
@@ -1339,9 +1305,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
                     "current point 2 all Epipolar constraint matches");
             }
         }
-
-        bestInvDepth = 1.0 / d1;
-        std = max(uncertainty1, uncertainty2);  // 考虑像素测量误差
         bestPx2 = bestP2;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
@@ -1353,14 +1316,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
                                        kf2->debugGrayImg_);
         }
 #endif
-
-        // if(d1 < 0.5 || d1 > 5.0) {
-        if (d1 < 0.5 && std > config->minObvDepthStd) {
-            cout << " d: [" << dm1 << " " << d1 << " " << dp1
-                 << "], uncertainty:[ " << abs(dp1 - d1) << " " << abs(dm1 - d1)
-                 << "]" << endl;
-        }
-
         return bestScore;
     }
     return EpipolarMatchType::outOFboundaryORabnormalDepth;

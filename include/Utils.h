@@ -24,6 +24,8 @@
 #define Undistort  // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
+constexpr double kMinSceneDepthInCamera = 0.1;  // meter
+
 inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
     {"red", {0, 0, 255}},       {"green", {0, 255, 0}},
     {"blue", {255, 0, 0}},      {"white", {255, 255, 255}},
@@ -306,6 +308,22 @@ char DrawPerpendicularAndParallelDirectionOFedge(const cv::Mat& edgeImg,
                                                  const cv::Mat& dyImg);
 
 double GetPositiveDepth(const double invZ);
+
+bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
+                                        const Eigen::Vector2d& kp2,
+                                        const Eigen::Matrix3d& invK0,
+                                        const Pose& T12, double& depth1,
+                                        double& depth2);
+
+double CalculateVariance(const double& estIdepth1, const Eigen::Vector2d& kp1,
+                         const Eigen::Vector2d& kp2, const Pose& T21,
+                         const Eigen::Matrix3d& invK, const Eigen::Matrix3d& K);
+
+Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
+                                               const double& rho1,
+                                               const Eigen::Vector3d& Pn1,
+                                               const Eigen::Vector3d& Pc2,
+                                               const Eigen::Matrix3d& K);
 
 enum KeyboardEvent { Reset, StepByStep };
 

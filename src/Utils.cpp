@@ -1350,6 +1350,97 @@ double GetPositiveDepth(const double invZ) {
     return invZ < 1e-9 ? 100.0 : 1.0 / invZ;
 }
 
+bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
+                                        const Eigen::Vector2d& kp2,
+                                        const Eigen::Matrix3d& invK0,
+                                        const Pose& T12, double& depth1,
+                                        double& depth2) {
+    // s1 * Pn1 = R12 * s2 * Pn2 + P12
+    // [Pn1 - R12*Pn2]_[3x2] * [s1, s2] = P12
+    const Eigen::Vector3d pn1 = invK0 * Eigen::Vector3d(kp1.x(), kp1.y(), 1.0);
+    const Eigen::Vector3d pn2 = invK0 * Eigen::Vector3d(kp2.x(), kp2.y(), 1.0);
+
+    const Eigen::Matrix3d rot_12 = T12.q_wb_.toRotationMatrix();
+    const Eigen::Vector3d& pos_12 = T12.t_wb_;
+    // 第一种解法
+    Eigen::Matrix<double, 3, 2> matrix_a = Eigen::Matrix<double, 3, 2>::Zero();
+    matrix_a.col(0) = pn1;
+    matrix_a.col(1) = -(rot_12 * pn2);
+    const Eigen::Vector2d res0 =
+        matrix_a.jacobiSvd(Eigen::ComputeFullU | Eigen::ComputeFullV)
+            .solve(pos_12);
+
+    const double ratio = depth1 / depth2;
+    if (res0.x() > kMinSceneDepthInCamera &&
+        res0.y() > kMinSceneDepthInCamera && ratio > 0.75 && ratio < 1.25) {
+        depth1 = res0.x();
+        depth2 = res0.y();
+        return true;
+    } else {
+        return false;
+    }
+}
+
+double CalculateVariance(const double& estInvDepth1, const Eigen::Vector2d& kp1,
+                         const Eigen::Vector2d& kp2, const Pose& T21,
+                         const Eigen::Matrix3d& invK,
+                         const Eigen::Matrix3d& K) {
+    const Eigen::Matrix3d R21 = T21.q_wb_.toRotationMatrix();
+    const Eigen::Vector3d& P21 = T21.t_wb_;
+    const Eigen::Vector3d Pn1 = invK * Eigen::Vector3d(kp1.x(), kp1.y(), 1.0);
+
+    const Eigen::Vector3d Pc2 = R21 * 1.0 / estInvDepth1 * Pn1 + P21;
+    const Eigen::Vector3d Pn2 = Pc2 / Pc2.z();
+    const Eigen::Vector2d obv2 = K.block(0, 0, 2, 3) * Pn2;
+    const Eigen::Vector2d residual = obv2 - kp2;
+
+    // 求残差关于ρ1的雅可比，据次推导
+    // r = J * ρ1
+    // J.T * r = J.T * J * ρ1 = a * ρ1
+    // ρ1 = 1.0/a * J.T * r
+    // r服从N～(0, Σ)高斯分布
+    // 令A=1.0/a * J.T， 则ρ1服从N~(ρ1, A*Σ*A.T)
+    const Eigen::Vector2d J_res_rho1 =
+        CalculateObvWrtIdepth1Jacobian(R21, estInvDepth1, Pn1, Pc2, K);
+
+    // 改进的噪声模型
+    const double basePixelNoise = 2.0;  // 基础像素噪声
+    const double adaptiveNoise = basePixelNoise + residual.norm();
+
+    const double sigma2 = adaptiveNoise;  // TODO：这里应该加上像素误差比较合理
+    const Eigen::Matrix2d obv2SigmaSquare =
+        Eigen::Matrix2d::Identity() * sigma2 * sigma2;
+    const double h = J_res_rho1.transpose() * J_res_rho1;
+    const Eigen::Matrix<double, 1, 2> A = 1.0 / h * J_res_rho1.transpose();
+    const double variance = A * obv2SigmaSquare * A.transpose();
+    // return ResetVariance(variance); // TODO：是否有必要限制
+    return variance;
+}
+
+Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
+                                               const double& rho1,
+                                               const Eigen::Vector3d& Pn1,
+                                               const Eigen::Vector3d& Pc2,
+                                               const Eigen::Matrix3d& K) {
+
+    const Eigen::Matrix<double, 2, 3> J_r_Pn2 = K.block(0, 0, 2, 3);
+    const double invZ = 1 / Pc2[2];
+    const double invZ2 = invZ * invZ;
+    // clang-format off
+        const Eigen::Matrix3d J_Pn2_Pc2 =
+            (Eigen::Matrix3d() << invZ, 0, -Pc2[0] * invZ2, 
+                                0, invZ, -Pc2[1] * invZ2,
+                                0, 0, 0).finished();
+    // clang-format on
+    const Eigen::Matrix3d& J_Pc2_Pc1 = Rc2_c1;
+
+    const double invSquareRho1 = 1.0 / (rho1 * rho1);
+    const Eigen::Vector3d J_Pc1_rho1 = -invSquareRho1 * Pn1;
+    const Eigen::Vector2d J_residual_rho1 =
+        J_r_Pn2 * J_Pn2_Pc2 * J_Pc2_Pc1 * J_Pc1_rho1;
+    return J_residual_rho1;
+}
+
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
                                                  const Mat& dxImg,
                                                  const cv::Mat& dyImg) {
