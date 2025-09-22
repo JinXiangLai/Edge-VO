@@ -1777,12 +1777,12 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     constexpr double ratio = 0.5;
     const int w = curImg.cols * ratio, h = curImg.rows * ratio;
     if (curf != nullptr) {
-        cv::putText(curInitImg, "init", Point(10, curInitImg.rows - 10),
+        cv::putText(curInitImg, "curInitImage", Point(10, curInitImg.rows - 10),
                     cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget(
             "curInitImage",
             cv::viz::WImageOverlay(curInitImg, cv::Rect(0, 0, w, h)));
-        cv::putText(curImg, "curImg", Point(10, curInitImg.rows - 10),
+        cv::putText(curImg, "curOptImg", Point(10, curInitImg.rows - 10),
                     cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget("curImage", cv::viz::WImageOverlay(
                                           curImg, cv::Rect(w + 10, 0, w, h)));

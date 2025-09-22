@@ -59,8 +59,8 @@ showDebugImg: false
 firstImgIdx: 0
 loopClosureImgIdx: 10
 
-cannyLowerTh: 40 # 150
-cannyupperTh: 60 # 160
+cannyLowerTh: 60 # 150
+cannyupperTh: 120 # 160
 
 # 存在相邻边缘像素被匹配的情况
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
@@ -88,8 +88,8 @@ nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优�
 descriptorPatchLen: 5
 minEpipolarSearchLine: 10
 maxEpipolarSearchLine: 30 # most import item for triangulation
-best2SecondRatio: 0.7
-best2SecondDist: 2 # pixels
+best2SecondRatio: 0.9
+best2SecondDist: 1 # pixels
 SimErrorRatio: 0.8 # 千分之5
 drawGoddEpipolarMatch: true
 drawAllEpipolarMatch: false

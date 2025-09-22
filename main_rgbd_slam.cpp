@@ -192,7 +192,7 @@ int main(int argc, char** argv) {
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
         const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
-        win.back()->CullingBadDepth(&curF);
+        // win.back()->CullingBadDepth(&curF);
         chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
 
         chrono::steady_clock::time_point t8, t9;

@@ -103,6 +103,11 @@ class KeyFrame {
     // debug 优化算法
     cv::Mat depthImage_;
 
+    std::map<std::string, int> matchResultStatiscs_;
+    void ReportMatchResult();
+    void AddReportElement(const std::string& key);
+    void ResetDebugMessage();
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                 const Eigen::Vector2i& matchKp2,
@@ -112,9 +117,14 @@ class KeyFrame {
                                     const Eigen::Vector2i& lp2End,
                                     const Eigen::Vector2i& matchKp2,
                                     const cv::Mat& debugImg2);
-    void WriteBestMatch2VideoEachFrame(const int kf2Id);
+    void DrawFailEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
+                                        const Eigen::Vector2i& lp2Start,
+                                        const Eigen::Vector2i& lp2End,
+                                        const cv::Mat& debugImg2);
+    void WriteDebugImage2VideoEachFrame(const int kf2Id);
     cv::Mat videoBestMatchDebugImg_;
     cv::Mat videoEpipolarMatchDebugImg_;
+    cv::Mat videoEpipolarFailMatchDebugImg_;
     static cv::VideoWriter debugVideoWriter;
 #endif
 };

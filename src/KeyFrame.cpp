@@ -436,6 +436,32 @@ void KeyFrame::GenerateKeyPoint() {
         }
 }
 
+void KeyFrame::AddReportElement(const std::string& key) {
+    if (matchResultStatiscs_.count(key)) {
+        matchResultStatiscs_[key]++;
+    } else {
+        matchResultStatiscs_[key] = 1;
+    }
+}
+
+void KeyFrame::ResetDebugMessage() {
+    matchResultStatiscs_.clear();
+}
+
+void KeyFrame::ReportMatchResult() {
+    cout << "keyframe id: " << id_ << "Match result statiscs report: " << endl;
+    int sum = 0;
+    for (const auto& p : matchResultStatiscs_) {
+        sum += p.second;
+    }
+
+    for (const auto& p : matchResultStatiscs_) {
+        const float ratio = static_cast<float>(p.second) / sum;
+        cout << p.first << ": num=" << p.second << ", ratio: " << ratio << endl;
+    }
+    cout << endl << endl;
+}
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
 void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                       const Eigen::Vector2i& matchKp2,
@@ -471,19 +497,26 @@ void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
     cv::line(videoBestMatchDebugImg_, p1, bestMatchP2, color, 1);
 }
 
-void KeyFrame::WriteBestMatch2VideoEachFrame(const int kf2Id) {
+void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
     if (videoBestMatchDebugImg_.empty()) {
         return;
     }
     int start_text_row = 20;
     int step_text_row = 10;
-    cv::putText(videoBestMatchDebugImg_, "keyframe2 id: " + to_string(kf2Id),
+    cv::putText(videoBestMatchDebugImg_,
+                "match point keyframe2 id: " + to_string(kf2Id),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
     cv::putText(videoEpipolarMatchDebugImg_,
-                "keyframe2 id: " + to_string(kf2Id),
+                "match ep keyframe2 id: " + to_string(kf2Id),
                 cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
                 kColor.at("red"), 1);
+    if (!videoEpipolarFailMatchDebugImg_.empty()) {
+        cv::putText(videoEpipolarFailMatchDebugImg_,
+                    "fail ep keyframe2 id: " + to_string(kf2Id),
+                    cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
+                    kColor.at("red"), 1);
+    }
 
     // 初始化边缘匹配的debug视频写入器
     if (!KeyFrame::debugVideoWriter.isOpened()) {
@@ -508,8 +541,10 @@ void KeyFrame::WriteBestMatch2VideoEachFrame(const int kf2Id) {
 
     debugVideoWriter.write(videoEpipolarMatchDebugImg_);
     debugVideoWriter.write(videoBestMatchDebugImg_);
+    debugVideoWriter.write(videoEpipolarFailMatchDebugImg_);
     videoEpipolarMatchDebugImg_.release();
     videoBestMatchDebugImg_.release();
+    videoEpipolarFailMatchDebugImg_.release();
 }
 
 void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
@@ -553,6 +588,49 @@ void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
     cv::circle(videoEpipolarMatchDebugImg_, lp1, radius, kColor.at("green"), 1);
     cv::circle(videoEpipolarMatchDebugImg_, lp2, radius, kColor.at("red"), 1);
     cv::line(videoEpipolarMatchDebugImg_, lp1, lp2, kColor.at("blue"), 1);
+}
+
+void KeyFrame::DrawFailEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
+                                              const Eigen::Vector2i& lp2Start,
+                                              const Eigen::Vector2i& lp2End,
+                                              const cv::Mat& debugImg2) {
+    if (videoEpipolarFailMatchDebugImg_.empty()) {
+        videoEpipolarFailMatchDebugImg_ =
+            cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+        Mat im1, im2;
+        cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+        cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
+        im1.copyTo(
+            videoEpipolarFailMatchDebugImg_.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(videoEpipolarFailMatchDebugImg_.colRange(
+            debugGrayImg_.cols, videoEpipolarFailMatchDebugImg_.cols));
+    }
+
+    const int colorId = abs(rand()) % kColor.size();
+    int idx = -1;
+    cv::Vec3b matchColor(0, 0, 0);
+    for (const auto& c : kColor) {
+        if (++idx == colorId) {
+            matchColor = c.second;
+            break;
+        }
+    }
+    int radius = 2;
+
+    cv::Point p1(kp1.x(), kp1.y());
+    cv::circle(videoEpipolarFailMatchDebugImg_, p1, radius, matchColor, 1);
+
+    // 画极线起终点，起点绿色，终点红色，连线蓝色
+    const cv::Point lp1(debugGrayImg_.cols + lp2Start.x(), lp2Start.y());
+    const cv::Point lp2(debugGrayImg_.cols + lp2End.x(), lp2End.y());
+    cv::circle(videoEpipolarFailMatchDebugImg_, lp1, radius, kColor.at("green"),
+               1);
+    cv::circle(videoEpipolarFailMatchDebugImg_, lp2, radius, kColor.at("red"),
+               1);
+    cv::line(videoEpipolarFailMatchDebugImg_, lp1, lp2, kColor.at("blue"), 1);
+
+    cv::line(videoEpipolarFailMatchDebugImg_, p1, lp1, kColor.at("green"), 1);
 }
 #endif
 
@@ -650,6 +728,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     std::shuffle(landmark_.begin(), landmark_.end(), gen);
 #endif
 
+    ResetDebugMessage();
     for (int i = 0; i < landmark_.size(); ++i) {
         if (landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
             continue;
@@ -810,7 +889,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         if (++drawCount % kDrawMatchNumEachFrame == 0) {
             // 将各个最优匹配写入视频
-            WriteBestMatch2VideoEachFrame(kf2.id_);
+            WriteDebugImage2VideoEachFrame(kf2.id_);
             drawCount = 0;
         }
 #endif
@@ -819,10 +898,12 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     if (drawCount != 0) {
         // 将各个最优匹配写入视频
-        WriteBestMatch2VideoEachFrame(kf2.id_);
+        WriteDebugImage2VideoEachFrame(kf2.id_);
         drawCount = 0;
     }
 #endif
+
+    ReportMatchResult();
 
     ++updateFrameCount_;
     ofstream unf;
@@ -1074,6 +1155,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
     const bool drawMatch) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
+        // cout << "Error lk1 is nullptr or out of range!\n";
+        AddReportElement("lk1 is nullptr or out of range!");
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
 
@@ -1092,13 +1175,17 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
     // ep1 *= -1;
     if (ep1.norm() < 1.0) {
+        // cout << "Error ep1 norm: " << ep1.norm() << " < 1 pixel!\n";
+        AddReportElement("ep1 norm < 1!");
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
     ep1.normalize();
 
     const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
     const double depthScale = priorPc2.z() * lk1->invZ_;
-    if (!(depthScale > 0.7f && depthScale < 1.4f)) {
+    if (!(depthScale > 0.7f && depthScale < 1.4f) && 0) {
+        // cout << "Error depthScale: " << depthScale << "\n";
+        AddReportElement("depthScale error!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     // 根据近大远小的规则调整窗口范围
@@ -1107,8 +1194,13 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const int midLen = desLen / 2;
     // 检验一下描述子是否在范围内
     Eigen::Vector2d p1Start = p1 - midLen * ep1, p1End = p1 + midLen * ep1;
-    if (!InRange(grayImg_, p1Start.cast<int>()) ||
-        !InRange(grayImg_, p1End.cast<int>())) {
+    if (!InRange(grayImg_, p1Start.cast<int>())) {
+        // cout << "Error p1Start not in image!\n";
+        AddReportElement("Error p1Start not in image!");
+    }
+    if (!InRange(grayImg_, p1End.cast<int>())) {
+        // cout << "Error p1End!\n";
+        AddReportElement("Error p1End!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
@@ -1121,6 +1213,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const Eigen::Vector3d farPc2 = T21 * farPc1;
     const Eigen::Vector3d nearPc2 = T21 * nearPc1;
     if (farPc2.z() < nearPc2.z()) {
+        // cout << "Error far z: " << farPc2.z() << " < near z: " << nearPc2.z() << "\n";
+        AddReportElement("Far z < near z");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     Eigen::Vector2d farPx2 = cam_->Project2PixelPlane(farPc2),
@@ -1159,11 +1253,15 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     // 最远点若不在投影范围内，那么意味着视野范围受限？直接返回
     if (!InRange(edgeImg2, farPx2.cast<int>())) {
+        // cout << "Error farPx2 not in image!\n";
+        AddReportElement("Error farPx2 not in image!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     if (!InRange(edgeImg2, nearPx2.cast<int>())) {
         // 将最近点移动到图像内
         if (!MoveNearPx2IntoBoundary(nearPx2, ep2, farPx2)) {
+            // cout << "Error nearPx2 not in image!\n";
+            AddReportElement("Error nearPx2 not in image!");
             return EpipolarMatchType::outOFboundaryORabnormalDepth;
         }
     }
@@ -1192,7 +1290,9 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
     avg2 = s2 / desLen;
 
-    if (ep2.norm() < 1) {
+    if (ep2.norm() < 0.99) {
+        cout << "Error ep2 norm: " << ep2.norm() << " < 0.99!\n";
+        AddReportElement("ep2 norm < 1!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
 
@@ -1267,12 +1367,16 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     const bool smallScore = bestScore < config->maxDescriptorDist * desLen;
     if (!smallScore) {
+        // cout << "Error smallScore: " << smallScore << "\n";
+        AddReportElement("Error smallScore!");
         return EpipolarMatchType::occulsionORnoBestMatch;
     }
 
     const bool goodScore =
         bestScore < config->best2SecondRatio * secondBestScore;
     if (!goodScore) {
+        // cout << "Error goodScore\n";
+        AddReportElement("Error goodScore!");
         return EpipolarMatchType::repeatTextureORbadDepth;
     }
 
@@ -1281,6 +1385,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         badDist = (bestP2 - secondBestP2).norm() > config->best2SecondDist;
     }
     if (badDist) {
+        // cout << "Error badDist: " << badDist << "\n";
+        AddReportElement("Error badDist!");
         return EpipolarMatchType::repeatTextureORbadDepth;
     }
 
@@ -1316,8 +1422,11 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
                                        kf2->debugGrayImg_);
         }
 #endif
+        AddReportElement("Find Match succeed!");
         return bestScore;
     }
+
+    AddReportElement("Final Fail!");
     return EpipolarMatchType::outOFboundaryORabnormalDepth;
 }
 
