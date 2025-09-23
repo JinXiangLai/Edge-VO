@@ -999,12 +999,14 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             firstWriteUncertainty_ = false;
         }
         // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
-        const double estDepth = GetPositiveDepth(lk1->invZ_);
-        invDepthUncertaintyFile_
-            << reinterpret_cast<uintptr_t>(lk1) << ", " << lk1->invDepthCov_
-            << ", " << lk1->invZ_ << ", " << estDepth << ", " << lk1->trueDepth_
-            << ", " << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_
-            << endl;
+        if (lk1->trueDepth_ > 0.01) {
+            const double estDepth = GetPositiveDepth(lk1->invZ_);
+            invDepthUncertaintyFile_
+                << reinterpret_cast<uintptr_t>(lk1) << ", " << lk1->invDepthCov_
+                << ", " << lk1->invZ_ << ", " << estDepth << ", "
+                << lk1->trueDepth_ << ", " << (estDepth - lk1->trueDepth_)
+                << ", " << lk1->obvTime_ << endl;
+        }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         if (++drawCount % kDrawMatchNumEachFrame == 0) {
