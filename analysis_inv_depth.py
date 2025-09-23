@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import shutil
 
 # 设置matplotlib使用英文字体，避免中文问题
 plt.rcParams['font.family'] = 'DejaVu Sans'  # 使用系统英文字体
@@ -302,7 +303,8 @@ def main(inv_depth_file_path: str, save_folder: str):
 if __name__ == "__main__":
     inv_depth_file_path = "/home/laijinxiang/edge-slam/Edge-VO/build/kf_1_depth_uncertainty.csv"
     save_folder = "/home/laijinxiang/edge-slam/Edge-VO/build/result"
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    if os.path.exists(save_folder):
+        shutil.rmtree(save_folder)
+    os.makedirs(save_folder)
 
     main(inv_depth_file_path, save_folder)

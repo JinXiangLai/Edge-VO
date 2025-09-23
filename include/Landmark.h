@@ -72,6 +72,10 @@ class Landmark {
     bool noUsed_ = false;
 
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
+
+    bool IsDebugPoint() {
+        return config->pixelCount.count(uv_);
+    }
 };
 
 #endif

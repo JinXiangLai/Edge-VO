@@ -31,8 +31,7 @@ inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
     {"red", {0, 0, 255}},       {"green", {0, 255, 0}},
     {"blue", {255, 0, 0}},      {"white", {255, 255, 255}},
     {"yellow", {0, 255, 255}},  {"orange", {0, 165, 255}},
-    {"purple", {226, 43, 138}}, {"pink", {255, 0, 255}},
-    {"gray", {100, 100, 100}}};
+    {"purple", {226, 43, 138}}, {"pink", {255, 0, 255}}};
 
 class KeyFrame;
 class Landmark;

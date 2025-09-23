@@ -946,22 +946,31 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                 ++lk1->failObvTime_;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-                DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
-                                    kf2.debugGrayImg_, false);
-                if (++failTriangulateCount % kDrawFailTriangulateNum == 0) {
-                    WriteDebugTriangulateCase2Video(
-                        "Fail tri", Tc1c2, videoFailTriangulateDebugImg_);
+                if (lk1->IsDebugPoint()) {
+                    DrawTriangulateCase(estD1, estD2, lk1->uv_,
+                                        bestPx2.cast<int>(), kf2.debugGrayImg_,
+                                        false);
+                    if (++failTriangulateCount % kDrawFailTriangulateNum == 0 ||
+                        1) {
+                        WriteDebugTriangulateCase2Video(
+                            "Fail tri", Tc1c2, videoFailTriangulateDebugImg_);
+                    }
                 }
+
 #endif
                 continue;
             }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-            DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
-                                kf2.debugGrayImg_, true);
-            if (++successTriangulateCount % kDrawSuccessTriangulateNum == 0) {
-                WriteDebugTriangulateCase2Video(
-                    "Success tri", Tc1c2, videoSuccessTriangulateDebugImg_);
+            if (lk1->IsDebugPoint()) {
+                DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
+                                    kf2.debugGrayImg_, true);
+                if (++successTriangulateCount % kDrawSuccessTriangulateNum ==
+                        0 ||
+                    1) {
+                    WriteDebugTriangulateCase2Video(
+                        "Success tri", Tc1c2, videoSuccessTriangulateDebugImg_);
+                }
             }
 #endif
             const double invD1 = 1.0 / estD1;
@@ -1019,11 +1028,9 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-    if (drawCount != 0) {
-        // 将各个最优匹配写入视频
-        WriteDebugImage2VideoEachFrame(kf2.id_);
-        drawCount = 0;
-    }
+    // 将各个最优匹配写入视频
+    WriteDebugImage2VideoEachFrame(kf2.id_);
+    drawCount = 0;
 #endif
 
     ReportMatchResult();
@@ -1537,7 +1544,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         bestPx2 = bestP2;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-        if (drawMatch) {
+        if (drawMatch && lk1->IsDebugPoint()) {
             DrawBestMatchEachFrame(lk1->uv_, bestP2.cast<int>(),
                                    kf2->debugGrayImg_);
             DrawEpipolarMatchEachFrame(lk1->uv_, nearPx2.cast<int>(),
