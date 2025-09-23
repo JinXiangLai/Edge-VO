@@ -122,10 +122,17 @@ class KeyFrame {
                                         const Eigen::Vector2i& lp2End,
                                         const cv::Mat& debugImg2);
     void WriteDebugImage2VideoEachFrame(const int kf2Id);
+    void DrawFailTriangulateCase(const double estD1, const double estD2,
+                                 const Eigen::Vector2i& kp1,
+                                 const Eigen::Vector2i& matchKp2,
+                                 const cv::Mat& debugImg2);
+    void WriteDebugTriangulateFailCase2Video(const std::string& caseName, const Pose& T12);
     cv::Mat videoBestMatchDebugImg_;
     cv::Mat videoEpipolarMatchDebugImg_;
     cv::Mat videoEpipolarFailMatchDebugImg_;
+    cv::Mat videoFailTriangulateDebugImg_;
     static cv::VideoWriter debugVideoWriter;
+    static cv::VideoWriter debugTriangulateWriter;
 #endif
 };
 

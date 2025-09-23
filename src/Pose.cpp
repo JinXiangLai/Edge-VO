@@ -44,3 +44,13 @@ Eigen::Matrix4d Pose::ToMatrix4d() const {
     T.block(0, 3, 3, 1) = t_wb_;
     return T;
 }
+
+std::string Pose::QwbString() const {
+    return fmt::format("Qwb: {:.2f}, {:.2f}, {:.2f}, {:.2f}", q_wb_.w(),
+                       q_wb_.x(), q_wb_.y(), q_wb_.z());
+}
+
+std::string Pose::PwbString() const {
+    return fmt::format("Pwb: {:.2f}, {:.2f}, {:.2f}", t_wb_.x(), t_wb_.y(),
+                       t_wb_.z());
+}

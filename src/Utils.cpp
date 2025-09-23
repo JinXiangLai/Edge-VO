@@ -1370,15 +1370,14 @@ bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
         matrix_a.jacobiSvd(Eigen::ComputeFullU | Eigen::ComputeFullV)
             .solve(pos_12);
 
+    depth1 = res0.x();
+    depth2 = res0.y();
     const double ratio = depth1 / depth2;
     if (res0.x() > kMinSceneDepthInCamera &&
         res0.y() > kMinSceneDepthInCamera && ratio > 0.75 && ratio < 1.25) {
-        depth1 = res0.x();
-        depth2 = res0.y();
         return true;
-    } else {
-        return false;
     }
+    return false;
 }
 
 double CalculateVariance(const double& estInvDepth1, const Eigen::Vector2d& kp1,

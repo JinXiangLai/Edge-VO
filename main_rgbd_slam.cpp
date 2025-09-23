@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
 
             // win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
-            optimizer.AddOneKeyFeame(new KeyFrame(curF));
+            // optimizer.AddOneKeyFeame(new KeyFrame(curF));
             t11 = chrono::steady_clock::now();
             interaction->visualLastKF = win.back();
 
@@ -320,6 +320,9 @@ int main(int argc, char** argv) {
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     if (KeyFrame::debugVideoWriter.isOpened()) {
         KeyFrame::debugVideoWriter.release();
+    }
+    if(KeyFrame::debugTriangulateWriter.isOpened()) {
+        KeyFrame::debugTriangulateWriter.release();
     }
 #endif
 

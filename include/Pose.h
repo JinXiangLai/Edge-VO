@@ -17,6 +17,8 @@ class Pose {
     friend std::ostream& operator<<(std::ostream& cout, const Pose& T);
     int Size() const;
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
+    std::string QwbString() const;
+    std::string PwbString() const;
 
     Eigen::Quaterniond q_wb_ = Eigen::Quaterniond::Identity();
     Eigen::Vector3d t_wb_ = Eigen::Vector3d::Zero();
