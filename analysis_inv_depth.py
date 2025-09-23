@@ -13,10 +13,18 @@ def read_and_plot_depth_data(filename, result_save_folder: str):
         print(f"错误: 文件 {filename} 不存在")
         return
 
+    # 检查必要的列是否存在
+    required_columns = [
+        'pointId', 'cov', 'invDepth', 'depth', 'trueDepth', 'depthDiff',
+        'obvTime'
+    ]
     # 读取数据
     try:
         # 跳过注释行，读取CSV格式数据
-        df = pd.read_csv(filename, comment='#')
+        df = pd.read_csv(filename,
+                         comment='#',
+                         names=required_columns,
+                         skipinitialspace=True)
         print(f"成功读取数据，共 {len(df)} 行")
         print("数据列名:", df.columns.tolist())
         print("\n数据前5行:")
@@ -25,11 +33,6 @@ def read_and_plot_depth_data(filename, result_save_folder: str):
         print(f"读取文件时出错: {e}")
         return
 
-    # 检查必要的列是否存在
-    required_columns = [
-        'pointId', 'cov', 'invDepth', 'depth', 'trueDepth', 'depthDiff',
-        'obvTime'
-    ]
     missing_columns = [
         col for col in required_columns if col not in df.columns
     ]
@@ -126,7 +129,8 @@ def read_and_plot_depth_data(filename, result_save_folder: str):
         plt.subplots_adjust(top=0.93)
 
         # 保存图片
-        output_filename = os.path.join(result_save_folder, f'depth_analysis_point_{point_id}.png') 
+        output_filename = os.path.join(result_save_folder,
+                                       f'depth_analysis_point_{point_id}.png')
         plt.savefig(output_filename, dpi=300, bbox_inches='tight')
         print(f"已保存图表: {output_filename}")
 
