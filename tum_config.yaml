@@ -88,8 +88,8 @@ nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优�
 descriptorPatchLen: 5
 minEpipolarSearchLine: 10
 maxEpipolarSearchLine: 30 # most import item for triangulation
-best2SecondRatio: 0.9
-best2SecondDist: 1 # pixels
+best2SecondRatio: 0.7 # 因为存在极线退化场景，为了避免误匹配
+best2SecondDist: 1 # pixels，这个应该可以设置小点，存在边缘检测不稳定情况
 SimErrorRatio: 0.8 # 千分之5
 drawGoddEpipolarMatch: true
 drawAllEpipolarMatch: false
