@@ -33,13 +33,14 @@ for i in range(len(imgDir)):
         for f in files:
             img = os.path.join(root, f)
             newImg = os.path.join(newImgDir[i], f)
-            print(img)
+            # print(img)
             if not os.path.exists(newImg):
                 shutil.copy(img, newImg)
-                sortTimestamp.append(float(f[:-4]))
+            # print("f: ", f)
+            sortTimestamp.append(float(f[:-4]))
 
     sortTimestamp.sort()
-    with open(imgTimestampFile[i], 'a') as time:
+    with open(imgTimestampFile[i], 'w') as time:
         for t in sortTimestamp:
             time.write(format(t, '.6f')+'\n')
 

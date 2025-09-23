@@ -1403,7 +1403,7 @@ double CalculateVariance(const double& estInvDepth1, const Eigen::Vector2d& kp1,
         CalculateObvWrtIdepth1Jacobian(R21, estInvDepth1, Pn1, Pc2, K);
 
     // 改进的噪声模型
-    const double basePixelNoise = 2.0;  // 基础像素噪声
+    const double basePixelNoise = 3.0;  // 基础像素噪声
     const double adaptiveNoise = basePixelNoise + residual.norm();
 
     const double sigma2 = adaptiveNoise;  // TODO：这里应该加上像素误差比较合理

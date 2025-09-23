@@ -91,6 +91,10 @@ Config::Config(const std::string& yamlFilePath) {
     depthFactor = f["depthFactor"].as<double>();
     initWithTrueDepth = f["initWithTrueDepth"].as<bool>();
     debugMessageSaveFolder = f["debugMessageSaveFolder"].as<string>();
+    while(debugMessageSaveFolder.back() == '/') {
+        debugMessageSaveFolder.pop_back();
+    }
+    debugWithTrueDepthImage = f["debugWithTrueDepthImage"].as<bool>();
 }
 
 Config* config = nullptr;

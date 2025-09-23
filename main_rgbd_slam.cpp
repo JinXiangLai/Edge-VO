@@ -55,7 +55,8 @@ int main(int argc, char** argv) {
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
     if (config->model == "pinhole") {
         LoadImages(config->dataDir, vstrImages, vTimeStamps, ".png");
-        if (config->useDepthImage || config->initWithTrueDepth) {
+        if (config->useDepthImage || config->initWithTrueDepth ||
+            config->debugWithTrueDepthImage) {
             LoadImages(config->dataDir, vDepthImgs, vDepthImgTimes, ".png",
                        true);
         }
@@ -94,11 +95,13 @@ int main(int argc, char** argv) {
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img,
                         Twc);
         Mat depthImg;
-        if (config->useDepthImage ||
+        if (config->useDepthImage || config->debugWithTrueDepthImage ||
             (config->initWithTrueDepth && !isInitialized)) {
             bool success = GetDepthImage(vTimeStamps[i], vDepthImgs,
                                          vDepthImgTimes, depthImg);
             if (!success) {
+                cout << "Get depth at: " << to_string(vTimeStamps[i])
+                     << " Failed!" << endl;
                 continue;
             }
         }
@@ -106,7 +109,7 @@ int main(int argc, char** argv) {
              << endl;
 
         KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
-        if (config->useDepthImage) {
+        if (config->useDepthImage || config->debugWithTrueDepthImage) {
             curF.depthImage_ = depthImg;
         }
 
@@ -321,7 +324,7 @@ int main(int argc, char** argv) {
     if (KeyFrame::debugVideoWriter.isOpened()) {
         KeyFrame::debugVideoWriter.release();
     }
-    if(KeyFrame::debugTriangulateWriter.isOpened()) {
+    if (KeyFrame::debugTriangulateWriter.isOpened()) {
         KeyFrame::debugTriangulateWriter.release();
     }
 #endif

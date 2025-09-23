@@ -10,6 +10,10 @@
 
 class KeyFrame;
 
+
+constexpr double kInitInvDepth = 5.0;
+constexpr double kInitCov = 5.0 * 5.0;
+
 class Landmark {
    public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -32,8 +36,9 @@ class Landmark {
     bool IsOutOfRange() const { return outOfRange_; }
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame& kf2);
 
-    double invZ_ = 5.0;
-    double invDepthCov_ = 5.0 * 5.0;
+    double invZ_ = kInitInvDepth;
+    double invDepthCov_ = kInitCov;
+    double trueDepth_ = 0.;
 
     double depthRange_[2] = {0, 0};
     uint64_t descriptor_ = 0;

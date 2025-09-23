@@ -101,3 +101,4 @@ depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
 initWithTrueDepth: false
 
 debugMessageSaveFolder: "./"
+debugWithTrueDepthImage: true # 使用真值深度验证估计

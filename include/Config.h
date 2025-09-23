@@ -75,6 +75,7 @@ class Config {
     double depthFactor;
     bool initWithTrueDepth;
     std::string debugMessageSaveFolder;
+    bool debugWithTrueDepthImage;
 };
 
 extern Config* config;  // 外部可以定义及使用的全局变量，只在main函数初始化一次

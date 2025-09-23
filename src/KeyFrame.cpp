@@ -3,7 +3,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <fstream>
 #include <opencv2/highgui.hpp>
 #include <random>
 #include <string>
@@ -22,6 +21,7 @@ cv::VideoWriter KeyFrame::debugVideoWriter;
 constexpr int kDrawMatchNumEachFrame = 100;
 cv::VideoWriter KeyFrame::debugTriangulateWriter;
 constexpr int kDrawFailTriangulateNum = 10;
+constexpr int kDrawSuccessTriangulateNum = 50;
 #endif
 
 class Landmark;
@@ -88,6 +88,10 @@ KeyFrame::~KeyFrame() {
         }
     }
     // ReleaseMat(); // 不需要手动释放
+    if (invDepthUncertaintyFile_.is_open()) {
+        invDepthUncertaintyFile_.close();
+    }
+
     std::cout << this << " Releasw KF id: " << id_ << std::endl;
 }
 
@@ -549,21 +553,19 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
     videoEpipolarFailMatchDebugImg_.release();
 }
 
-void KeyFrame::WriteDebugTriangulateFailCase2Video(const string& caseName,
-                                                   const Pose& T12) {
-    if (videoFailTriangulateDebugImg_.empty()) {
+void KeyFrame::WriteDebugTriangulateCase2Video(const string& caseName,
+                                               const Pose& T12, cv::Mat& img) {
+    if (img.empty()) {
         return;
     }
     int start_text_row = 20;
     int step_text_row = 20;
-    cv::putText(videoFailTriangulateDebugImg_, T12.QwbString(),
-                cv::Point(10, (start_text_row)), cv::FONT_ITALIC, 0.8,
-                kColor.at("red"), 1);
-    cv::putText(videoFailTriangulateDebugImg_, T12.PwbString(),
+    cv::putText(img, T12.QwbString(), cv::Point(10, (start_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+    cv::putText(img, T12.PwbString(),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-    cv::putText(videoFailTriangulateDebugImg_, caseName,
-                cv::Point(10, (start_text_row += step_text_row)),
+    cv::putText(img, caseName, cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
 
     // 初始化边缘匹配的debug视频写入器
@@ -578,8 +580,8 @@ void KeyFrame::WriteDebugTriangulateFailCase2Video(const string& caseName,
         // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
         int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
         int fps = 30;
-        KeyFrame::debugTriangulateWriter.open(
-            videoPath, fourcc, fps, videoFailTriangulateDebugImg_.size(), true);
+        KeyFrame::debugTriangulateWriter.open(videoPath, fourcc, fps,
+                                              img.size(), true);
         if (!KeyFrame::debugTriangulateWriter.isOpened()) {
             cerr << "Open debug video path: " << videoPath << " failed" << endl;
             exit(-1);
@@ -587,8 +589,8 @@ void KeyFrame::WriteDebugTriangulateFailCase2Video(const string& caseName,
         cout << "Open debug video path: " << videoPath << endl;
     }
 
-    debugTriangulateWriter.write(videoFailTriangulateDebugImg_);
-    videoFailTriangulateDebugImg_.release();
+    debugTriangulateWriter.write(img);
+    img.release();
 }
 
 void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
@@ -677,21 +679,21 @@ void KeyFrame::DrawFailEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
     cv::line(videoEpipolarFailMatchDebugImg_, p1, lp1, kColor.at("green"), 1);
 }
 
-void KeyFrame::DrawFailTriangulateCase(const double estD1, const double estD2,
-                                       const Eigen::Vector2i& kp1,
-                                       const Eigen::Vector2i& matchKp2,
-                                       const cv::Mat& debugImg2) {
-    if (videoFailTriangulateDebugImg_.empty()) {
-        videoFailTriangulateDebugImg_ =
-            cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
-                    cv::Scalar{0, 0, 0});
+void KeyFrame::DrawTriangulateCase(const double estD1, const double estD2,
+                                   const Eigen::Vector2i& kp1,
+                                   const Eigen::Vector2i& matchKp2,
+                                   const cv::Mat& debugImg2,
+                                   const bool success) {
+    cv::Mat& showImg = success ? videoSuccessTriangulateDebugImg_
+                               : videoFailTriangulateDebugImg_;
+    if (showImg.empty()) {
+        showImg = cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                          cv::Scalar{0, 0, 0});
         Mat im1, im2;
         cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
         cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
-        im1.copyTo(
-            videoFailTriangulateDebugImg_.colRange(0, debugGrayImg_.cols));
-        im2.copyTo(videoFailTriangulateDebugImg_.colRange(
-            debugGrayImg_.cols, videoFailTriangulateDebugImg_.cols));
+        im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
     }
 
     const int colorId = abs(rand()) % kColor.size();
@@ -707,24 +709,21 @@ void KeyFrame::DrawFailTriangulateCase(const double estD1, const double estD2,
 
     const cv::Point pointDiff(debugGrayImg_.cols, 0);
     cv::Point p1(kp1.x(), kp1.y());
-    cv::circle(videoFailTriangulateDebugImg_, p1, radius, matchColor, 1);
+    cv::circle(showImg, p1, radius, matchColor, 1);
     cv::Point p2(matchKp2.x(), matchKp2.y());
-    cv::circle(videoFailTriangulateDebugImg_, p2 + pointDiff, radius,
-               matchColor, 1);
+    cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
 
     constexpr double kTextRatio = 0.5;
     const cv::Point textDiff(3, 0);
-    cv::putText(videoFailTriangulateDebugImg_,
-                fmt::format("({}, {}, {:.1f})", p1.x, p1.y, estD1),
+    cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p1.x, p1.y, estD1),
                 p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
                 1);
-    cv::putText(videoFailTriangulateDebugImg_,
-                fmt::format("({}, {}, {:.1f})", p2.x, p2.y, estD2),
+    cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p2.x, p2.y, estD2),
                 p2 + textDiff + pointDiff, cv::FONT_ITALIC, kTextRatio,
                 kColor.at("red"), 1);
 
     // 画极线起终点，起点绿色，终点红色，连线蓝色
-    cv::line(videoFailTriangulateDebugImg_, p1, p2 + pointDiff, matchColor, 1);
+    cv::line(showImg, p1, p2 + pointDiff, matchColor, 1);
 }
 #endif
 
@@ -740,7 +739,8 @@ size_t KeyFrame::GenerateLandmark(
     debugGoodKp2.resize(equalparts);
     for (int i = 0; i < unPx_[0].size(); ++i) {
         const Eigen::Vector2i& upx = unPx_[0][i];
-        landmark_.push_back(new Landmark(upx, this, cam_, descriptor_[i], 1.0));
+        landmark_.push_back(
+            new Landmark(upx, this, cam_, descriptor_[i], kInitInvDepth));
         landmark_.back()->descriptor_ = descriptor_[i];
         // landmark_.back()->UpdateUncertainty();
     }
@@ -758,7 +758,8 @@ size_t KeyFrame::InitializeLandmark() {
     const int h = grayImg_.rows;
 
     for (int i = 0; i < unPx_[0].size(); ++i) {
-        if (landmark_[i] != nullptr && !config->useDepthImage) {
+        if (landmark_[i] != nullptr && !config->useDepthImage &&
+            !config->debugWithTrueDepthImage) {
             continue;
         }
         const int x = unPx_[0][i].x();
@@ -768,29 +769,31 @@ size_t KeyFrame::InitializeLandmark() {
         // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
 
         const uint64_t descriptor = 0;
-        if (!config->useDepthImage && depthImage_.empty()) {
-            landmark_[i] =
-                new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
-            // host帧也要增加与landmark的相互观测
-            landmark_[i]->target_.insert({this, unPx_[0][i]});
-
+        if (!config->useDepthImage && !config->debugWithTrueDepthImage &&
+            depthImage_.empty()) {
+            landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor,
+                                        kInitInvDepth);
         } else {
             // double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
             double d = static_cast<double>(depthImage_.at<ushort>(y, x));
             if (d == 0) {
-                landmark_[i] =
-                    new Landmark(unPx_[0][i], this, cam_, descriptor, 1.0);
-                // host帧也要增加与landmark的相互观测
-                landmark_[i]->target_.insert({this, unPx_[0][i]});
+                landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor,
+                                            kInitInvDepth);
+
             } else {
                 d /= config->depthFactor;
-                landmark_[i] =
-                    new Landmark(unPx_[0][i], this, cam_, descriptor, d);
-                landmark_[i]->target_.insert({this, unPx_[0][i]});
-                landmark_[i]->invDepthCov_ = 0.005;
-                landmark_[i]->obvTime_ = 1e3;
-                landmark_[i]->UpdateUncertainty(true);
+                landmark_[i] = new Landmark(unPx_[0][i], this, cam_, descriptor,
+                                            kInitInvDepth);
+                landmark_[i]->trueDepth_ = 1.0 / d;
+                if (config->useDepthImage) {
+                    landmark_[i]->invDepthCov_ = 0.005;
+                    landmark_[i]->obvTime_ = 1e3;
+                    landmark_[i]->UpdateUncertainty(true);
+                    landmark_[i]->invZ_ = 1.0 / d;
+                }
             }
+            // host帧也要增加与landmark的相互观测
+            landmark_[i]->target_.insert({this, unPx_[0][i]});
         }
     }
 
@@ -805,7 +808,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
     const Pose Tc2c1 = Tc1c2.Inverse();
-    if (Tc1c2.t_wb_.norm() < 0.02 || config->useDepthImage) {
+    if (Tc1c2.t_wb_.norm() < 0.05 || config->useDepthImage) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -821,6 +824,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     std::mt19937 gen(rd());
     std::shuffle(landmark_.begin(), landmark_.end(), gen);
     int failTriangulateCount = 0;
+    int successTriangulateCount = 0;
 #endif
 
     ResetDebugMessage();
@@ -940,15 +944,26 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                      << "kp1: " << lk1->uv_.transpose()
                      << " bestPx2: " << bestPx2.transpose() << endl;
                 ++lk1->failObvTime_;
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-                DrawFailTriangulateCase(estD1, estD2, lk1->uv_,
-                                        bestPx2.cast<int>(), kf2.debugGrayImg_);
+                DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
+                                    kf2.debugGrayImg_, false);
                 if (++failTriangulateCount % kDrawFailTriangulateNum == 0) {
-                    WriteDebugTriangulateFailCase2Video("Fail tri", Tc1c2);
+                    WriteDebugTriangulateCase2Video(
+                        "Fail tri", Tc1c2, videoFailTriangulateDebugImg_);
                 }
 #endif
                 continue;
             }
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+            DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
+                                kf2.debugGrayImg_, true);
+            if (++successTriangulateCount % kDrawSuccessTriangulateNum == 0) {
+                WriteDebugTriangulateCase2Video(
+                    "Success tri", Tc1c2, videoSuccessTriangulateDebugImg_);
+            }
+#endif
             const double invD1 = 1.0 / estD1;
             const double estCov =
                 CalculateVariance(invD1, lk1->uv_.cast<double>(), bestPx2,
@@ -974,19 +989,22 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             lk1->SetOutOfRange();
         }
 
-        static ofstream unf;
-        static bool first = 1;
-        if (first) {
-            unf.open("depth_uncertainty.csv");
-            unf << "#std, d" << endl;
-            unf.close();
-            first = false;
+        if (firstWriteUncertainty_) {
+            invDepthUncertaintyFile_.open(
+                fmt::format("{}/kf_{}_depth_uncertainty.csv",
+                            config->debugMessageSaveFolder, id_));
+            invDepthUncertaintyFile_ << "#pointId, cov, invDepth, depth, "
+                                        "trueDepth, depthDiff, obvTime"
+                                     << endl;
+            firstWriteUncertainty_ = false;
         }
-        unf.open("depth_uncertainty.csv", ios::app);
         // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
-        if (i % 1000 == 0)
-            unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
-        unf.close();
+        const double estDepth = GetPositiveDepth(lk1->invZ_);
+        invDepthUncertaintyFile_
+            << reinterpret_cast<uintptr_t>(lk1) << ", " << lk1->invDepthCov_
+            << ", " << lk1->invZ_ << ", " << estDepth << ", " << lk1->trueDepth_
+            << ", " << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_
+            << endl;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         if (++drawCount % kDrawMatchNumEachFrame == 0) {

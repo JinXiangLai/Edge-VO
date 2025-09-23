@@ -1,6 +1,7 @@
 #ifndef CLASS_KEYFRAME
 #define CLASS_KEYFRAME
 
+#include <fstream>
 #include <memory>
 
 #include "Camera.h"
@@ -108,6 +109,9 @@ class KeyFrame {
     void AddReportElement(const std::string& key);
     void ResetDebugMessage();
 
+    std::ofstream invDepthUncertaintyFile_;
+    bool firstWriteUncertainty_ = true;
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                 const Eigen::Vector2i& matchKp2,
@@ -122,17 +126,19 @@ class KeyFrame {
                                         const Eigen::Vector2i& lp2End,
                                         const cv::Mat& debugImg2);
     void WriteDebugImage2VideoEachFrame(const int kf2Id);
-    void DrawFailTriangulateCase(const double estD1, const double estD2,
+    void DrawTriangulateCase(const double estD1, const double estD2,
                                  const Eigen::Vector2i& kp1,
                                  const Eigen::Vector2i& matchKp2,
-                                 const cv::Mat& debugImg2);
-    void WriteDebugTriangulateFailCase2Video(const std::string& caseName, const Pose& T12);
+                                 const cv::Mat& debugImg2, const bool success = false);
+    void WriteDebugTriangulateCase2Video(const std::string& caseName, const Pose& T12, cv::Mat& img);
     cv::Mat videoBestMatchDebugImg_;
     cv::Mat videoEpipolarMatchDebugImg_;
     cv::Mat videoEpipolarFailMatchDebugImg_;
     cv::Mat videoFailTriangulateDebugImg_;
+    cv::Mat videoSuccessTriangulateDebugImg_;
     static cv::VideoWriter debugVideoWriter;
     static cv::VideoWriter debugTriangulateWriter;
+    // TODO：保留一些Landmark的深度收敛过程
 #endif
 };
 
