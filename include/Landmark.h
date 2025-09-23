@@ -32,8 +32,8 @@ class Landmark {
     bool IsOutOfRange() const { return outOfRange_; }
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame& kf2);
 
-    double invZ_ = 1.0;
-    double invDepthCov_ = 10.0 * 10.0;
+    double invZ_ = 5.0;
+    double invDepthCov_ = 5.0 * 5.0;
 
     double depthRange_[2] = {0, 0};
     uint64_t descriptor_ = 0;
