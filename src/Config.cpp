@@ -91,10 +91,17 @@ Config::Config(const std::string& yamlFilePath) {
     depthFactor = f["depthFactor"].as<double>();
     initWithTrueDepth = f["initWithTrueDepth"].as<bool>();
     debugMessageSaveFolder = f["debugMessageSaveFolder"].as<string>();
-    while(debugMessageSaveFolder.back() == '/') {
+    while (debugMessageSaveFolder.back() == '/') {
         debugMessageSaveFolder.pop_back();
     }
     debugWithTrueDepthImage = f["debugWithTrueDepthImage"].as<bool>();
+    vector<int> keyPointSet = f["debugKFpointSet"].as<std::vector<int>>();
+    for (int i = 0; i < keyPointSet.size(); i += 2) {
+        pixelCount.insert({keyPointSet[i], keyPointSet[i + 1]});
+    }
+    //for (const Eigen::Vector2i& p : pixelCount) {
+    //    cout << p.transpose() << endl;
+    //}
 }
 
 Config* config = nullptr;

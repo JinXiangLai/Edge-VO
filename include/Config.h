@@ -4,14 +4,36 @@
 #include <math.h>
 #include <iostream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <yaml-cpp/yaml.h>
+#include <Eigen/Dense>
 
 constexpr double kRad2Deg = 180 / M_PI;
 constexpr double kDeg2Rad = M_PI / 180;
 constexpr int kDescriptorPatchSize = 9;
 enum MessageLevel { Debug, Info, Error };
+
+// 更健壮的哈希函数，避免冲突
+struct RobustVector2iHash {
+    std::size_t operator()(const Eigen::Vector2i& vec) const {
+        // 使用boost的hash_combine思想
+        std::size_t seed = 0;
+        seed ^=
+            std::hash<int>()(vec.x()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        seed ^=
+            std::hash<int>()(vec.y()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        return seed;
+    }
+};
+
+struct Vector2iEqual {
+    bool operator()(const Eigen::Vector2i& lhs,
+                    const Eigen::Vector2i& rhs) const {
+        return lhs == rhs;  // Eigen已经重载了==操作符
+    }
+};
 
 class Config {
    public:
@@ -76,6 +98,8 @@ class Config {
     bool initWithTrueDepth;
     std::string debugMessageSaveFolder;
     bool debugWithTrueDepthImage;
+    std::unordered_set<Eigen::Vector2i, RobustVector2iHash, Vector2iEqual>
+        pixelCount;
 };
 
 extern Config* config;  // 外部可以定义及使用的全局变量，只在main函数初始化一次

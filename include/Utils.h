@@ -1,8 +1,8 @@
 #ifndef UTILS
 #define UTILS
 
-#include <cstdint>
 #include <fmt/core.h>
+#include <cstdint>
 #include <iostream>
 #include <map>
 #include <memory>

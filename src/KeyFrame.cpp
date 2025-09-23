@@ -1002,10 +1002,11 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
         if (lk1->trueDepth_ > 0.01) {
             const double estDepth = GetPositiveDepth(lk1->invZ_);
             invDepthUncertaintyFile_
-                << reinterpret_cast<uintptr_t>(lk1) << ", " << lk1->invDepthCov_
-                << ", " << lk1->invZ_ << ", " << estDepth << ", "
-                << lk1->trueDepth_ << ", " << (estDepth - lk1->trueDepth_)
-                << ", " << lk1->obvTime_ << endl;
+                << lk1->uv_.x() << "_" << lk1->uv_.y() << ", "
+                << lk1->invDepthCov_ << ", " << lk1->invZ_ << ", " << estDepth
+                << ", " << lk1->trueDepth_ << ", "
+                << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_
+                << endl;
         }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
