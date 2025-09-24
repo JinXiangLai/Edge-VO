@@ -66,9 +66,11 @@ class KeyFrame {
                                  const Eigen::Vector2d& ep2,
                                  const Eigen::Vector2d& pFar);
 
+    // 输出far2->near2，以及相机1的极点，绘制p1->epipolarP1
     double FindMatchesWithEpipolarConstraintOnImagePlane(
         const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
-        const bool drawMatch = true);
+        Eigen::Vector2d& farPx, Eigen::Vector2d& nearPx,
+        Eigen::Vector2d& epipolarP1, const bool drawMatch = true);
 
     void GenerateKeyPoint();
 
@@ -126,11 +128,13 @@ class KeyFrame {
                                         const Eigen::Vector2i& lp2End,
                                         const cv::Mat& debugImg2);
     void WriteDebugImage2VideoEachFrame(const int kf2Id);
-    void DrawTriangulateCase(const double estD1, const double estD2,
-                                 const Eigen::Vector2i& kp1,
-                                 const Eigen::Vector2i& matchKp2,
-                                 const cv::Mat& debugImg2, const bool success = false);
-    void WriteDebugTriangulateCase2Video(const std::string& caseName, const Pose& T12, cv::Mat& img);
+    void DrawTriangulateCase(
+        const double estD1, const double estD2, const Eigen::Vector2i& kp1,
+        const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
+        const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
+        const cv::Mat& debugImg2, const bool success = false);
+    void WriteDebugTriangulateCase2Video(const std::string& caseName,
+                                         const Pose& T12, cv::Mat& img);
     cv::Mat videoBestMatchDebugImg_;
     cv::Mat videoEpipolarMatchDebugImg_;
     cv::Mat videoEpipolarFailMatchDebugImg_;

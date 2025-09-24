@@ -679,11 +679,11 @@ void KeyFrame::DrawFailEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
     cv::line(videoEpipolarFailMatchDebugImg_, p1, lp1, kColor.at("green"), 1);
 }
 
-void KeyFrame::DrawTriangulateCase(const double estD1, const double estD2,
-                                   const Eigen::Vector2i& kp1,
-                                   const Eigen::Vector2i& matchKp2,
-                                   const cv::Mat& debugImg2,
-                                   const bool success) {
+void KeyFrame::DrawTriangulateCase(
+    const double estD1, const double estD2, const Eigen::Vector2i& kp1,
+    const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
+    const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
+    const cv::Mat& debugImg2, const bool success) {
     cv::Mat& showImg = success ? videoSuccessTriangulateDebugImg_
                                : videoFailTriangulateDebugImg_;
     if (showImg.empty()) {
@@ -705,25 +705,38 @@ void KeyFrame::DrawTriangulateCase(const double estD1, const double estD2,
             break;
         }
     }
-    int radius = 2;
 
+    int radius = 3;
+
+    cv::Vec3b nearColor(0, 255, 0);
+    cv::Vec3b farColor(0, 0, 255);
     const cv::Point pointDiff(debugGrayImg_.cols, 0);
     cv::Point p1(kp1.x(), kp1.y());
-    cv::circle(showImg, p1, radius, matchColor, 1);
     cv::Point p2(matchKp2.x(), matchKp2.y());
-    cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
-
     constexpr double kTextRatio = 0.5;
     const cv::Point textDiff(3, 0);
+    // 写必要信息
     cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p1.x, p1.y, estD1),
                 p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
                 1);
     cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p2.x, p2.y, estD2),
                 p2 + textDiff + pointDiff, cv::FONT_ITALIC, kTextRatio,
                 kColor.at("red"), 1);
-
     // 画极线起终点，起点绿色，终点红色，连线蓝色
     cv::line(showImg, p1, p2 + pointDiff, matchColor, 1);
+
+    // 画极线以查看匹配是否准确
+    cv::Point ep1(epipolarP1.x(), epipolarP1.y());
+    cv::line(showImg, p1, ep1, kColor.at("white"), 1);
+    cv::circle(showImg, p1, radius, matchColor, 1);
+    cv::circle(showImg, ep1, 2, nearColor, -1);
+
+    cv::Point n2(nearPx2.x(), nearPx2.y());
+    cv::Point f2(farPx2.x(), farPx2.y());
+    cv::line(showImg, n2 + pointDiff, f2 + pointDiff, kColor.at("white"), 1);
+    cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
+    cv::circle(showImg, n2 + pointDiff, 2, nearColor, -1);
+    cv::circle(showImg, f2 + pointDiff, 2, farColor, -1);
 }
 #endif
 
@@ -837,63 +850,13 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             convergeEdgeNum_ += 1;
         }
 
-        if (!lk1->noUsed_ &&
-            !lk1->matchNextPixel_.isApprox(Eigen::Vector2d::Zero())) {
-            double estD1 = -1;
-            double estD2 = -1;
-            if (!GetHostAndCurFrameObservationDepth(
-                    lk1->uv_.cast<double>(), lk1->matchNextPixel_,
-                    cam_->Kinv_[0], Tc1c2, estD1, estD2)) {
-                cout << "Calculate d1: " << estD1 << " d2: " << estD2
-                     << " failed! no update!";
-                continue;
-            }
-            const double invD1 = 1.0 / estD1;
-            const double estCov = CalculateVariance(
-                invD1, lk1->uv_.cast<double>(), lk1->matchNextPixel_, Tc2c1,
-                cam_->Kinv_[0], cam_->K_[0]);
-            if (i % 1000 == 0)
-                cout << "0th invz: " << lk1->invZ_
-                     << ", cov: " << lk1->invDepthCov_
-                     << ", bestInvDepth: " << invD1 << ", estCov: " << estCov
-                     << endl;
-
-            // if(CheckDepthQuality(*lk1, Tc1c2, lk1->matchNextPixel_, bestDepth) && std > config->minObvDepthStd
-            //     && std < config->maxObvDepthStd) {
-            if (1) {
-                double u2 = invD1,
-                       cov2 = estCov;  // 考虑基线的影响
-                double u1 = lk1->invZ_, cov1 = lk1->invDepthCov_;
-                lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-                lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
-                lk1->UpdateUncertainty(true);
-
-                {
-                    static ofstream unf;
-                    static bool first = 1;
-                    if (first) {
-                        unf.open("depth_uncertainty_new.csv");
-                        unf << "#std, d" << endl;
-                        unf.close();
-                        first = false;
-                    }
-                    unf.open("depth_uncertainty_new.csv", ios::app);
-                    // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
-                    if (i % 1000 == 0)
-                        unf << lk1->invDepthCov_ << " " << lk1->invZ_ << endl;
-                    unf.close();
-                }
-
-                continue;
-            }
-        }
-
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
-        Eigen::Vector2d bestPx2(0, 0);
+        Eigen::Vector2d bestPx2(0, 0), farPx2(0, 0), nearPx2(0, 0),
+            epipolarP1(0, 0);
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestPx2, true);
+            &kf2, lk1, bestPx2, farPx2, nearPx2, epipolarP1, true);
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
@@ -947,9 +910,10 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
                 if (lk1->IsDebugPoint()) {
-                    DrawTriangulateCase(estD1, estD2, lk1->uv_,
-                                        bestPx2.cast<int>(), kf2.debugGrayImg_,
-                                        false);
+                    DrawTriangulateCase(
+                        estD1, estD2, lk1->uv_, epipolarP1.cast<int>(),
+                        bestPx2.cast<int>(), farPx2.cast<int>(),
+                        nearPx2.cast<int>(), kf2.debugGrayImg_, false);
                     if (++failTriangulateCount % kDrawFailTriangulateNum == 0 ||
                         1) {
                         WriteDebugTriangulateCase2Video(
@@ -963,7 +927,9 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
             if (lk1->IsDebugPoint()) {
-                DrawTriangulateCase(estD1, estD2, lk1->uv_, bestPx2.cast<int>(),
+                DrawTriangulateCase(estD1, estD2, lk1->uv_,
+                                    epipolarP1.cast<int>(), bestPx2.cast<int>(),
+                                    farPx2.cast<int>(), nearPx2.cast<int>(),
                                     kf2.debugGrayImg_, true);
                 if (++successTriangulateCount % kDrawSuccessTriangulateNum ==
                         0 ||
@@ -1036,10 +1002,6 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     ReportMatchResult();
 
     ++updateFrameCount_;
-    ofstream unf;
-    unf.open("depth_uncertainty.csv", ios::app);
-    unf << "#std, d" << endl;
-    unf.close();
 
     if (config->messageLevel <= MessageLevel::Error)
         cout << setprecision(5)
@@ -1283,7 +1245,8 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
-    const bool drawMatch) {
+    Eigen::Vector2d& farPx2, Eigen::Vector2d& nearPx2,
+    Eigen::Vector2d& epipolarP1, const bool drawMatch) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         // cout << "Error lk1 is nullptr or out of range!\n";
         AddReportElement("lk1 is nullptr or out of range!");
@@ -1295,20 +1258,28 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const double fx = cam_->fx_, fy = cam_->fy_, cx = cam_->cx_, cy = cam_->cy_;
 
     // 求KF1像素平面上对应极线，直接把O2当作O1相机系下的一点，那么极点位置不就轻松求出来了
-    // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时呢？
+    // 极线就是极点与p1的交点
+    // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时：就让极点都乘以t12嘛
     const Eigen::Vector3d& t12 = T12.t_wb_;
     Eigen::Vector2d p1 = lk1->uv_.cast<double>();
     // ep1 = (x, y)*t12.z - 极点e1*t12.z
     // 注意：这个极线是像素平面上放大 t12.z 倍后的方向向量
     Eigen::Vector2d ep1{-fx * t12[0] + t12[2] * (p1.x() - cx),
                         -fy * t12[1] + t12[2] * (p1.y() - cy)};
-    // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
-    // ep1 *= -1;
-    if (ep1.norm() < 1.0) {
-        // cout << "Error ep1 norm: " << ep1.norm() << " < 1 pixel!\n";
-        AddReportElement("ep1 norm < 1!");
-        return EpipolarMatchType::nanValueNOstereoVisionIssue;
+    if (abs(t12.z()) > 1e-9) {
+        ep1 /= t12.z();
+        if (ep1.norm() < 1.0) {
+            // cout << "Error ep1 norm: " << ep1.norm() << " < 1 pixel!\n";
+            AddReportElement("ep1 norm < 1!");
+            return EpipolarMatchType::nanValueNOstereoVisionIssue;
+        }
+        epipolarP1 = p1 - ep1;
+    } else {
+        // 此时极线是无限长的，不需要判断长度
     }
+    // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
+    ep1 *= -1;  // 保证是近点指向远点的像素投影坐标，极点对应于近点投影
+
     ep1.normalize();
 
     const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
@@ -1347,9 +1318,11 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         AddReportElement("Far z < near z");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
-    Eigen::Vector2d farPx2 = cam_->Project2PixelPlane(farPc2),
-                    nearPx2 = cam_->Project2PixelPlane(nearPc2);
+
+    farPx2 = cam_->Project2PixelPlane(farPc2);
+    nearPx2 = cam_->Project2PixelPlane(nearPc2);
     // 从 far->near 的方向向量，ep1极线向量的方向相对图像需要与此保持一致
+    // 极点对应着最小深度投影(因为是归一化平面交点)
     Eigen::Vector2d ep2 = nearPx2 - farPx2;
     const double ep2Len = ep2.norm();
     ep2 = ep2.normalized();

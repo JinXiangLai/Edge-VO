@@ -285,7 +285,7 @@ int main(int argc, char** argv) {
 
             // win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
-            // optimizer.AddOneKeyFeame(new KeyFrame(curF));
+            optimizer.AddOneKeyFeame(new KeyFrame(curF));
             t11 = chrono::steady_clock::now();
             interaction->visualLastKF = win.back();
 
