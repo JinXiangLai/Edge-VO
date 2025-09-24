@@ -26,7 +26,7 @@ wheelRadius: 0
 maxDepth: 150.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.1
 
-maxDescriptorDist: 10 # or 使用光度残差时重新设置，如果使用去均值的SSD，这个值应该设的小
+maxDescriptorDist: 10 # or 使用光度残差时重新设置，如果使用去均值的SSD，这个值应该设的小，越大越宽松
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
@@ -88,8 +88,8 @@ nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优�
 descriptorPatchLen: 5
 minEpipolarSearchLine: 10
 maxEpipolarSearchLine: 30 # most import item for triangulation
-best2SecondRatio: 0.7 # 因为存在极线退化场景，为了避免误匹配
-best2SecondDist: 1 # pixels，这个应该可以设置小点，存在边缘检测不稳定情况
+best2SecondRatio: 0.75 # 因为存在极线退化场景，为了避免误匹配，越大越宽松
+best2SecondDist: 3 # pixels，这个应该可以设置小点，存在边缘检测不稳定情况，越大越宽松
 SimErrorRatio: 0.8 # 千分之5
 drawGoddEpipolarMatch: true
 drawAllEpipolarMatch: false

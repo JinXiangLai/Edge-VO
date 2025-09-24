@@ -1443,7 +1443,7 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
 Eigen::Vector2i ParseKeypointSet(const std::string& s) {
     // 解析"num_num"为数字
     const int _pos = s.find_first_of('_');
-    return {stoi(s.substr(0, _pos)), stoi(s.substr(_pos+1, s.size()))};
+    return {stoi(s.substr(0, _pos)), stoi(s.substr(_pos + 1, s.size()))};
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
