@@ -680,7 +680,7 @@ void KeyFrame::DrawFailEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
 }
 
 void KeyFrame::DrawTriangulateCase(
-    const double estD1, const double estD2, const Eigen::Vector2i& kp1,
+    const double estD1, const double estD2, const Landmark& lk1,
     const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
     const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
     const cv::Mat& debugImg2, const bool success) {
@@ -711,12 +711,13 @@ void KeyFrame::DrawTriangulateCase(
     cv::Vec3b nearColor(0, 255, 0);
     cv::Vec3b farColor(0, 0, 255);
     const cv::Point pointDiff(debugGrayImg_.cols, 0);
+    const Eigen::Vector2i& kp1 = lk1.uv_;
     cv::Point p1(kp1.x(), kp1.y());
     cv::Point p2(matchKp2.x(), matchKp2.y());
     constexpr double kTextRatio = 0.5;
     const cv::Point textDiff(3, 0);
     // 写必要信息
-    cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p1.x, p1.y, estD1),
+    cv::putText(showImg, fmt::format("({}, {}, {:.1f}), {:.1f}", p1.x, p1.y, estD1, lk1.trueDepth_),
                 p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
                 1);
     cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p2.x, p2.y, estD2),
@@ -911,7 +912,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 #if defined(WRITE_MATCH_PAIR_IMAGE)
                 if (lk1->IsDebugPoint()) {
                     DrawTriangulateCase(
-                        estD1, estD2, lk1->uv_, epipolarP1.cast<int>(),
+                        estD1, estD2, *lk1, epipolarP1.cast<int>(),
                         bestPx2.cast<int>(), farPx2.cast<int>(),
                         nearPx2.cast<int>(), kf2.debugGrayImg_, false);
                     if (++failTriangulateCount % kDrawFailTriangulateNum == 0 ||
@@ -927,7 +928,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
             if (lk1->IsDebugPoint()) {
-                DrawTriangulateCase(estD1, estD2, lk1->uv_,
+                DrawTriangulateCase(estD1, estD2, *lk1,
                                     epipolarP1.cast<int>(), bestPx2.cast<int>(),
                                     farPx2.cast<int>(), nearPx2.cast<int>(),
                                     kf2.debugGrayImg_, true);
@@ -1276,9 +1277,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         epipolarP1 = p1 - ep1;
     } else {
         // 此时极线是无限长的，不需要判断长度
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
-    ep1 *= -1;  // 保证是近点指向远点的像素投影坐标，极点对应于近点投影
+    //ep1 *= -1;  // 保证是近点指向远点的像素投影坐标，极点对应于近点投影
 
     ep1.normalize();
 

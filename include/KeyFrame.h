@@ -129,7 +129,7 @@ class KeyFrame {
                                         const cv::Mat& debugImg2);
     void WriteDebugImage2VideoEachFrame(const int kf2Id);
     void DrawTriangulateCase(
-        const double estD1, const double estD2, const Eigen::Vector2i& kp1,
+        const double estD1, const double estD2, const Landmark& lk1,
         const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
         const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
         const cv::Mat& debugImg2, const bool success = false);
