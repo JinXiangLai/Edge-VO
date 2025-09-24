@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 0
+#if 1
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-#define SHOW_GLOBAL_MAP 0
+#define SHOW_GLOBAL_MAP 1
 void Run(Optimizer* optimizer) {
     while (1) {
 #if SHOW_GLOBAL_MAP

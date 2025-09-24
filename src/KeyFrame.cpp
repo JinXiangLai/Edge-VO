@@ -1269,6 +1269,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
+    // 验证了，不乘以-1时，结果很错误，可视化也显示p->e1才对应farPx2->nearPx2
     ep1 *= -1;  // 保证是近点指向远点的像素投影坐标，极点对应于近点投影
 
     ep1.normalize();
