@@ -103,8 +103,4 @@ initWithTrueDepth: false
 debugMessageSaveFolder: "./"
 debugWithTrueDepthImage: true # 使用真值深度验证估计
 # 使用unordered_set存储如下点，只绘制如下点的debug视频
-debugKFpointSet: [100, 330,  
-101, 162,
-105, 168,
-107, 108,
-299, 282]
+debugKFpointSet: [425_262, 333_244]

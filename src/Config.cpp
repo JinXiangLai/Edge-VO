@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "Utils.h"
 
 using namespace std;
 
@@ -95,9 +96,9 @@ Config::Config(const std::string& yamlFilePath) {
         debugMessageSaveFolder.pop_back();
     }
     debugWithTrueDepthImage = f["debugWithTrueDepthImage"].as<bool>();
-    vector<int> keyPointSet = f["debugKFpointSet"].as<std::vector<int>>();
-    for (int i = 0; i < keyPointSet.size(); i += 2) {
-        pixelCount.insert({keyPointSet[i], keyPointSet[i + 1]});
+    vector<string> keyPointSet = f["debugKFpointSet"].as<std::vector<string>>();
+    for (const string& s : keyPointSet) {
+        pixelCount.insert(ParseKeypointSet(s));
     }
     //for (const Eigen::Vector2i& p : pixelCount) {
     //    cout << p.transpose() << endl;

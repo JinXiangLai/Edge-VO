@@ -325,6 +325,8 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
                                                const Eigen::Vector3d& Pc2,
                                                const Eigen::Matrix3d& K);
 
+Eigen::Vector2i ParseKeypointSet(const std::string& s);
+
 enum KeyboardEvent { Reset, StepByStep };
 
 class InteractionParam {

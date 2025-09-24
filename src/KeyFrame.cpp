@@ -173,7 +173,7 @@ void KeyFrame::CannyEdgeDetect() {
     Mat blurred = grayImg_.clone();
 #endif
     // 应用高斯滤波来平滑边缘
-    cv::GaussianBlur(grayImg_, blurred, cv::Size(5, 5), 1);
+    cv::GaussianBlur(grayImg_, blurred, cv::Size(3, 3), 1);
 
     debugGrayImg_ = grayImg_.clone();
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -715,9 +715,11 @@ void KeyFrame::DrawTriangulateCase(
     cv::Point p1(kp1.x(), kp1.y());
     cv::Point p2(matchKp2.x(), matchKp2.y());
     constexpr double kTextRatio = 0.5;
-    const cv::Point textDiff(3, 0);
+    const cv::Point textDiff(5, 0);
     // 写必要信息
-    cv::putText(showImg, fmt::format("({}, {}, {:.1f}), {:.1f}", p1.x, p1.y, estD1, lk1.trueDepth_),
+    cv::putText(showImg,
+                fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1.x, p1.y, estD1,
+                            lk1.trueDepth_, lk1.obvTime_ + 1),
                 p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
                 1);
     cv::putText(showImg, fmt::format("({}, {}, {:.1f})", p2.x, p2.y, estD2),
@@ -928,10 +930,10 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
             if (lk1->IsDebugPoint()) {
-                DrawTriangulateCase(estD1, estD2, *lk1,
-                                    epipolarP1.cast<int>(), bestPx2.cast<int>(),
-                                    farPx2.cast<int>(), nearPx2.cast<int>(),
-                                    kf2.debugGrayImg_, true);
+                DrawTriangulateCase(estD1, estD2, *lk1, epipolarP1.cast<int>(),
+                                    bestPx2.cast<int>(), farPx2.cast<int>(),
+                                    nearPx2.cast<int>(), kf2.debugGrayImg_,
+                                    true);
                 if (++successTriangulateCount % kDrawSuccessTriangulateNum ==
                         0 ||
                     1) {
