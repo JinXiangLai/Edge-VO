@@ -11,6 +11,7 @@
 #define USE_POINT_MAP_ID 0
 
 class Landmark;
+constexpr double expandRatio = 1.1 * 1.1;
 
 struct TupleHash {
     size_t operator()(const Eigen::Vector2i& v) const {

@@ -696,15 +696,7 @@ void KeyFrame::DrawTriangulateCase(
         im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
     }
 
-    const int colorId = abs(rand()) % kColor.size();
-    int idx = -1;
-    cv::Vec3b matchColor(0, 0, 0);
-    for (const auto& c : kColor) {
-        if (++idx == colorId) {
-            matchColor = c.second;
-            break;
-        }
-    }
+    const cv::Vec3b& matchColor = kColor.at("yellow");
 
     int radius = 3;
 
@@ -773,7 +765,7 @@ size_t KeyFrame::InitializeLandmark() {
     const int w = grayImg_.cols;
     const int h = grayImg_.rows;
 
-    for (int i = 0; i < unPx_[0].size(); ++i) {
+    for (int i = 0; i < static_cast<int>(unPx_[0].size()); ++i) {
         if (landmark_[i] != nullptr && !config->useDepthImage &&
             !config->debugWithTrueDepthImage) {
             continue;
@@ -844,7 +836,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 #endif
 
     ResetDebugMessage();
-    for (int i = 0; i < landmark_.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(landmark_.size()); ++i) {
         if (landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
             continue;
         }
@@ -882,7 +874,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             }
         }
 
-        constexpr double varianceExpand[2] = {1.01, 1.01};  // {1.01, 1.1};
+        constexpr double varianceExpand[2] = {1.05, 1.1};  // {1.01, 1.1};
 
         // 深度量测更新
         if (error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
@@ -952,14 +944,9 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                      << ", bestInvDepth: " << invD1 << ", estCov: " << estCov
                      << endl;
 
-            double u2 = invD1, cov2 = estCov;  // 考虑基线的影响
-            double u1 = lk1->invZ_,
-                   cov1 = lk1->invDepthCov_ * varianceExpand[0];
-
-            lk1->invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-            lk1->invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
-            lk1->UpdateUncertainty(true);
-            ++findMatchNum;
+            if (lk1->ObvUpdate(invD1, estCov)) {
+                ++findMatchNum;
+            }
         }
 
         // 三角化后的深度异常值过大

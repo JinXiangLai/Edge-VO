@@ -10,7 +10,6 @@
 
 class KeyFrame;
 
-
 constexpr double kInitInvDepth = 5.0;
 constexpr double kInitCov = 5.0 * 5.0;
 
@@ -20,7 +19,7 @@ class Landmark {
 
     Landmark(const Eigen::Vector2i& px, KeyFrame* host,
              const std::shared_ptr<Camera> cam, const uint64_t desc,
-             const double z);
+             const double invZ);
     Landmark() {}
     Eigen::Vector3d GetPcNorm() const;
     Eigen::Vector3d GetPc() const;
@@ -31,8 +30,7 @@ class Landmark {
     bool Converge() const;
     bool ManySupport() const;
 
-    void SetOutOfRange() {  //outOfRange_ = true;
-    }
+    void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
     std::vector<Eigen::Vector2d> FindMatches(const KeyFrame& kf2);
 
@@ -73,9 +71,9 @@ class Landmark {
 
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 
-    bool IsDebugPoint() {
-        return config->pixelCount.count(uv_);
-    }
+    bool IsDebugPoint() { return config->pixelCount.count(uv_); }
+
+    bool ObvUpdate(const double invDepth, const double variance);
 };
 
 #endif

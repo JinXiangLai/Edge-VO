@@ -11,8 +11,8 @@ class KeyFrame;
 
 Landmark::Landmark(const Eigen::Vector2i& px, KeyFrame* host,
                    const shared_ptr<Camera> cam, const uint64_t desc,
-                   const double z)
-    : invZ_(1.0 / z), descriptor_(desc), host_(host), uv_(px), cam_(cam) {
+                   const double invZ)
+    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px), cam_(cam) {
     //invDepthCov_ = std::pow(1. / config->maxDepth, 2);
     depthRange_[0] = config->minDepth;
     depthRange_[1] = config->maxDepth;
@@ -23,7 +23,7 @@ Eigen::Vector3d Landmark::GetPcNorm() const {
 }
 
 Eigen::Vector3d Landmark::GetPc() const {
-    return cam_->InverseProject(uv_, GetPositiveDepth(1.0 / invZ_));
+    return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
 }
 
 Eigen::Vector3d Landmark::GetPw() const {
@@ -51,6 +51,24 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
     //    depthCov_ *= 0.9;
     //    UpdateUncertainty(false);
     //}
+}
+
+bool Landmark::ObvUpdate(const double invDepth, const double variance) {
+    const double diff = abs(invZ_ - invDepth);
+    if (diff > sqrt(invDepthCov_) * 3.0) {
+        invDepthCov_ *= expandRatio;
+        failObvTime_++;
+        return false;
+    }
+
+    const double &u2 = invDepth, &cov2 = variance;  // 考虑基线的影响
+    const double &u1 = invZ_, &cov1 = invDepthCov_;
+
+    invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
+    invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
+    //UpdateUncertainty(true);
+    obvTime_++;
+    return true;
 }
 
 void Landmark::UpdateUncertainty(const bool updateObv) {
