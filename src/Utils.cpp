@@ -123,7 +123,7 @@ vector<double> CalculateDescriptor(const cv::Mat& grayImg,
         exit(-1);
     }
 
-    if (len != 5) {
+    if (1) {
         const int mid = len / 2;  // default = 2
         // 这里我们使用双线性插值来获取光度，这样就不用担心四舍五入的问题了
         des[mid] = BilinearInterpolate<uchar>(grayImg, px);
@@ -1816,10 +1816,10 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
             }
             const Eigen::Vector3d pw = p->GetPw();
             const Eigen::Vector3d pc = p->GetPc();
-            // points.push_back({pw.x(), pw.y(), pw.z()});
+            points.push_back({pw.x(), pw.y(), pw.z()});
             const int colorId = min(int(pc.z() / 0.5), int(COLOR::pink));
             const cv::Vec3b curColor(Color[static_cast<COLOR>(colorId)]);
-            points.push_back({pc.x(), pc.y(), pc.z()});
+            //points.push_back({pc.x(), pc.y(), pc.z()});
             colors.push_back(curColor);
 
             if (curf != nullptr) {
