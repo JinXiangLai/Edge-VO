@@ -18,6 +18,8 @@ using namespace cv;
 
 void Run(Optimizer* optimizer);
 
+const cv::Point kViz3DWindowPos(1920 + 1920 / 2, 1080 / 2);
+
 int main(int argc, char** argv) {
 
     // 读取程序参数
@@ -37,6 +39,7 @@ int main(int argc, char** argv) {
     InteractionParam _visualizeParam;
     interaction = &_visualizeParam;
     viz::Viz3d window("Local Map Viewer");
+    // window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
     InitColor();
 
@@ -337,7 +340,7 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-#define SHOW_GLOBAL_MAP 1
+#define SHOW_GLOBAL_MAP 0
 void Run(Optimizer* optimizer) {
     while (1) {
 #if SHOW_GLOBAL_MAP

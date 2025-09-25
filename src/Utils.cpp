@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <numeric>  // 用于 std::accumulate
 
 using namespace cv;
 using namespace std;
@@ -110,6 +111,40 @@ ostream& operator<<(ostream& cout, const Pose& T) {
          << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg << " deg"
          << " | " << T.t_wb_.transpose() * 1000 << " mm";
     return cout;
+}
+
+vector<double> CalculateDescriptor(const cv::Mat& grayImg,
+                                   const Eigen::Vector2d& px,
+                                   const Eigen::Vector2d& epNorm,
+                                   const int len) {
+    vector<double> des(len, 0.);
+    if (len % 2 == 0) {
+        cerr << "descriptor length must be odd number" << endl;
+        exit(-1);
+    }
+
+    if (len != 5) {
+        const int mid = len / 2;  // default = 2
+        // 这里我们使用双线性插值来获取光度，这样就不用担心四舍五入的问题了
+        des[mid] = BilinearInterpolate<uchar>(grayImg, px);
+        int incRatio = 1;
+        const int maxId = len - 1;  // default 4
+        for (int i = mid - 1; i >= 0; --i) {
+            des[i] =
+                BilinearInterpolate<uchar>(grayImg,
+                                           px - incRatio * epNorm);  // 1, 0
+            des[maxId - i] = BilinearInterpolate<uchar>(
+                grayImg, px + incRatio * epNorm);  // 3, 4
+            ++incRatio;
+        }
+    } else {
+        des[0] = BilinearInterpolate<uchar>(grayImg, px + 2 * epNorm);
+        des[1] = BilinearInterpolate<uchar>(grayImg, px + 1 * epNorm);
+        des[2] = BilinearInterpolate<uchar>(grayImg, px);
+        des[3] = BilinearInterpolate<uchar>(grayImg, px - epNorm);
+        des[4] = BilinearInterpolate<uchar>(grayImg, px - 2 * epNorm);
+    }
+    return des;
 }
 
 Mat DrawMatch(const Mat& img1, const Mat& img2,
@@ -958,6 +993,30 @@ int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2) {
     return sum;
 }
 
+double CalculateSSD(const std::vector<double>& v1,
+                    const std::vector<double>& v2, double avg1, double avg2,
+                    const int desLen) {
+    double sum = 0;
+    double avg = avg1 - avg2;
+    // avg = 0;
+    for (int i = 0; i < desLen; ++i) {
+        sum += abs(v1[i] - avg - v2[i]);
+    }
+    return sum;
+}
+
+double CalculateSSD(const std::vector<double>& v1,
+                    const std::vector<double>& v2, const int desLen) {
+    double sum = 0;
+    double avg = (std::accumulate(v1.begin(), v1.end(), 0.0) -
+                  std::accumulate(v2.begin(), v2.end(), 0.0)) /
+                 v1.size();
+    for (int i = 0; i < desLen; ++i) {
+        sum += abs(v1[i] - avg - v2[i]);
+    }
+    return sum;
+}
+
 // No used any more
 void GetProjectRange(const Landmark& lp, const Pose& T21, const Camera& cam,
                      Eigen::Vector2i& xRange, Eigen::Vector2i& yRange) {
@@ -1213,103 +1272,121 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
 
     const int w = kf1->grayImg_.cols, h = kf1->grayImg_.rows;
 
-    for (int i = 0; i < kf1->landmark_.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(kf1->landmark_.size()); ++i) {
         Landmark* lk1 = kf1->landmark_[i];
-        if (lk1 == nullptr || lk1->IsOutOfRange()) {
+        if (lk1 == nullptr || lk1->IsOutOfRange() || lk1->invZ_ < 1e-9) {
             continue;
         }
 
-        Eigen::Vector3d Pc1_norm = lk1->GetPc();
-        Pc1_norm /= Pc1_norm.z();
+        const Eigen::Vector3d Pc1 = lk1->GetPc();
         const double invZ1 = lk1->invZ_, std1 = sqrt(lk1->invDepthCov_);
-
-        for (int j = 0; j < 1; ++j) {
-            if (!lk1->Converge() && j != 0) {
-                // 只有深度收敛的才进行大范围传播
-                continue;
-            }
-
-            const Eigen::Vector3d Pc1 =
-                Pc1_norm * GetPositiveDepth(invZ1 + j * std1);
-            if (Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
-                continue;
-            }
-            const Eigen::Vector3d Pc2 = T21 * Pc1;
-            const double depthRatio = Pc2.z() / Pc1.z();
-
-            // if(depthRatio < 0.7 || depthRatio > 1.4) {
-            //     continue;
-            // }
-
-            const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
-#if USE_POINT_MAP_ID
-            if (!kf2->pointMapId_.count({px2.x(), px2.y()})) {
-                continue;
-            }
-#else
-            const int key = px2.y() * w + px2.x();
-            if (!kf2->pointMapId_.count(key)) {
-                continue;
-            }
-#endif
-
-            const double residual =
-                abs(kf1->grayImg_.at<uchar>(lk1->uv_[1], lk1->uv_[0]) -
-                    kf2->grayImg_.at<uchar>(px2[1], px2[0]));
-            if (residual > 40) {
-                continue;
-            }
-
-            int flatRatio = 1;
-            if (kf2->dist_[0].at<float>(px2.y(), px2.x()) > 1.5) {
-                flatRatio *= 2;
-            }
-
-#if USE_POINT_MAP_ID
-            int id = kf2->pointMapId_.at({px2.x(), px2.y()});
-#else
-            int id = kf2->pointMapId_.at(key);
-#endif
-            Landmark* lk2 = kf2->landmark_[id];
-
-            // if(lk2->obvTime_ > 0 && j!=0) {
-            //     // 优先相信不加偏移的深度
-            //     continue;
-            // }
-
-            if (lk2->obvTime_ > 0 && Pc2.z() < GetPositiveDepth(lk2->invZ_)) {
-                // 使用较近的点替代
-                lk2->invZ_ = 1.0 / Pc2.z();
-                // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
-                lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
-                // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-                lk2->obvTime_ = lk1->obvTime_;
-                lk2->failObvTime_ = lk1->failObvTime_;
-                lk2->initFromPropagate_ = true;
-
-            } else if (lk2->obvTime_ == 0) {
-                lk2->invZ_ = 1.0 / Pc2.z();
-                // 这里我们初始化kp2的不确定度，它应该比较大
-                lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
-                lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
-                // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-                lk2->obvTime_ = lk1->obvTime_;
-                lk2->failObvTime_ = lk1->failObvTime_;
-                lk2->initFromPropagate_ = true;
-            }
-
-            // lk2->z_ = Pc2.z();
-            // // 这里我们初始化kp2的不确定度，它应该比较大
-            // lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
-            // lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
-            // // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-            // lk2->obvTime_ = lk1->obvTime_;
-            // lk2->failObvTime_ = lk1->failObvTime_;
-            // lk2->initFromPropagate_ = true;
-
-            ++initNum;
+        if (Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
+            continue;
         }
+
+        const Eigen::Vector3d Pc2 = T21 * Pc1;
+        if (Pc2.z() < config->minDepth || Pc2.z() > config->maxDepth) {
+            continue;
+        }
+        const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
+        if (!InRange(kf2->grayImg_, px2)) {
+            continue;
+        }
+
+#if USE_POINT_MAP_ID
+        if (!kf2->pointMapId_.count({px2.x(), px2.y()})) {
+            continue;
+        }
+#else
+        // TODO：使用极线检索附近边缘点以赋值相同深度值
+        const int key = px2.y() * w + px2.x();
+        if (!kf2->pointMapId_.count(key)) {
+            continue;
+        }
+#endif
+
+        double var2 = 1e9;
+        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2)) {
+            continue;
+        }
+
+        Eigen::Vector2d ep2 =
+            GetEpipolarLineDirection(T21.t_wb_, px2.cast<double>(), cam);
+        if (ep2.isApproxToConstant(0)) {
+            continue;
+        }
+        Eigen::Vector2d ep1 =
+            GetEpipolarLineDirection(T12.t_wb_, lk1->uv_.cast<double>(), cam);
+        if (ep1.isApproxToConstant(0)) {
+            continue;
+        }
+        const double depthScale = Pc1.z() / Pc2.z();
+        if (depthScale < 1.0) {
+            ep1 /= depthScale;
+        } else {
+            ep2 *= depthScale;
+        }
+
+        const vector<double> desc1 = CalculateDescriptor(
+            lk1->host_->grayImg_, lk1->uv_.cast<double>(), ep1);
+        const vector<double> desc2 =
+            CalculateDescriptor(kf2->grayImg_, px2.cast<double>(), ep2);
+
+        constexpr double kMaxResidualEachPixel = 15.0;
+        const double residual = CalculateSSD(desc1, desc2, desc2.size());
+        if (residual > kMaxResidualEachPixel * desc2.size()) {
+            continue;
+        }
+
+        int flatRatio = 1;
+        if (kf2->dist_[0].at<float>(px2.y(), px2.x()) > 1.5) {
+            flatRatio *= 2;
+        }
+
+#if USE_POINT_MAP_ID
+        int id = kf2->pointMapId_.at({px2.x(), px2.y()});
+#else
+        int id = kf2->pointMapId_.at(key);
+#endif
+        Landmark* lk2 = kf2->landmark_[id];
+
+        // if(lk2->obvTime_ > 0 && j!=0) {
+        //     // 优先相信不加偏移的深度
+        //     continue;
+        // }
+
+        if (lk2->obvTime_ > 0 && Pc2.z() < GetPositiveDepth(lk2->invZ_)) {
+            // 使用较近的点替代
+            lk2->invZ_ = 1.0 / Pc2.z();
+            // 这里我们初始化kp2的不确定度，它应该比较大
+            lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
+            lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
+            // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+            lk2->obvTime_ = lk1->obvTime_;
+            lk2->failObvTime_ = lk1->failObvTime_;
+            lk2->initFromPropagate_ = true;
+
+        } else if (lk2->obvTime_ == 0) {
+            lk2->invZ_ = 1.0 / Pc2.z();
+            // 这里我们初始化kp2的不确定度，它应该比较大
+            lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
+            lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
+            // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+            lk2->obvTime_ = lk1->obvTime_;
+            lk2->failObvTime_ = lk1->failObvTime_;
+            lk2->initFromPropagate_ = true;
+        }
+
+        // lk2->z_ = Pc2.z();
+        // // 这里我们初始化kp2的不确定度，它应该比较大
+        // lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
+        // lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
+        // // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+        // lk2->obvTime_ = lk1->obvTime_;
+        // lk2->failObvTime_ = lk1->failObvTime_;
+        // lk2->initFromPropagate_ = true;
+
+        ++initNum;
     }
     return double(initNum) / kf2->landmark_.size();
 }
@@ -1438,6 +1515,64 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
     const Eigen::Vector2d J_residual_rho1 =
         J_r_Pn2 * J_Pn2_Pc2 * J_Pc2_Pc1 * J_Pc1_rho1;
     return J_residual_rho1;
+}
+
+// 坐标系变换（带协方差传播）
+bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
+                           const Eigen::Matrix3d& invK, const double& depth2,
+                           double& variance2) {
+    // 1.0/ρ2 * Pn2 = R21 * 1.0/ρ1 * Pn1 + P21
+    // 1.0/ρ2 * (Pn2.T * Pn2) = 1.0/ρ1 * (Pn2.T * R21 * Pn1) + (Pn2.T * P21)
+    // 1.0/ρ2 * A = 1.0/ρ1 * B + C
+    // 1.0/ρ2 = 1.0/ρ1 * B/A + C/A
+    // ρ2 = A/(1.0/ρ1 * B + C) = A/t
+
+    // dρ2/dρ1 = -A/t^2 * -B/ρ1^2 = AB/(t*ρ1)^2
+
+    // 正确推导核心：直接在第一步取z分量推导即可
+    // 1.0/ρ2 = 1.0/ρ1 * (R21 * Pn1)z + (P21)z
+    // ρ2 = 1.0 / (1.0/ρ1 * (R21 * Pn1)z + (P21)z) = 1.0 / (1.0/ρ1 * A + B)
+
+    // dρ2/dρ1 = -1.0/(1.0/ρ1 * A + B)^2 * -A/ρ1^2 = A/(1.0/ρ1 * A * ρ1  + B * ρ1)^2 = A/(A+B*ρ1)^2
+    if (depth2 < config->minDepth || depth2 > config->maxDepth) {
+        return false;
+    }
+
+    const double& idepth1 = lk1.invZ_;
+    const double& variance1 = lk1.invDepthCov_;
+    const Eigen::Matrix3d Rc2_c1 = T21.q_wb_.toRotationMatrix();
+    const Eigen::Vector3d Pn1 =
+        invK * Eigen::Vector3d(lk1.uv_.x(), lk1.uv_.y(), 1.0);
+
+    const double J_rho2_d2 = -1.0 / (depth2 * depth2);
+    const double J_d2_rho1 = -(Rc2_c1 * Pn1).z() / (idepth1 * idepth1);
+
+    const double J = J_rho2_d2 * J_d2_rho1;
+    // TODO：这里应该要考虑基线以设置比率？
+    variance2 = J * variance1 * J * 1.1;
+    if (variance2 < variance1) {
+        cout << fmt::format("Warnning var1:{}<var2:{}!, reset variance2\n",
+                            variance1, variance2);
+        variance2 = 2.0 * variance1;
+    }
+    return true;
+}
+
+Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
+                                         const Eigen::Vector2d& p1,
+                                         const Camera& cam) {
+    if (abs(Pother2this[2]) < 1e-9) {
+        return {0, 0};
+    }
+    // 返回远点->极点的方向
+    // ep1 = (x, y)*t12.z - 极点e1*t12.z
+    // 注意：这个极线是像素平面上放大 t12.z 倍后的方向向量
+    const double fx = cam.fx_, fy = cam.fy_, cx = cam.cx_, cy = cam.cy_;
+    const Eigen::Vector2d ep1{
+        -fx * Pother2this[0] + Pother2this[2] * (p1.x() - cx),
+        -fy * Pother2this[1] + Pother2this[2] * (p1.y() - cy)};
+
+    return -ep1 / Pother2this[2];
 }
 
 Eigen::Vector2i ParseKeypointSet(const std::string& s) {

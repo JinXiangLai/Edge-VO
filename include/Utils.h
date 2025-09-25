@@ -132,6 +132,18 @@ double BilinearInterpolate(const cv::Mat& img, const Eigen::Vector2d& p) {
     return w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4;
 }
 
+std::vector<double> CalculateDescriptor(const cv::Mat& grayImg,
+                                        const Eigen::Vector2d& px,
+                                        const Eigen::Vector2d& epNorm,
+                                        const int len = 5);
+
+double CalculateSSD(const std::vector<double>& v1,
+                    const std::vector<double>& v2, double avg1, double avg2,
+                    const int desLen);
+
+double CalculateSSD(const std::vector<double>& v1,
+                    const std::vector<double>& v2, const int desLen);
+
 template <typename Scalar>
 Eigen::Quaternion<Scalar> Exp(const Eigen::Matrix<Scalar, 3, 1>& omega) {
     Scalar theta_sq = omega.squaredNorm();
@@ -324,6 +336,14 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
                                                const Eigen::Vector3d& Pn1,
                                                const Eigen::Vector3d& Pc2,
                                                const Eigen::Matrix3d& K);
+
+bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
+                           const Eigen::Matrix3d& invK, const double& depth2,
+                           double& variance2);
+
+Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
+                                         const Eigen::Vector2d& p1,
+                                         const Camera& cam);
 
 Eigen::Vector2i ParseKeypointSet(const std::string& s);
 

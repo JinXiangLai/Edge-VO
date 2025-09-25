@@ -18,6 +18,8 @@ using namespace std;
 using namespace cv;
 
 constexpr double kPriorDepthWeight = 1e8;
+constexpr int kMaxKeyframeInWindow =
+    7;  // 保留足够多的关键帧用于与当前帧进行三角化
 
 Optimizer::Optimizer(const vector<Mat>& dist, const vector<Mat>& dx,
                      const vector<Mat>& dy, shared_ptr<Camera> cam,
@@ -762,7 +764,10 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 interaction->allMapPoints.push_back(lk->GetPw());
             }
         }
-        window_.pop_back();
+        if (window_.size() > kMaxKeyframeInWindow) {
+            // TODO：使用更合理的方式删除老帧
+            window_.pop_back();
+        }
     }
     window_.push_back(kf);
 }

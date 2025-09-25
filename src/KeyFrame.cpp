@@ -1282,7 +1282,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
     // 根据近大远小的规则调整窗口范围
-    ep1 *= depthScale;
+    if (depthScale > 1.0) {
+        ep1 *= depthScale;
+    }
+
     const int desLen = config->descriptorPatchLen;
     const int midLen = desLen / 2;
     // 检验一下描述子是否在范围内
@@ -1318,6 +1321,9 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     Eigen::Vector2d ep2 = nearPx2 - farPx2;
     const double ep2Len = ep2.norm();
     ep2 = ep2.normalized();
+    if(depthScale < 1.0) {
+        ep2 /= depthScale;
+    }
 
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;
@@ -1399,8 +1405,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         if (kf2->dist_[0].at<float>(p2.y(), p2.x()) < 2.0 ||
             abs(v2[2] - v1[2]) < 20 || 1) {
             // 已经保证端点在边界范围内，这里无需再判断
-            const double score =
-                CalculateSSD(v1.data(), v2.data(), avg1, avg2, desLen);
+            const double score = CalculateSSD(v1, v2, avg1, avg2, desLen);
 
             if (score < bestScore) {
                 secondBestScore = bestScore;
@@ -1523,50 +1528,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     AddReportElement("Final Fail!");
     return EpipolarMatchType::outOFboundaryORabnormalDepth;
-}
-
-vector<double> KeyFrame::CalculateDescriptor(const cv::Mat& grayImg,
-                                             const Eigen::Vector2d& px,
-                                             const Eigen::Vector2d& epNorm,
-                                             const int len) {
-    vector<double> des(len, 0.);
-    if (len % 2 == 0) {
-        cerr << "descriptor length must be odd number" << endl;
-        exit(-1);
-    }
-
-#if 1
-    const int mid = len / 2;  // default = 2
-    // 这里我们使用双线性插值来获取光度，这样就不用担心四舍五入的问题了
-    des[mid] = BilinearInterpolate<uchar>(grayImg, px);
-    int incRatio = 1;
-    const int maxId = len - 1;  // default 4
-    for (int i = mid - 1; i >= 0; --i) {
-        des[i] = BilinearInterpolate<uchar>(grayImg,
-                                            px - incRatio * epNorm);  // 1, 0
-        des[maxId - i] = BilinearInterpolate<uchar>(
-            grayImg, px + incRatio * epNorm);  // 3, 4
-        ++incRatio;
-    }
-#else
-    des[0] = BilinearInterpolate<uchar>(grayImg, px + 2 * epNorm);
-    des[1] = BilinearInterpolate<uchar>(grayImg, px + 1 * epNorm);
-    des[2] = BilinearInterpolate<uchar>(grayImg, px);
-    des[3] = BilinearInterpolate<uchar>(grayImg, px - epNorm);
-    des[4] = BilinearInterpolate<uchar>(grayImg, px - 2 * epNorm);
-#endif
-    return des;
-}
-
-double KeyFrame::CalculateSSD(double* v1, double* v2, double avg1, double avg2,
-                              const int desLen) {
-    double sum = 0;
-    double avg = avg1 - avg2;
-    // avg = 0;
-    for (int i = 0; i < desLen; ++i) {
-        sum += abs(v1[i] - avg - v2[i]);
-    }
-    return sum;
 }
 
 bool KeyFrame::MoveNearPx2IntoBoundary(Eigen::Vector2d& pClose,

@@ -55,12 +55,7 @@ class KeyFrame {
     void SetTwc(const Pose& Twc);
     int TrackLandmarkByEpilorLine(const KeyFrame& kf1);
     double CullingBadDepth(KeyFrame* kf2);
-    double CalculateSSD(double* v1, double* v2, double avg1, double avg2,
-                        const int desLen);
-    std::vector<double> CalculateDescriptor(const cv::Mat& grayImg,
-                                            const Eigen::Vector2d& px,
-                                            const Eigen::Vector2d& epNorm,
-                                            const int len = 5);
+
     void ReleaseMat();
     void FuseDepth();
     bool MoveNearPx2IntoBoundary(Eigen::Vector2d& pClose,
