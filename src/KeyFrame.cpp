@@ -1635,7 +1635,7 @@ void KeyFrame::FuseDepth() {
                 }
                 const Landmark& lk2 = readLk[readPointMapId.at(id)];
 #endif
-                if (lk2.IsOutOfRange()) {
+                if (!lk2.Converge() || lk2.IsOutOfRange()) {
                     continue;
                 }
 

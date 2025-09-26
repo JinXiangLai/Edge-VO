@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-            // win.back()->FuseDepth();
+            win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
             t11 = chrono::steady_clock::now();
