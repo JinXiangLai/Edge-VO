@@ -339,7 +339,7 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
 
 bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
                            const Eigen::Matrix3d& invK, const double& depth2,
-                           double& variance2);
+                           double& variance2, int& varianceDecreaseNum);
 
 Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
                                          const Eigen::Vector2d& p1,

@@ -1271,6 +1271,8 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
     }
 
     const int w = kf1->grayImg_.cols, h = kf1->grayImg_.rows;
+    int transformTotalNum = 0;
+    int varianceDecreaseNum = 0;
 
     for (int i = 0; i < static_cast<int>(kf1->landmark_.size()); ++i) {
         Landmark* lk1 = kf1->landmark_[i];
@@ -1306,9 +1308,11 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
 #endif
 
         double var2 = 1e9;
-        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2)) {
+        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2,
+                                   varianceDecreaseNum)) {
             continue;
         }
+        ++transformTotalNum;
 
         Eigen::Vector2d ep2 =
             GetEpipolarLineDirection(T21.t_wb_, px2.cast<double>(), cam);
@@ -1388,6 +1392,11 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
 
         ++initNum;
     }
+    cout << fmt::format(
+        "transformTotalNum: {}, varianceDecreaseNum: {}, abnormal ratio: "
+        "{:.1f}\n",
+        transformTotalNum, varianceDecreaseNum,
+        double(varianceDecreaseNum) / transformTotalNum);
     return double(initNum) / kf2->landmark_.size();
 }
 
@@ -1520,7 +1529,7 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
 // 坐标系变换（带协方差传播）
 bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
                            const Eigen::Matrix3d& invK, const double& depth2,
-                           double& variance2) {
+                           double& variance2, int& varianceDecreaseNum) {
     // 1.0/ρ2 * Pn2 = R21 * 1.0/ρ1 * Pn1 + P21
     // 1.0/ρ2 * (Pn2.T * Pn2) = 1.0/ρ1 * (Pn2.T * R21 * Pn1) + (Pn2.T * P21)
     // 1.0/ρ2 * A = 1.0/ρ1 * B + C
@@ -1551,9 +1560,10 @@ bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
     // TODO：这里应该要考虑基线以设置比率？
     variance2 = J * variance1 * J * 1.1;
     if (variance2 < variance1) {
-        cout << fmt::format("Warnning var1:{}<var2:{}!, reset variance2\n",
+        cout << fmt::format("Warnning var1:{}>var2:{}!, reset variance2\n",
                             variance1, variance2);
         variance2 = 2.0 * variance1;
+        ++varianceDecreaseNum;
     }
     return true;
 }
