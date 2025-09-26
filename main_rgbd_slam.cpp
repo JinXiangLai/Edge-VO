@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 1
+#if 0
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();

@@ -63,9 +63,9 @@ bool Landmark::ObvUpdate(const double invDepth, const double variance) {
 
     const double &u2 = invDepth, &cov2 = variance;  // 考虑基线的影响
     const double &u1 = invZ_, &cov1 = invDepthCov_;
-
-    invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-    invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
+    const double sumCov = cov1 + cov2;
+    invZ_ = (u2 * cov1 + u1 * cov2) / sumCov;
+    invDepthCov_ = (cov1 * cov2) / sumCov;
     //UpdateUncertainty(true);
     obvTime_++;
     return true;
@@ -77,8 +77,9 @@ bool Landmark::FuseInvDepth(const Landmark& lk2) {
     if (pow(u1 - u2, 2) > 4 * cov1) {
         return false;
     }
-    invZ_ = u1 * cov1 + u2 * cov2;
-    invDepthCov_ = 0.5 * (cov1 + cov2);
+    const double sumCov = cov1 + cov2;
+    invZ_ = (u1 * cov2 + u2 * cov1) / sumCov;
+    // invDepthCov_ = (cov1 * cov2) / sumCov;
     return true;
 }
 
