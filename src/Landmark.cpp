@@ -71,6 +71,17 @@ bool Landmark::ObvUpdate(const double invDepth, const double variance) {
     return true;
 }
 
+bool Landmark::FuseInvDepth(const Landmark& lk2) {
+    const double &u1 = invZ_, &u2 = lk2.invZ_;
+    const double &cov1 = invDepthCov_, &cov2 = lk2.invDepthCov_;
+    if (pow(u1 - u2, 2) > 4 * cov1) {
+        return false;
+    }
+    invZ_ = u1 * cov1 + u2 * cov2;
+    invDepthCov_ = 0.5 * (cov1 + cov2);
+    return true;
+}
+
 void Landmark::UpdateUncertainty(const bool updateObv) {
     const double stddev = sqrt(invDepthCov_);
     depthRange_[0] = GetPositiveDepth(invZ_ + stddev);

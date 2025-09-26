@@ -2,9 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 # ROS 的g2o会污染现版本，需要把 source ros关闭
 project(edge_slam)
 
-if (NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
-endif ()
+set(CMAKE_CXX_STANDARD 14)
 
 if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic) # ljx

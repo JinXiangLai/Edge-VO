@@ -1979,7 +1979,7 @@ void Optimizer::ShowLocalMap() {
     }
 
     vector<Pose> vTwc;
-    for (int i = 0; i < window_.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
         KeyFrame* kf = window_[i];
         vTwc.push_back(kf->Twc_);
     }

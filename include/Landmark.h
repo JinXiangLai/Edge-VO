@@ -74,6 +74,8 @@ class Landmark {
     bool IsDebugPoint() { return config->pixelCount.count(uv_); }
 
     bool ObvUpdate(const double invDepth, const double variance);
+
+    bool FuseInvDepth(const Landmark& lk2);
 };
 
 #endif

@@ -1321,7 +1321,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     Eigen::Vector2d ep2 = nearPx2 - farPx2;
     const double ep2Len = ep2.norm();
     ep2 = ep2.normalized();
-    if(depthScale < 1.0) {
+    if (depthScale < 1.0) {
         ep2 /= depthScale;
     }
 
@@ -1591,95 +1591,67 @@ void KeyFrame::ReleaseMat() {
 }
 
 void KeyFrame::FuseDepth() {
-    /*
+
     if (config->useDepthImage) {
         return;
     }
     const int fusePatchLen = 5;
     const int midLen = fusePatchLen / 2;
-    static vector<vector<double> > weights(fusePatchLen,
-                                           vector<double>(fusePatchLen, 0));
-    static bool first = true;
-    if (first) {
-        for (int x = -midLen; x <= midLen; ++x)
-            for (int y = -midLen; y <= midLen; ++y) {
-                // 权重与距离成反比
-                // 避免除以0
-                weights[y + midLen][x + midLen] =
-                    1. / (x * x + y * y + config->maxDepthConvergeStd);  //
-            }
-        first = false;
+
+    vector<Landmark> readLk(landmark_.size());
+    for (const Landmark* lk : landmark_) {
+        readLk.emplace_back(*lk);
     }
-
-    KeyFrame temp = *this;  // I'm too lazy
-    vector<Landmark*>& readLk = temp.landmark_;
 #if USE_POINT_MAP_ID
-    unordered_map<Eigen::Vector2i, int, TupleHash>& readPointMapId =
-        temp.pointMapId_;
+    const unordered_map<Eigen::Vector2i, int, TupleHash>& readPointMapId =
+        pointMapId_;
 #else
-    unordered_map<int, int>& readPointMapId = temp.pointMapId_;
+    const unordered_map<int, int>& readPointMapId = pointMapId_;
 #endif
-    constexpr bool removeOcclusion = true;
-    const int w = grayImg_.cols, h = grayImg_.rows;
 
-    for (int i = 0; i < landmark_.size(); ++i) {
-        double maxDepth = -1, minDepth = 1e9;
+    constexpr bool removeOcclusion = true;
+    const int w = grayImg_.cols;
+
+    for (int i = 0; i < static_cast<int>(landmark_.size()); ++i) {
         Landmark* lk1 = landmark_[i];
         const Eigen::Vector2i px1 = lk1->uv_;
-        const double d1 = lk1->z_;
+        const double& iDepth1 = lk1->invZ_;
+        const double stddev1 = sqrt(lk1->invDepthCov_);
 
-        double sumDepth = 0, sumWeight = 0;
         int occlusionCount = 0;
         for (int x = -midLen; x <= midLen; ++x) {
             for (int y = -midLen; y <= midLen; ++y) {
-                const double w = weights[y + midLen][x + midLen];
                 const Eigen::Vector2i px2 = px1 + Eigen::Vector2i(x, y);
 
 #if USE_POINT_MAP_ID
                 if (!readPointMapId.count(px2)) {
                     continue;
                 }
-                Landmark* lk2 = readLk[readPointMapId.at(px2)];
+                const Landmark& lk2 = readLk[readPointMapId.at(px2)];
 #else
                 const int id = px2.y() * w + px2.x();
                 if (!readPointMapId.count(id)) {
                     continue;
                 }
-                Landmark* lk2 = readLk[readPointMapId.at(id)];
+                const Landmark& lk2 = readLk[readPointMapId.at(id)];
 #endif
+                if (lk2.IsOutOfRange()) {
+                    continue;
+                }
 
-                if (lk2 != nullptr && !lk2->IsOutOfRange() && lk2->Converge()) {
-                    const double d2 = lk2->z_;
-                    if (d2 < d1) {
-                        ++occlusionCount;
-                    }
-                    if (occlusionCount > 4 && removeOcclusion) {
-                        lk1->SetOutOfRange();
-                        continue;
-                    }
-                    if (abs(d2 - d1) > lk1->uncertainty_ * 1.0) {
-                        continue;
-                    }
-                    if (d2 > maxDepth) {
-                        maxDepth = d2;
-                    }
-                    if (d2 < minDepth) {
-                        minDepth = d2;
-                    }
+                const double& iDepth2 = lk2.invZ_;
+                if (iDepth2 > iDepth1 + stddev1 * 2.0) {
+                    ++occlusionCount;
+                }
+                if (occlusionCount > int(fusePatchLen * fusePatchLen * 0.6) &&
+                    removeOcclusion) {
+                    lk1->SetOutOfRange();
+                    continue;
+                }
 
-                    const double mixWeight =
-                        1 / lk2->uncertainty_ * w;  // lk2->depthCov_; //  + w;
-                    sumDepth += mixWeight * d2;
-                    sumWeight += mixWeight;
+                if (!lk1->FuseInvDepth(lk2)) {
                 }
             }
         }
-
-        if (maxDepth > 0 && minDepth < maxDepth) {
-            lk1->z_ = sumDepth / sumWeight;
-            lk1->depthCov_ *= 0.9;  // pow(maxDepth - minDepth, 2) ;
-            lk1->UpdateUncertainty(false);
-        }
     }
-*/
 }
