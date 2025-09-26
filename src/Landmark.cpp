@@ -121,7 +121,7 @@ bool Landmark::Converge() const {
         return false;
     }
     const double diff = abs(GetPositiveDepth(invZ1) - GetPositiveDepth(invZ2));
-    return diff < 0.1;
+    return diff < config->maxDepthConvergeStd;
     // return initFromPropagate_;
 }
 

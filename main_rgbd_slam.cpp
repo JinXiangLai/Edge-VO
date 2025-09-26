@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
 
         const double trans =
-            (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
+            (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.head(2).norm();
         accDist += trans;
 
         // 显示线程使用
@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
         cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " "
              << case4 << " " << case5 << " accdist: " << accDist << endl;
         chrono::steady_clock::time_point t10, t11;
-        if (((case1 || case3 || case4 || case5) && case2 && case6) ||
+        if (((case1 || case3 || case4) && case2 && case6 && case5) ||
             needKFbySight) {
             {
                 static bool first = true;

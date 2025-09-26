@@ -1591,6 +1591,15 @@ Eigen::Vector2i ParseKeypointSet(const std::string& s) {
     return {stoi(s.substr(0, _pos)), stoi(s.substr(_pos + 1, s.size()))};
 }
 
+void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
+                                Eigen::Vector2d& ep1) {
+    // 保证极线方向在图像上遵循一致的方向
+    const double cosValue = ep1.dot(ep2);
+    if (cosValue < 0) {
+        ep1 *= -1;
+    }
+}
+
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
                                                  const Mat& dxImg,
                                                  const cv::Mat& dyImg) {

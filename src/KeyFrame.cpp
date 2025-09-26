@@ -1268,9 +1268,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         // 此时极线是无限长的，不需要判断长度
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
-    // 要保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
-    // 验证了，不乘以-1时，结果很错误，可视化也显示p->e1才对应farPx2->nearPx2
-    ep1 *= -1;  // 保证是近点指向远点的像素投影坐标，极点对应于近点投影
 
     ep1.normalize();
 
@@ -1286,19 +1283,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         ep1 *= depthScale;
     }
 
-    const int desLen = config->descriptorPatchLen;
-    const int midLen = desLen / 2;
-    // 检验一下描述子是否在范围内
-    Eigen::Vector2d p1Start = p1 - midLen * ep1, p1End = p1 + midLen * ep1;
-    if (!InRange(grayImg_, p1Start.cast<int>())) {
-        // cout << "Error p1Start not in image!\n";
-        AddReportElement("Error p1Start not in image!");
-    }
-    if (!InRange(grayImg_, p1End.cast<int>())) {
-        // cout << "Error p1End!\n";
-        AddReportElement("Error p1End!");
-        return EpipolarMatchType::outOFboundaryORabnormalDepth;
-    }
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
     const double stddev = sqrt(lk1->invDepthCov_);
@@ -1323,6 +1307,23 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     ep2 = ep2.normalized();
     if (depthScale < 1.0) {
         ep2 /= depthScale;
+    }
+
+    // 保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
+    CheckEpipolarLineDirection(ep2, ep1);
+
+    const int desLen = config->descriptorPatchLen;
+    const int midLen = desLen / 2;
+    // 检验一下描述子是否在范围内
+    Eigen::Vector2d p1Start = p1 - midLen * ep1, p1End = p1 + midLen * ep1;
+    if (!InRange(grayImg_, p1Start.cast<int>())) {
+        // cout << "Error p1Start not in image!\n";
+        AddReportElement("Error p1Start not in image!");
+    }
+    if (!InRange(grayImg_, p1End.cast<int>())) {
+        // cout << "Error p1End!\n";
+        AddReportElement("Error p1End!");
+        return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
 
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
