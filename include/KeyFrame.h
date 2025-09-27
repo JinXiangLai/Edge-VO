@@ -43,8 +43,8 @@ class KeyFrame {
     void ExtractEdge();
     void GenerateDTandDerivative();
     size_t GenerateLandmark(
-        KeyFrame& kf1, std::vector<std::vector<Eigen::Vector2d> >& debugGoodKp1,
-        std::vector<std::vector<Eigen::Vector2d> >& debugGoodKp2,
+        KeyFrame& kf1, std::vector<std::vector<Eigen::Vector2d>>& debugGoodKp1,
+        std::vector<std::vector<Eigen::Vector2d>>& debugGoodKp2,
         const int equalparts);
     size_t InitializeLandmark();
     int ReuseLandmark(KeyFrame* kf1);
@@ -81,7 +81,7 @@ class KeyFrame {
     Pose Tcw_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<std::vector<Eigen::Vector2i> > unPx_;  // 像素平面上的去畸变点
+    std::vector<std::vector<Eigen::Vector2i>> unPx_;  // 像素平面上的去畸变点
     std::vector<Landmark*>
         landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
     // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
@@ -128,16 +128,14 @@ class KeyFrame {
         const double estD1, const double estD2, const Landmark& lk1,
         const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
         const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
-        const cv::Mat& debugImg2, const bool success = false);
-    void WriteDebugTriangulateCase2Video(const std::string& caseName,
-                                         const Pose& T12, cv::Mat& img);
+        const cv::Mat& debugImg2, const Pose& T12, const bool success = false);
+    void WriteDebugTriangulateCase2Video();
     cv::Mat videoBestMatchDebugImg_;
     cv::Mat videoEpipolarMatchDebugImg_;
     cv::Mat videoEpipolarFailMatchDebugImg_;
-    cv::Mat videoFailTriangulateDebugImg_;
-    cv::Mat videoSuccessTriangulateDebugImg_;
     static cv::VideoWriter debugVideoWriter;
     static cv::VideoWriter debugTriangulateWriter;
+    std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
     // TODO：保留一些Landmark的深度收敛过程
 #endif
 };

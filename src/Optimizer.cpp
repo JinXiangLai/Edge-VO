@@ -754,6 +754,9 @@ bool Optimizer::Optimize(vector<Landmark*>& lk1s, vector<Pose>& T12) {
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
     if (!window_.empty()) {
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+        window_.back()->WriteDebugTriangulateCase2Video();
+#endif
         if (!config->useDepthImage) {
             TransformDepthMap2CurrentFrame(kf);
         }

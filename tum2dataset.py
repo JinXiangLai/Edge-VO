@@ -3,7 +3,7 @@
 import os
 import shutil
 
-dataDir = "/home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz"
+dataDir = "/media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_large_with_loop"
 imgDir = [f"{dataDir}/depth", f"{dataDir}/rgb"] # "/rgb"
 odomFile = dataDir + "/groundtruth.txt"
 

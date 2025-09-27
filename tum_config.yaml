@@ -1,21 +1,19 @@
 
 %YAML: 1.0
 
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz # /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz 
+dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg1_xyz # /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz 
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
 Camera.model: "pinhole"
 
 # fr1
-# Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
-# Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
+Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
+Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
-Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
-Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
-# Camera.distortion: [0., 0., 0.0, 0.0, 0.] # d0, d1, d2, d3, d4
-
+#Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
+#Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
 
 Qcg: [0, 0, 0, 1] # qx qy qz qw
 Pcg: [0, 0, 0] # tx ty tz
@@ -23,8 +21,8 @@ Pcg: [0, 0, 0] # tx ty tz
 Camera.imageScale: 1.0
 wheelRadius: 0
 
-maxDepth: 150.0 # 影响重投影匹配，需要设置大点
-minDepth: 0.1
+maxDepth: 50.0 # 影响重投影匹配，需要设置大点
+minDepth: 0.01
 
 maxDescriptorDist: 10 # or 使用光度残差时重新设置，如果使用去均值的SSD，这个值应该设的小，越大越宽松
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
@@ -103,6 +101,7 @@ initWithTrueDepth: false
 debugMessageSaveFolder: "./"
 debugWithTrueDepthImage: true # 使用真值深度验证估计
 # 使用unordered_set存储如下点，只绘制如下点的debug视频，换行不需要加任何额外符号
-debugKFpointSet: [425_262, 333_244, 199_342, 304_289, 567_325, 107_145, 
-404_280, 121_79, 155_72, 63_247, 221_355, 126_144, 367_271, 504_256,
-457_359, 494_239, 40_145, 257_245, 109_116]
+debugKFpointSet: [21_240, 175_207, 491_437, 513_386, 124_320, 68_189, 295_202, 102_266, 95_284, 112_193,
+461_378, 479_420, 204_413, 44_401, 92_427, 218_305, 542_402,
+252_51, 547_313, 12_249, 410_351, 150_102, 90_122, 51_111, 132_236,
+390_161, 401_155, 219_110, 220_119, 294_158, 313_328, 405_253, 588_132]

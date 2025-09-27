@@ -71,7 +71,9 @@ class Landmark {
 
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 
-    bool IsDebugPoint() { return config->pixelCount.count(uv_); }
+    bool IsDebugPoint() {
+        return config->pixelCount.count(uv_) && trueDepth_ != 0;
+    }
 
     bool ObvUpdate(const double invDepth, const double variance);
 

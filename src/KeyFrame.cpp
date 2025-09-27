@@ -20,8 +20,6 @@ using namespace cv;
 cv::VideoWriter KeyFrame::debugVideoWriter;
 constexpr int kDrawMatchNumEachFrame = 100;
 cv::VideoWriter KeyFrame::debugTriangulateWriter;
-constexpr int kDrawFailTriangulateNum = 10;
-constexpr int kDrawSuccessTriangulateNum = 50;
 #endif
 
 class Landmark;
@@ -528,11 +526,7 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
     if (!KeyFrame::debugVideoWriter.isOpened()) {
         string videoPath = config->debugMessageSaveFolder;
         const string debugVideoName("edge_host_match_cur_frame_video.avi");
-        if (config->debugMessageSaveFolder.back() == '/') {
-            videoPath += debugVideoName;
-        } else {
-            videoPath += "/" + debugVideoName;
-        };
+        videoPath += "/" + debugVideoName;
         // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
         int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
         int fps = 30;
@@ -553,44 +547,34 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
     videoEpipolarFailMatchDebugImg_.release();
 }
 
-void KeyFrame::WriteDebugTriangulateCase2Video(const string& caseName,
-                                               const Pose& T12, cv::Mat& img) {
-    if (img.empty()) {
-        return;
-    }
-    int start_text_row = 20;
-    int step_text_row = 20;
-    cv::putText(img, T12.QwbString(), cv::Point(10, (start_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-    cv::putText(img, T12.PwbString(),
-                cv::Point(10, (start_text_row += step_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-    cv::putText(img, caseName, cv::Point(10, (start_text_row += step_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+void KeyFrame::WriteDebugTriangulateCase2Video() {
 
     // 初始化边缘匹配的debug视频写入器
-    if (!KeyFrame::debugTriangulateWriter.isOpened()) {
-        string videoPath = config->debugMessageSaveFolder;
-        const string debugVideoName("triangulate_fail_case.avi");
-        if (config->debugMessageSaveFolder.back() == '/') {
-            videoPath += debugVideoName;
-        } else {
-            videoPath += "/" + debugVideoName;
-        };
-        // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
+    string videoPath = config->debugMessageSaveFolder;
+
+    for (auto& nameMapImgs : triPointMapDebugImage_) {
+        const string pointName = nameMapImgs.first;
+        const string curVideoPath =
+            fmt::format("{}/kfId_{}_{}.avi", videoPath, id_, pointName);
         int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
         int fps = 30;
-        KeyFrame::debugTriangulateWriter.open(videoPath, fourcc, fps,
-                                              img.size(), true);
+        KeyFrame::debugTriangulateWriter.open(
+            curVideoPath, fourcc, fps, nameMapImgs.second[0].size(), true);
         if (!KeyFrame::debugTriangulateWriter.isOpened()) {
-            cerr << "Open debug video path: " << videoPath << " failed" << endl;
-            exit(-1);
+            cerr << "Open debug video path: " << curVideoPath << " failed"
+                 << endl;
+            //exit(-1);
+            return;
         }
-        cout << "Open debug video path: " << videoPath << endl;
-    }
+        cout << "Open debug video path: " << curVideoPath << endl;
 
-    debugTriangulateWriter.write(img);
-    img.release();
+        for (cv::Mat& img : nameMapImgs.second) {
+            debugTriangulateWriter.write(img);
+            img.release();
+        }
+
+        KeyFrame::debugTriangulateWriter.release();
+    }
 }
 
 void KeyFrame::DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
@@ -683,18 +667,26 @@ void KeyFrame::DrawTriangulateCase(
     const double estD1, const double estD2, const Landmark& lk1,
     const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
     const Eigen::Vector2i& farPx2, const Eigen::Vector2i& nearPx2,
-    const cv::Mat& debugImg2, const bool success) {
-    cv::Mat& showImg = success ? videoSuccessTriangulateDebugImg_
-                               : videoFailTriangulateDebugImg_;
-    if (showImg.empty()) {
-        showImg = cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
-                          cv::Scalar{0, 0, 0});
-        Mat im1, im2;
-        cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
-        cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
-        im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
-        im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
-    }
+    const cv::Mat& debugImg2, const Pose& T12, const bool success) {
+    cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+    Mat im1, im2;
+    cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+    cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
+    im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+    im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
+
+    int start_text_row = 20;
+    int step_text_row = 20;
+    cv::putText(showImg, T12.QwbString(), cv::Point(10, (start_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+    cv::putText(showImg, T12.PwbString(),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+    const string caseName = success ? "Suc tri" : "Fai tri";
+    cv::putText(showImg, caseName,
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
 
     const cv::Vec3b& matchColor = kColor.at("yellow");
 
@@ -732,6 +724,9 @@ void KeyFrame::DrawTriangulateCase(
     cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
     cv::circle(showImg, n2 + pointDiff, 2, nearColor, -1);
     cv::circle(showImg, f2 + pointDiff, 2, farColor, -1);
+
+    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+    triPointMapDebugImage_[debugImgName].emplace_back(showImg);
 }
 #endif
 
@@ -908,12 +903,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                     DrawTriangulateCase(
                         estD1, estD2, *lk1, epipolarP1.cast<int>(),
                         bestPx2.cast<int>(), farPx2.cast<int>(),
-                        nearPx2.cast<int>(), kf2.debugGrayImg_, false);
-                    if (++failTriangulateCount % kDrawFailTriangulateNum == 0 ||
-                        1) {
-                        WriteDebugTriangulateCase2Video(
-                            "Fail tri", Tc1c2, videoFailTriangulateDebugImg_);
-                    }
+                        nearPx2.cast<int>(), kf2.debugGrayImg_, Tc1c2, false);
                 }
 
 #endif
@@ -925,13 +915,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                 DrawTriangulateCase(estD1, estD2, *lk1, epipolarP1.cast<int>(),
                                     bestPx2.cast<int>(), farPx2.cast<int>(),
                                     nearPx2.cast<int>(), kf2.debugGrayImg_,
-                                    true);
-                if (++successTriangulateCount % kDrawSuccessTriangulateNum ==
-                        0 ||
-                    1) {
-                    WriteDebugTriangulateCase2Video(
-                        "Success tri", Tc1c2, videoSuccessTriangulateDebugImg_);
-                }
+                                    Tc1c2, true);
             }
 #endif
             const double invD1 = 1.0 / estD1;
