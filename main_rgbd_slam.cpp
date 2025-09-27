@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 0
+#if 1
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
 
         const double trans =
-            (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.head(2).norm();
+            (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
         accDist += trans;
 
         // 显示线程使用

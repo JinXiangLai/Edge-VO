@@ -762,10 +762,7 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 interaction->allMapPoints.push_back(lk->GetPw());
             }
         }
-        if (static_cast<int>(window_.size()) >= config->maxKFnumInWindow) {
-            // TODO：使用更合理的方式删除老帧
-            window_.pop_back();
-        }
+        RemoveOneKeyframe(*kf);
     }
     window_.push_back(kf);
 }
@@ -1969,6 +1966,26 @@ void Optimizer::AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
             lk1s[j]->matchNextPixel_ = px;
         }
     }
+}
+
+void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
+    // 1. 如果当前帧与上上一帧有足够的水平距离，就移除最老帧
+    // 2. 否则移除最近帧以保证视差
+    if (static_cast<int>(window_.size()) < config->maxKFnumInWindow) {
+        return;
+    }
+    const Eigen::Vector3d posDiff =
+        curF.Twc_.t_wb_ - window_[window_.size() - 2]->Twc_.t_wb_;
+    const double horDist = posDiff.head(2).norm();
+    cout << "curF hor dist to the last 2 frame: " << horDist << endl;
+    if (horDist < config->needNewKFtrans * 1.5) {
+        window_.pop_back();
+        cout << "Remove the last keyframe from window!";
+        return;
+    }
+
+    window_.erase(window_.begin());
+    cout << "Remove the first keyframe from window!";
 }
 
 void Optimizer::ShowLocalMap() {
