@@ -24,6 +24,7 @@ class Landmark {
     Eigen::Vector3d GetPcNorm() const;
     Eigen::Vector3d GetPc() const;
     Eigen::Vector3d GetPw() const;
+
     int Size() const;  // 优化变量的维度
     void Update(const double delta_z, const bool useInvDepth);
     void UpdateUncertainty(const bool updateObv = false);
@@ -78,6 +79,13 @@ class Landmark {
     bool ObvUpdate(const double invDepth, const double variance);
 
     bool FuseInvDepth(const Landmark& lk2);
+
+    Eigen::Vector2i lastTrackPixel_ = Eigen::Vector2i::
+        Zero();  // 上一帧跟踪到的像素，还缺一个该像素对应的深度值
+    Eigen::Vector3d GetLastTrackPixelPc() const;
+    double GetLastTrackPixelInvDepth() const;
+    double GetLastTrackPixelInvDepthCov() const;
+    void ResetLastTrackPixel() { lastTrackPixel_.setConstant(0); }
 };
 
 #endif

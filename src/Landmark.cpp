@@ -26,6 +26,19 @@ Eigen::Vector3d Landmark::GetPc() const {
     return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
 }
 
+Eigen::Vector3d Landmark::GetLastTrackPixelPc() const {
+    return cam_->InverseProject(lastTrackPixel_, GetPositiveDepth(invZ_));
+}
+
+double Landmark::GetLastTrackPixelInvDepth() const {
+    // TODO: 需要维护上一帧的逆深度分布
+    return invZ_;
+}
+
+double Landmark::GetLastTrackPixelInvDepthCov() const{
+    return invDepthCov_;
+}
+
 Eigen::Vector3d Landmark::GetPw() const {
     return host_->Twc_ * GetPc();
 }

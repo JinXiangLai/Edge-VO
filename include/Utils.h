@@ -347,7 +347,12 @@ Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
 
 Eigen::Vector2i ParseKeypointSet(const std::string& s);
 
-void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2, Eigen::Vector2d& ep1);
+void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
+                                Eigen::Vector2d& ep1);
+
+int PixelPoint2Id(const Eigen::Vector2i& p, const int w);
+
+Eigen::Vector2i PointId2PixelPoint(const int id, const int w);
 
 enum KeyboardEvent { Reset, StepByStep };
 

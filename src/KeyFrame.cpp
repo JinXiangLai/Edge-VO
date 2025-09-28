@@ -452,6 +452,11 @@ void KeyFrame::ResetDebugMessage() {
     matchResultStatiscs_.clear();
 }
 
+void KeyFrame::ResetLastTrackFrameInfo(const KeyFrame& f2) {
+    lastFrameInfo_.grayImg_ = f2.grayImg_.clone();
+    lastFrameInfo_.Twc_ = f2.Twc_;
+}
+
 void KeyFrame::ReportMatchResult() {
     cout << "keyframe id: " << id_ << "Match result statiscs report: " << endl;
     int sum = 0;
@@ -797,8 +802,15 @@ size_t KeyFrame::InitializeLandmark() {
             }
             // host帧也要增加与landmark的相互观测
             landmark_[i]->target_.insert({this, unPx_[0][i]});
+
+            // 只会被关键帧调用，因此是加入自身的像素位置用于光流匹配
+            landmark_[i]->lastTrackPixel_ = unPx_[0][i];
         }
     }
+
+    // 该函数只会被关键帧调用
+    lastFrameInfo_.grayImg_ = grayImg_;
+    lastFrameInfo_.Twc_ = Twc_;
 
     return landmark_.size();
 }
@@ -811,7 +823,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
     const Pose Tc2c1 = Tc1c2.Inverse();
-    if (Tc1c2.t_wb_.norm() < 0.05 || config->useDepthImage) {
+    if (Tc1c2.t_wb_.norm() < 0.000 || config->useDepthImage) {
         // 位移过小，不能进行更新
         return 0;
     }
@@ -832,7 +844,10 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
     ResetDebugMessage();
     for (int i = 0; i < static_cast<int>(landmark_.size()); ++i) {
-        if (landmark_[i] == nullptr || landmark_[i]->IsOutOfRange()) {
+        // 若是上一帧没有跟踪成功，那么意味着光流失败
+        if (landmark_[i] == nullptr || landmark_[i]->IsOutOfRange() ||
+            landmark_[i]->lastTrackPixel_.isApproxToConstant(0)) {
+            landmark_[i]->ResetLastTrackPixel();
             continue;
         }
         Landmark* lk1 = landmark_[i];
@@ -864,7 +879,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                     // 三角化精度与准确度存在矛盾，因此，当基线过大时，宁愿不生成深度，也不愿生成错误深度
                     lk1->SetOutOfRange();
                 }
-
+                lk1->ResetLastTrackPixel();
                 continue;
             }
         }
@@ -873,17 +888,23 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
         // 深度量测更新
         if (error == EpipolarMatchType::outOFboundaryORabnormalDepth) {
+            lk1->ResetLastTrackPixel();
+
             continue;
 
         } else if (error == EpipolarMatchType::repeatTextureORbadDepth) {
             ++lk1->failObvTime_;
             lk1->invDepthCov_ *= varianceExpand[1];
             lk1->UpdateUncertainty(false);
+            lk1->ResetLastTrackPixel();
+
             continue;
 
         } else if (error == EpipolarMatchType::occulsionORnoBestMatch) {
             lk1->invDepthCov_ *= varianceExpand[0];
             lk1->UpdateUncertainty(false);
+            lk1->ResetLastTrackPixel();
+
             continue;
 
         } else if (!bestPx2.isApprox(Eigen::Vector2d::Zero())) {
@@ -907,6 +928,9 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                 }
 
 #endif
+                //lk1->ResetLastTrackPixel();
+                lk1->lastTrackPixel_ = bestPx2.cast<int>();
+
                 continue;
             }
 
@@ -930,11 +954,15 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 
             if (lk1->ObvUpdate(invD1, estCov)) {
                 ++findMatchNum;
+                lk1->lastTrackPixel_ = bestPx2.cast<int>();
+            } else {
+                lk1->ResetLastTrackPixel();
             }
         }
 
         // 三角化后的深度异常值过大
         if (lk1->invDepthCov_ > config->maxObvDepthStd) {
+            lk1->ResetLastTrackPixel();
             lk1->SetOutOfRange();
         }
 
@@ -974,6 +1002,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
 #endif
 
     ReportMatchResult();
+    ResetLastTrackFrameInfo(kf2);
 
     ++updateFrameCount_;
 
@@ -1227,7 +1256,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return EpipolarMatchType::nanValueNOstereoVisionIssue;
     }
 
-    const Pose T21 = kf2->Twc_.Inverse() * Twc_;
+    const Pose T21 = kf2->Twc_.Inverse() * lastFrameInfo_.Twc_;
     const Pose T12 = T21.Inverse();
     const double fx = cam_->fx_, fy = cam_->fy_, cx = cam_->cx_, cy = cam_->cy_;
 
@@ -1235,7 +1264,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     // 极线就是极点与p1的交点
     // 已知 t12, 那么KF2光心与KF1归一化平面的交点可求，但是当z[2] = 0时：就让极点都乘以t12嘛
     const Eigen::Vector3d& t12 = T12.t_wb_;
-    Eigen::Vector2d p1 = lk1->uv_.cast<double>();
+    Eigen::Vector2d p1 = lk1->lastTrackPixel_.cast<double>();
     // ep1 = (x, y)*t12.z - 极点e1*t12.z
     // 注意：这个极线是像素平面上放大 t12.z 倍后的方向向量
     Eigen::Vector2d ep1{-fx * t12[0] + t12[2] * (p1.x() - cx),
@@ -1255,8 +1284,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     ep1.normalize();
 
-    const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
-    const double depthScale = priorPc2.z() * lk1->invZ_;
+    const Eigen::Vector3d priorPc2 = T21 * lk1->GetLastTrackPixelPc();
+    const double depthScale = priorPc2.z() * lk1->GetLastTrackPixelInvDepth();
     if (!(depthScale > 0.7f && depthScale < 1.4f) && 0) {
         // cout << "Error depthScale: " << depthScale << "\n";
         AddReportElement("depthScale error!");
@@ -1269,11 +1298,18 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
-    const double stddev = sqrt(lk1->invDepthCov_);
-    double maxZ1 = min(100.0, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
-    double minZ1 = max(0.1, GetPositiveDepth(lk1->invZ_ + 3.0 * stddev));
-    const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_, maxZ1);
-    const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_, minZ1);
+    const double stddev = sqrt(lk1->GetLastTrackPixelInvDepthCov());
+    double maxZ1 =
+        min(100.0,
+            GetPositiveDepth(lk1->GetLastTrackPixelInvDepth() - 3.0 * stddev));
+    double minZ1 = max(
+        0.1, GetPositiveDepth(lk1->GetLastTrackPixelInvDepth() + 3.0 * stddev));
+
+    const Eigen::Vector3d farPc1 =
+        cam_->InverseProject(lk1->lastTrackPixel_, maxZ1);
+    const Eigen::Vector3d nearPc1 =
+        cam_->InverseProject(lk1->lastTrackPixel_, minZ1);
+
     const Eigen::Vector3d farPc2 = T21 * farPc1;
     const Eigen::Vector3d nearPc2 = T21 * nearPc1;
     if (farPc2.z() < nearPc2.z()) {
@@ -1300,11 +1336,11 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const int midLen = desLen / 2;
     // 检验一下描述子是否在范围内
     Eigen::Vector2d p1Start = p1 - midLen * ep1, p1End = p1 + midLen * ep1;
-    if (!InRange(grayImg_, p1Start.cast<int>())) {
+    if (!InRange(lastFrameInfo_.grayImg_, p1Start.cast<int>())) {
         // cout << "Error p1Start not in image!\n";
         AddReportElement("Error p1Start not in image!");
     }
-    if (!InRange(grayImg_, p1End.cast<int>())) {
+    if (!InRange(lastFrameInfo_.grayImg_, p1End.cast<int>())) {
         // cout << "Error p1End!\n";
         AddReportElement("Error p1End!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
@@ -1312,7 +1348,8 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;
-    vector<double> v1 = CalculateDescriptor(grayImg_, p1, ep1, desLen);
+    vector<double> v1 =
+        CalculateDescriptor(lastFrameInfo_.grayImg_, p1, ep1, desLen);
     double s1 = 0;
     double avg1 = 0;
     for (int i = 0; i < desLen; ++i) {

@@ -110,6 +110,14 @@ class KeyFrame {
     std::ofstream invDepthUncertaintyFile_;
     bool firstWriteUncertainty_ = true;
 
+    // 记录上一帧的匹配信息
+    struct LastFrameInfo{
+        cv::Mat grayImg_;
+        Pose Twc_;
+    };
+    LastFrameInfo lastFrameInfo_;
+    void ResetLastTrackFrameInfo(const KeyFrame& f2);
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                 const Eigen::Vector2i& matchKp2,

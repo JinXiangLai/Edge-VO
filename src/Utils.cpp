@@ -1600,6 +1600,15 @@ void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
     }
 }
 
+int PixelPoint2Id(const Eigen::Vector2i& p, const int w) {
+    return p.x() * w + p.y();
+}
+
+Eigen::Vector2i PointId2PixelPoint(const int id, const int w) {
+    const int x = id / w;
+    return {x, id - x * w};
+}
+
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
                                                  const Mat& dxImg,
                                                  const cv::Mat& dyImg) {
