@@ -58,7 +58,7 @@ bool Landmark::ObvUpdate(const double invDepth, const double variance) {
     if (diff > sqrt(invDepthCov_) * 2.0) {
         invDepthCov_ *= expandRatio;
         failObvTime_++;
-        if (failObvTime_ > obvTime_) {
+        if (failObvTime_ > 2 * obvTime_) {
             SetOutOfRange();
         }
         return false;
@@ -90,6 +90,20 @@ bool Landmark::AbnormalConvergeLandmark() {
     // 用于debug输出异常的landmark以优化匹配算法
     const double z = GetPositiveDepth(invZ_);
     return (z < 0.5 || z > 10.0) && (obvTime_ > 5 || Converge());
+}
+
+bool Landmark::CheckInvDepthQualitySuccessByProject() {
+    if (continousFailCheckNum_ > 3) {
+        SetOutOfRange();
+        return false;
+    }
+
+    if(continousPassCheckNum_ > 3) {
+        passReprojectCheck_ = true;
+        return true;
+    }
+
+    return false;
 }
 
 void Landmark::UpdateUncertainty(const bool updateObv) {

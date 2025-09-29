@@ -1273,6 +1273,7 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
     const int w = kf1->grayImg_.cols, h = kf1->grayImg_.rows;
     int transformTotalNum = 0;
     int varianceDecreaseNum = 0;
+    int findMatchFailNum = 0;  // 需在极线上搜索到匹配才能传播
 
     for (int i = 0; i < static_cast<int>(kf1->landmark_.size()); ++i) {
         Landmark* lk1 = kf1->landmark_[i];
@@ -1281,7 +1282,6 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
         }
 
         const Eigen::Vector3d Pc1 = lk1->GetPc();
-        const double invZ1 = lk1->invZ_, std1 = sqrt(lk1->invDepthCov_);
         if (Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
             continue;
         }
@@ -1294,25 +1294,6 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
         if (!InRange(kf2->grayImg_, px2)) {
             continue;
         }
-
-#if USE_POINT_MAP_ID
-        if (!kf2->pointMapId_.count({px2.x(), px2.y()})) {
-            continue;
-        }
-#else
-        // TODO：使用极线检索附近边缘点以赋值相同深度值
-        const int key = px2.y() * w + px2.x();
-        if (!kf2->pointMapId_.count(key)) {
-            continue;
-        }
-#endif
-
-        double var2 = 1e9;
-        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2,
-                                   varianceDecreaseNum)) {
-            continue;
-        }
-        ++transformTotalNum;
 
         Eigen::Vector2d ep2 =
             GetEpipolarLineDirection(T21.t_wb_, px2.cast<double>(), cam);
@@ -1333,70 +1314,64 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
 
         const vector<double> desc1 = CalculateDescriptor(
             lk1->host_->grayImg_, lk1->uv_.cast<double>(), ep1);
-        const vector<double> desc2 =
-            CalculateDescriptor(kf2->grayImg_, px2.cast<double>(), ep2);
-
-        constexpr double kMaxResidualEachPixel = 15.0;
-        const double residual = CalculateSSD(desc1, desc2, desc2.size());
-        if (residual > kMaxResidualEachPixel * desc2.size()) {
+        Eigen::Vector2d bestPx2(0, 0), farPx(0, 0), nearPx(0, 0);
+        const double matchScore =
+            kf1->FindMatchesWithEpipolarConstraintOnImagePlane(
+                kf2, lk1, bestPx2, farPx, nearPx, ep1);
+        if (matchScore < 0) {
+            // 转换失败
+            ++findMatchFailNum;
             continue;
         }
 
-        int flatRatio = 1;
-        if (kf2->dist_[0].at<float>(px2.y(), px2.x()) > 1.5) {
-            flatRatio *= 2;
-        }
-
 #if USE_POINT_MAP_ID
-        int id = kf2->pointMapId_.at({px2.x(), px2.y()});
+        int id = kf2->pointMapId_.at({int(bestPx2.x()), int(bestPx2.y())});
 #else
+        const int key = int(bestPx2.y()) * w + int(bestPx2.x());
+        if (!kf2->pointMapId_.count(key)) {
+            ++findMatchFailNum;
+            continue;
+        }
         int id = kf2->pointMapId_.at(key);
 #endif
         Landmark* lk2 = kf2->landmark_[id];
+        double var2 = 1e9;
+        const double matchResidual = (px2.cast<double>() - bestPx2).norm();
+        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2,
+                                   varianceDecreaseNum, matchResidual)) {
+            continue;
+        }
+        ++transformTotalNum;
 
-        // if(lk2->obvTime_ > 0 && j!=0) {
-        //     // 优先相信不加偏移的深度
-        //     continue;
-        // }
-
-        if (lk2->obvTime_ > 0 && Pc2.z() < GetPositiveDepth(lk2->invZ_)) {
-            // 使用较近的点替代
-            lk2->invZ_ = 1.0 / Pc2.z();
-            // 这里我们初始化kp2的不确定度，它应该比较大
-            lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
-            lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
-            // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-            lk2->obvTime_ = lk1->obvTime_;
-            lk2->failObvTime_ = lk1->failObvTime_;
-            lk2->initFromPropagate_ = true;
-
+        const double invZ2 = 1.0 / Pc2.z();
+        if (lk2->obvTime_ > 0 && invZ2 > lk2->invZ_ &&
+            abs(invZ2 - lk2->invZ_) < sqrt(lk2->invDepthCov_) * 2.0) {
+            // // 使用较近的点替代
+            lk2->invZ_ = invZ2;
+            lk2->invDepthCov_ = var2;
         } else if (lk2->obvTime_ == 0) {
-            lk2->invZ_ = 1.0 / Pc2.z();
+            lk2->invZ_ = invZ2;
             // 这里我们初始化kp2的不确定度，它应该比较大
-            lk2->invDepthCov_ = lk1->invDepthCov_ * 2.0 * flatRatio;
-            lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
-            // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-            lk2->obvTime_ = lk1->obvTime_;
-            lk2->failObvTime_ = lk1->failObvTime_;
-            lk2->initFromPropagate_ = true;
+            lk2->invDepthCov_ = var2;
+        } else {
+            continue;
         }
 
-        // lk2->z_ = Pc2.z();
-        // // 这里我们初始化kp2的不确定度，它应该比较大
-        // lk2->depthCov_ = lk1->depthCov_ * 2.0 * flatRatio;
-        // lk2->UpdateUncertainty(false); // 避免obvTime为0,导致重新初始化
-        // // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-        // lk2->obvTime_ = lk1->obvTime_;
-        // lk2->failObvTime_ = lk1->failObvTime_;
-        // lk2->initFromPropagate_ = true;
+        lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
+        // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
+        lk2->obvTime_ = lk1->obvTime_;
+        lk2->failObvTime_ = lk1->failObvTime_;
+        lk2->initFromPropagate_ = true;
 
         ++initNum;
     }
     cout << fmt::format(
-        "transformTotalNum: {}, varianceDecreaseNum: {}, abnormal ratio: "
-        "{:.1f}\n",
-        transformTotalNum, varianceDecreaseNum,
-        double(varianceDecreaseNum) / transformTotalNum);
+        "transformTotalNum: {}, varianceDecreaseNum: {}, findMatchFailNum: {} "
+        "abnormal ratio: "
+        "{:.1f}, fail transform ratio: {:.1f}, init from last KF num: {}\n",
+        transformTotalNum, varianceDecreaseNum, findMatchFailNum,
+        double(varianceDecreaseNum) / transformTotalNum,
+        double(findMatchFailNum) / transformTotalNum, initNum);
     return double(initNum) / kf2->landmark_.size();
 }
 
@@ -1529,7 +1504,8 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
 // 坐标系变换（带协方差传播）
 bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
                            const Eigen::Matrix3d& invK, const double& depth2,
-                           double& variance2, int& varianceDecreaseNum) {
+                           double& variance2, int& varianceDecreaseNum,
+                           const double obvResidual) {
     // 1.0/ρ2 * Pn2 = R21 * 1.0/ρ1 * Pn1 + P21
     // 1.0/ρ2 * (Pn2.T * Pn2) = 1.0/ρ1 * (Pn2.T * R21 * Pn1) + (Pn2.T * P21)
     // 1.0/ρ2 * A = 1.0/ρ1 * B + C
@@ -1558,7 +1534,12 @@ bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
 
     const double J = J_rho2_d2 * J_d2_rho1;
     // TODO：这里应该要考虑基线以设置比率？
-    variance2 = J * variance1 * J * 1.1;
+    if (obvResidual < sqrt(2.0)) {
+        variance2 = J * variance1 * J * 2.0;
+    } else {
+        variance2 = J * variance1 * J * pow(obvResidual, 2);
+    }
+
     if (variance2 < variance1) {
         cout << fmt::format("Warnning var1:{}>var2:{}!, reset variance2\n",
                             variance1, variance2);

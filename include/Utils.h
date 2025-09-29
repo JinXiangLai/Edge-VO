@@ -339,7 +339,8 @@ Eigen::Vector2d CalculateObvWrtIdepth1Jacobian(const Eigen::Matrix3d& Rc2_c1,
 
 bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
                            const Eigen::Matrix3d& invK, const double& depth2,
-                           double& variance2, int& varianceDecreaseNum);
+                           double& variance2, int& varianceDecreaseNum,
+                           const double obvResidual = 0);
 
 Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
                                          const Eigen::Vector2d& p1,
@@ -347,7 +348,8 @@ Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
 
 Eigen::Vector2i ParseKeypointSet(const std::string& s);
 
-void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2, Eigen::Vector2d& ep1);
+void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
+                                Eigen::Vector2d& ep1);
 
 enum KeyboardEvent { Reset, StepByStep };
 

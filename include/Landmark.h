@@ -80,6 +80,17 @@ class Landmark {
     bool FuseInvDepth(const Landmark& lk2);
 
     bool AbnormalConvergeLandmark();
+
+    // bool CheckInvDepthQualityByProject(const KeyFrame& lastLastFrame);
+    bool CheckInvDepthQualitySuccessByProject();
+
+    // 利用重投影残差检验收敛逆深度的质量
+    bool passReprojectCheck_ = false;
+    Eigen::Vector2d lastFrameMatchPx_ = Eigen::Vector2d::Zero();
+    int continousFailCheckNum_ = 0;
+    void AddContinousCheckFailNum() { ++continousFailCheckNum_; }
+    int continousPassCheckNum_ = 0;
+    void AddContinousCheckPassNum() { ++continousPassCheckNum_; }
 };
 
 #endif

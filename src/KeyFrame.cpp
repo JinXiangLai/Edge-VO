@@ -835,6 +835,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
             continue;
         }
         Landmark* lk1 = landmark_[i];
+        lk1->lastFrameMatchPx_.setZero();  // 重设匹配点
         if (lk1->Converge()) {
             convergeEdgeNum_ += 1;
         }
@@ -929,6 +930,8 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
 
             if (lk1->ObvUpdate(invD1, estCov)) {
                 ++findMatchNum;
+                lk1->lastFrameMatchPx_ =
+                    bestPx2;  // 记录当前匹配成功点，后续用于异常深度剔除
             }
         }
 
@@ -1149,21 +1152,35 @@ void KeyFrame::SetTwc(const Pose& Twc) {
 }
 
 double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
+    // 对已经收敛的深度点做检验，若连续3次重投影校验失败，则删除！
     if (config->useDepthImage) {
         return 0.;
     }
     int convergeNum = 0, badNum = 0;
     const Pose T21 = kf2->Twc_.Inverse() * Twc_;
-    for (int i = 0; i < landmark_.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(landmark_.size()); ++i) {
         Landmark* lk1 = landmark_[i];
-        if (lk1 == nullptr || lk1->IsOutOfRange() || !lk1->Converge()) {
+        if (lk1 == nullptr || lk1->IsOutOfRange() || !lk1->Converge() ||
+            lk1->lastFrameMatchPx_.isApproxToConstant(0) ||
+            lk1->passReprojectCheck_) {
             continue;
         }
 
-        ++convergeNum;
         const Eigen::Vector3d pc1 = lk1->GetPc();
         const Eigen::Vector3d pc2 = T21 * pc1;
-
+        const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+        const double residual = (px2 - lk1->lastFrameMatchPx_).head(2).norm();
+        if (residual > 1.0) {
+            lk1->continousFailCheckNum_++;
+        } else {
+            lk1->continousPassCheckNum_++;
+        }
+        if (lk1->CheckInvDepthQualitySuccessByProject()) {
+            ++convergeNum;
+        } else {
+            ++badNum;
+        }
+        /*
         const double depthRatio = pc2.z() / pc1.z();
         if (depthRatio < config->minDepthCompareRatio ||
             depthRatio > config->maxDepthCompareRatio) {
@@ -1212,8 +1229,8 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
         //     continue;
         // }
 #endif
+*/
     }
-
     return double(badNum) / convergeNum;
 }
 
@@ -1307,7 +1324,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
 
     // 保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
     CheckEpipolarLineDirection(ep2, ep1);
-    
+
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;
     vector<double> v1 = CalculateDescriptor(grayImg_, p1, ep1, desLen);

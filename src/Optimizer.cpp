@@ -1980,6 +1980,13 @@ void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
     if (static_cast<int>(window_.size()) < config->maxKFnumInWindow) {
         return;
     }
+
+    // 说明预设关键帧数量较少
+    if (window_.size() < 3) {
+        window_.erase(window_.begin());
+        return;
+    }
+
     const Eigen::Vector3d posDiff =
         curF.Twc_.t_wb_ - window_[window_.size() - 2]->Twc_.t_wb_;
     const double horDist = posDiff.head(2).norm();

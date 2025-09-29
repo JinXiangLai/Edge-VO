@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 1
+#if 0
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -202,13 +202,13 @@ int main(int argc, char** argv) {
         const double findMatchRatio =
             win.back()->UpdateDepth(curF, findMatchNum);
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
-        // win.back()->CullingBadDepth(&curF);
+        win.back()->CullingBadDepth(&curF);
         chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
 
         chrono::steady_clock::time_point t8, t9;
         if (win.back()->updateFrameCount_ % 5 == 0 && accDist > 0.03) {
             chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
-            win.back()->FuseDepth();
+            // win.back()->FuseDepth();
             chrono::steady_clock::time_point t9 = chrono::steady_clock::now();
             //cout << "Fuse depth spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
         }
@@ -296,7 +296,7 @@ int main(int argc, char** argv) {
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-            win.back()->FuseDepth();
+            // win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
             t11 = chrono::steady_clock::now();
