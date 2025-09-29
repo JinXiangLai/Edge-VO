@@ -66,7 +66,14 @@ class KeyFrame {
     double FindMatchesWithEpipolarConstraintOnImagePlane(
         const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
         Eigen::Vector2d& farPx, Eigen::Vector2d& nearPx,
-        Eigen::Vector2d& epipolarP1, const bool drawMatch = true);
+        Eigen::Vector2d& epipolarP1);
+
+    double SearchBestMatchAlongEpipolarLine(const Eigen::Vector2d& farPx2,
+                                            const Eigen::Vector2d& nearPx2,
+                                            const Eigen::Vector2d& ep2,
+                                            const KeyFrame& kf2,
+                                            const std::vector<double>& v1,
+                                            Eigen::Vector2d& bestPx2);
 
     void GenerateKeyPoint();
 

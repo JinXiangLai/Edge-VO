@@ -846,7 +846,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             epipolarP1(0, 0);
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestPx2, farPx2, nearPx2, epipolarP1, true);
+            &kf2, lk1, bestPx2, farPx2, nearPx2, epipolarP1);
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
@@ -1220,7 +1220,7 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
     Eigen::Vector2d& farPx2, Eigen::Vector2d& nearPx2,
-    Eigen::Vector2d& epipolarP1, const bool drawMatch) {
+    Eigen::Vector2d& epipolarP1) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         // cout << "Error lk1 is nullptr or out of range!\n";
         AddReportElement("lk1 is nullptr or out of range!");
@@ -1252,7 +1252,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         // 此时极线是无限长的，不需要判断长度
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
-
     ep1.normalize();
 
     const Eigen::Vector3d priorPc2 = T21 * lk1->GetPc();
@@ -1266,8 +1265,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     if (depthScale > 1.0) {
         ep1 *= depthScale;
     }
-
-    vector<Eigen::Vector2i> debugPx1{p1.cast<int>()};
 
     const double stddev = sqrt(lk1->invDepthCov_);
     double maxZ1 = min(100.0, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
@@ -1293,9 +1290,6 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         ep2 /= depthScale;
     }
 
-    // 保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
-    CheckEpipolarLineDirection(ep2, ep1);
-
     const int desLen = config->descriptorPatchLen;
     const int midLen = desLen / 2;
     // 检验一下描述子是否在范围内
@@ -1310,17 +1304,12 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
 
+    // 保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
+    CheckEpipolarLineDirection(ep2, ep1);
+    
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;
     vector<double> v1 = CalculateDescriptor(grayImg_, p1, ep1, desLen);
-    double s1 = 0;
-    double avg1 = 0;
-    for (int i = 0; i < desLen; ++i) {
-        s1 += v1[i];
-    }
-    avg1 = s1 / desLen;
-
-    const Mat& edgeImg2 = kf2->edgeImg_[0];
 
     // OK， 我们需要限制一下KF2上的极线范围，这是最重要的先验，极线搜索距离越短，受相对旋转的影响越小
     const double maxEpipolarLen = config->maxEpipolarSearchLine,
@@ -1337,13 +1326,15 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         nearPx2 += halfLen * ep2;
         farPx2 -= halfLen * ep2;
     }
+
     // 最远点若不在投影范围内，那么意味着视野范围受限？直接返回
-    if (!InRange(edgeImg2, farPx2.cast<int>())) {
+    const Mat& img2 = kf2->grayImg_;
+    if (!InRange(img2, farPx2.cast<int>())) {
         // cout << "Error farPx2 not in image!\n";
         AddReportElement("Error farPx2 not in image!");
         return EpipolarMatchType::outOFboundaryORabnormalDepth;
     }
-    if (!InRange(edgeImg2, nearPx2.cast<int>())) {
+    if (!InRange(img2, nearPx2.cast<int>())) {
         // 将最近点移动到图像内
         if (!MoveNearPx2IntoBoundary(nearPx2, ep2, farPx2)) {
             // cout << "Error nearPx2 not in image!\n";
@@ -1352,23 +1343,30 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         }
     }
 
+    ep2 *= config->minSearchStep;
+    return SearchBestMatchAlongEpipolarLine(farPx2, nearPx2, ep2, *kf2, v1,
+                                            bestPx2);
+}
+
+double KeyFrame::SearchBestMatchAlongEpipolarLine(
+    const Eigen::Vector2d& farPx2, const Eigen::Vector2d& nearPx2,
+    const Eigen::Vector2d& ep2, const KeyFrame& kf2, const vector<double>& v1,
+    Eigen::Vector2d& bestPx2) {
     double bestScore = 1e9, secondBestScore = 1e9;
     Eigen::Vector2d bestP2{1000, 1000}, secondBestP2{1000, 1000};
 
     Eigen::Vector2d p2 = farPx2;
-    ep2 *= config->minSearchStep;
-    //cout << "farPx2, ep2: " << p2.transpose() << " | " << ep2.transpose() << endl;
-    vector<Eigen::Vector2i> debugPx2{p2.cast<int>()};
-
+    const int desLen = config->descriptorPatchLen;
+    const int midLen = desLen / 2;
     Eigen::Vector2d p2End = p2 - midLen * ep2, p2Start = p2 + midLen * ep2;
     // 保证端点在图像范围内
-    if (!InRange(edgeImg2, p2End.cast<int>())) {
+    const cv::Mat& grayImg2 = kf2.grayImg_;
+    if (!InRange(grayImg2, p2End.cast<int>())) {
         p2End = p2;
         p2 = p2Start;
         p2Start = p2 + midLen * ep2;
     }
-    const Mat& img2 = kf2->grayImg_;
-    vector<double> v2 = CalculateDescriptor(img2, p2, ep2, desLen);
+    vector<double> v2 = CalculateDescriptor(grayImg2, p2, ep2, desLen);
 
     double s2 = 0, avg2 = 0;  // 可以使用滑窗计算
     for (int i = 0; i < desLen; ++i) {
@@ -1383,12 +1381,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
 
     // 通过判断incx，incy的正负，来判断循环终止条件
-    // while ( (ep2[0] > 0) == (p2[0] < nearPx2[0]) && (ep2[1] > 0) == (p2[1] < nearPx2[1]) ) {
+    const double avg1 = std::accumulate(v1.begin(), v1.end(), 0.) / v1.size();
     while (1) {
-        //cout << "p2m2, p2p2: " << p2m2.transpose() << " | " << p2p2.transpose() << endl;
-        // if (1) {
-        if (kf2->dist_[0].at<float>(p2.y(), p2.x()) < 2.0 ||
-            abs(v2[2] - v1[2]) < 20 || 1) {
+        if (InRange(grayImg2, p2.cast<int>()) &&
+            kf2.dist_[0].at<float>(int(p2.y()), int(p2.x())) < 1.0) {
             // 已经保证端点在边界范围内，这里无需再判断
             const double score = CalculateSSD(v1, v2, avg1, avg2, desLen);
 
@@ -1408,7 +1404,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         p2 += ep2;       // 移动关键点
         p2Start += ep2;  // 判断边界及移动滑窗
         s2 -= v2[0];     // v2[0] 对应的可是 p2End 点
-        for (int i = 1; i < v2.size(); ++i) {
+        for (int i = 1; i < static_cast<int>(v2.size()); ++i) {
             v2[i - 1] = v2[i];
         }
         const bool inSearchRange = (ep2[0] > 0) == (p2Start[0] < nearPx2[0]) &&
@@ -1416,38 +1412,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         if (!inSearchRange) {
             break;
         }
-        const double v2Back =
-            BilinearInterpolate<uchar>(kf2->grayImg_, p2Start);
+        const double v2Back = BilinearInterpolate<uchar>(grayImg2, p2Start);
         v2.back() = v2Back;
         s2 += v2.back();
         avg2 = s2 / desLen;
-
-        // for debug only
-        debugPx2.push_back(p2.cast<int>());
-        p1 += ep1;
-        debugPx1.push_back(p1.cast<int>());
-    }
-
-    vector<Eigen::Vector2i> debugGoodKp2;
-    if (InRange(edgeImg2, bestP2.cast<int>())) {
-        //cout << "best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
-        debugGoodKp2.push_back(bestP2.cast<int>());  // yellow
-    }
-    if (InRange(edgeImg2, secondBestP2.cast<int>())) {
-        debugGoodKp2.push_back(secondBestP2.cast<int>());
-    }
-
-    // cout << "Each best, second score mean: " << bestScore/desLen << " " << secondBestScore/desLen << endl;
-
-    if (config->drawAllEpipolarMatch &&
-        lk1->uv_.x() > config->drawEpipolarMatchStartCol) {
-        cout << "best & second score: " << bestScore << " " << secondBestScore
-             << endl;
-        cout << "(bestP2 - secondBestP2).norm(): "
-             << (bestP2 - secondBestP2).norm() << endl;
-        DrawMatch(debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2,
-                  debugGoodKp2, "each point 2 all Epipolar constraint matches",
-                  1, 1000000);
     }
 
     const bool smallScore = bestScore < config->maxDescriptorDist * desLen;
@@ -1476,37 +1444,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
 
     if (goodScore && !badDist) {
-        if (config->drawGoddEpipolarMatch && interaction->drawEpipolarMatch &&
-            (lk1->uv_.x() > config->drawEpipolarMatchStartCol)) {
-            // if(interaction->drawEpipolarMatch && (d1 < 0.5)) { // KF2上投影得到的极线距离非常短
-            cout << "parallax: " << (lk1->uv_.cast<double>() - bestP2).norm()
-                 << endl;
-            cout << "bestScore, secondBestScore/desLen: " << bestScore / desLen
-                 << " " << secondBestScore / desLen << endl;
-            cout << "(bestP2 - secondBestP2).norm(): "
-                 << (bestP2 - secondBestP2).norm() << endl;
-            char c = DrawMatch(
-                debugGrayImg_, kf2->debugGrayImg_, debugPx1, debugPx2,
-                debugGoodKp2, "current point 2 all Epipolar constraint matches",
-                1, 1000000);
-            if (c == 'D' || c == 'd') {
-                interaction->drawEpipolarMatch = false;
-                // cv::destroyAllWindows();
-                cv::destroyWindow(
-                    "current point 2 all Epipolar constraint matches");
-            }
-        }
         bestPx2 = bestP2;
-
-#if defined(WRITE_MATCH_PAIR_IMAGE)
-        if (drawMatch && lk1->IsDebugPoint()) {
-            DrawBestMatchEachFrame(lk1->uv_, bestP2.cast<int>(),
-                                   kf2->debugGrayImg_);
-            DrawEpipolarMatchEachFrame(lk1->uv_, nearPx2.cast<int>(),
-                                       farPx2.cast<int>(), bestPx2.cast<int>(),
-                                       kf2->debugGrayImg_);
-        }
-#endif
         AddReportElement("Find Match succeed!");
         return bestScore;
     }
