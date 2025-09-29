@@ -100,6 +100,9 @@ class Config {
     bool debugWithTrueDepthImage;
     std::unordered_set<Eigen::Vector2i, RobustVector2iHash, Vector2iEqual>
         pixelCount;
+    bool debugShowGlobalMap;
+    bool debugRunOnDesktop;
+    bool debugShowOnlineResult3D;
 };
 
 extern Config* config;  // 外部可以定义及使用的全局变量，只在main函数初始化一次

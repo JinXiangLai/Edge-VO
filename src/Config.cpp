@@ -103,6 +103,10 @@ Config::Config(const std::string& yamlFilePath) {
     //for (const Eigen::Vector2i& p : pixelCount) {
     //    cout << p.transpose() << endl;
     //}
+
+    debugShowGlobalMap = f["debugShowGlobalMap"].as<bool>();
+    debugRunOnDesktop = f["debugRunOnDesktop"].as<bool>();
+    debugShowOnlineResult3D = f["debugShowOnlineResult3D"].as<bool>();
 }
 
 Config* config = nullptr;

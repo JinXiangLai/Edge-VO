@@ -1,5 +1,4 @@
-
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg1_xyz # /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz 
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_xyz 
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -10,8 +9,8 @@ Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
 Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
-#Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
-#Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
+# Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
+# Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
 
 Qcg: [0, 0, 0, 1] # qx qy qz qw
 Pcg: [0, 0, 0] # tx ty tz
@@ -26,7 +25,7 @@ maxDescriptorDist: 10 # or 使用光度残差时重新设置，如果使用去�
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
-maxDepthConvergeStd: 0.25 # 深度收敛的标准差
+maxDepthConvergeStd: 0.01 # 深度收敛的标准差，由于逆深度与正深度是非线性关系，不能给正深度的收敛标准
 abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 4 # 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
@@ -84,8 +83,8 @@ nonMaximumSuppressionRatio: 1.0 # 为了减小误匹配，设定最优与次优�
 descriptorPatchLen: 5
 minEpipolarSearchLine: 10
 maxEpipolarSearchLine: 30 # most import item for triangulation
-best2SecondRatio: 0.75 # 因为存在极线退化场景，为了避免误匹配，越大越宽松
-best2SecondDist: 3 # pixels，这个应该可以设置小点，存在边缘检测不稳定情况，越大越宽松
+best2SecondRatio: 0.7 # 因为存在极线退化场景，为了避免误匹配，越大越宽松
+best2SecondDist: 2 # pixels，这个应该可以设置小点，存在边缘检测不稳定情况，越大越宽松
 SimErrorRatio: 0.8 # 千分之5
 drawGoddEpipolarMatch: true
 drawAllEpipolarMatch: false
@@ -99,7 +98,9 @@ initWithTrueDepth: false
 debugMessageSaveFolder: "./"
 debugWithTrueDepthImage: true # 使用真值深度验证估计
 # 使用unordered_set存储如下点，只绘制如下点的debug视频，换行不需要加任何额外符号
-debugKFpointSet: [21_240, 175_207, 491_437, 513_386, 124_320, 68_189, 295_202, 102_266, 95_284, 112_193,
-461_378, 479_420, 204_413, 44_401, 92_427, 218_305, 542_402,
-252_51, 547_313, 12_249, 410_351, 150_102, 90_122, 51_111, 132_236,
-390_161, 401_155, 219_110, 220_119, 294_158, 313_328, 405_253, 588_132]
+debugKFpointSet: [97_167]
+
+# 显示相关flag
+debugShowGlobalMap: false # 默认显示局部地图
+debugRunOnDesktop: true # 是否运行在台式机上，台式机无法显示过多的元素
+debugShowOnlineResult3D: true # 是否显示viz3d窗口

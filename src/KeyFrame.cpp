@@ -803,17 +803,18 @@ size_t KeyFrame::InitializeLandmark() {
     return landmark_.size();
 }
 
-double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
+double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
 
     double matchEdgeNum = 0;
     convergeEdgeNum_ = 0;  // 重新统计当前KF的收敛边缘点集
-    int findMatchNum = 0;
+    findMatchNum = 0;
 
     const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
     const Pose Tc2c1 = Tc1c2.Inverse();
-    if (Tc1c2.t_wb_.norm() < 0.05 || config->useDepthImage) {
+    if (Tc1c2.t_wb_.norm() < 1e-3 || config->useDepthImage) {
         // 位移过小，不能进行更新
-        return 0;
+        findMatchNum = landmark_.size();
+        return 1.0;
     }
 
     // vector<Pose> vTwc{ Pose(), Tc1c2};
@@ -826,8 +827,6 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::shuffle(landmark_.begin(), landmark_.end(), gen);
-    int failTriangulateCount = 0;
-    int successTriangulateCount = 0;
 #endif
 
     ResetDebugMessage();
@@ -876,7 +875,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             continue;
 
         } else if (error == EpipolarMatchType::repeatTextureORbadDepth) {
-            ++lk1->failObvTime_;
+            // ++lk1->failObvTime_;
             lk1->invDepthCov_ *= varianceExpand[1];
             lk1->UpdateUncertainty(false);
             continue;
@@ -896,7 +895,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
                      << " failed! no update!"
                      << "kp1: " << lk1->uv_.transpose()
                      << " bestPx2: " << bestPx2.transpose() << endl;
-                ++lk1->failObvTime_;
+                // ++lk1->failObvTime_;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
                 if (lk1->IsDebugPoint()) {
@@ -942,20 +941,21 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
             invDepthUncertaintyFile_.open(
                 fmt::format("{}/kf_{}_depth_uncertainty.csv",
                             config->debugMessageSaveFolder, id_));
-            invDepthUncertaintyFile_ << "#pointId, cov, invDepth, depth, "
-                                        "trueDepth, depthDiff, obvTime"
-                                     << endl;
+            invDepthUncertaintyFile_
+                << "#pointId, cov, invDepth, depth, "
+                   "trueDepth, depthDiff, obvTime, failObvTime"
+                << endl;
             firstWriteUncertainty_ = false;
         }
         // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
-        if (lk1->trueDepth_ > 0.01) {
+        if (lk1->trueDepth_ > 0.01 && lk1->AbnormalConvergeLandmark()) {
             const double estDepth = GetPositiveDepth(lk1->invZ_);
             invDepthUncertaintyFile_
                 << lk1->uv_.x() << "_" << lk1->uv_.y() << ", "
                 << lk1->invDepthCov_ << ", " << lk1->invZ_ << ", " << estDepth
                 << ", " << lk1->trueDepth_ << ", "
-                << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_
-                << endl;
+                << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_ << ", "
+                << lk1->failObvTime_ << endl;
         }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
@@ -982,7 +982,7 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2) {
              << "matchEdgeNum, convergeEdgeNum_: " << matchEdgeNum << " "
              << convergeEdgeNum_ << endl;
     cout << "successful findMatchNum: " << findMatchNum << endl;
-    return double(convergeEdgeNum_) / landmark_.size();
+    return double(findMatchNum) / landmark_.size();
 }
 
 // 使用极线约束跟踪每一个边缘点
@@ -1266,9 +1266,10 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
         ep1 *= depthScale;
     }
 
+    // 虽然正深度分布不能直接转换，但是深度范围是可以这么确定的
     const double stddev = sqrt(lk1->invDepthCov_);
     double maxZ1 = min(100.0, GetPositiveDepth(lk1->invZ_ - 3.0 * stddev));
-    double minZ1 = max(0.1, GetPositiveDepth(lk1->invZ_ + 3.0 * stddev));
+    double minZ1 = max(0.01, GetPositiveDepth(lk1->invZ_ + 3.0 * stddev));
     const Eigen::Vector3d farPc1 = cam_->InverseProject(lk1->uv_, maxZ1);
     const Eigen::Vector3d nearPc1 = cam_->InverseProject(lk1->uv_, minZ1);
     const Eigen::Vector3d farPc2 = T21 * farPc1;

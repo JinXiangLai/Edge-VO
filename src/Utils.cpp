@@ -1926,16 +1926,18 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     }
 
     // 创建一个球体表示起点和终点
-    constexpr double radius = 0.001;
-    cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
-    cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
-    window.showWidget("S0", s0);
-    window.showWidget("S1", s1);
+    if (!config->debugRunOnDesktop) {
+        constexpr double radius = 0.001;
+        cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
+        cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
+        window.showWidget("S0", s0);
+        window.showWidget("S1", s1);
+    }
 
     // 实时显示当前帧投影情况
     constexpr double ratio = 0.5;
     const int w = curImg.cols * ratio, h = curImg.rows * ratio;
-    if (curf != nullptr) {
+    if (curf != nullptr && !config->debugRunOnDesktop) {
         cv::putText(curInitImg, "curInitImage", Point(10, curInitImg.rows - 10),
                     cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget(
@@ -1949,11 +1951,13 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
         // cv::imshow("curProjImg", curImg);
     }
 
-    cv::putText(curKFimg, "curKFimg", Point(10, curInitImg.rows - 10),
-                cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
-    window.showWidget(
-        "lastKFimg",
-        cv::viz::WImageOverlay(curKFimg, cv::Rect(2 * w + 20, 0, w, h)));
+    if (!config->debugRunOnDesktop) {
+        cv::putText(curKFimg, "curKFimg", Point(10, curInitImg.rows - 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
+        window.showWidget(
+            "lastKFimg",
+            cv::viz::WImageOverlay(curKFimg, cv::Rect(2 * w + 20, 0, w, h)));
+    }
 
     // 显示轨迹
     vector<cv::Point3d> traj;
@@ -1986,9 +1990,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     while (!interaction->resetWindow && curId == interaction->visualCurF.id_ &&
            !interaction->drawEpipolarMatch) {
         window.spinOnce(100);
-        cv::waitKey(100);
     }
-    // window.spin();
     interaction->resetWindow = false;
     window.removeAllWidgets();
     //window.close();

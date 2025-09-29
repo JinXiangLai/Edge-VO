@@ -25,7 +25,7 @@
 #define Undistort  // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
-constexpr double kMinSceneDepthInCamera = 0.1;  // meter
+constexpr double kMinSceneDepthInCamera = 0.01;  // meter
 
 inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
     {"red", {0, 0, 255}},       {"green", {0, 255, 0}},

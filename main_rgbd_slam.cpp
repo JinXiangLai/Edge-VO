@@ -18,7 +18,7 @@ using namespace cv;
 
 void Run(Optimizer* optimizer);
 
-const cv::Point kViz3DWindowPos(1920 + 1920 / 2, 1080 / 2);
+const cv::Point kViz3DWindowPos(1920 + 1920 / 2, 1080 - 100); // 窗口左上角点在屏幕上的位置
 
 int main(int argc, char** argv) {
 
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     InteractionParam _visualizeParam;
     interaction = &_visualizeParam;
     viz::Viz3d window("Local Map Viewer");
-    // window.setWindowPosition(kViz3DWindowPos);
+    window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
     InitColor();
 
@@ -84,9 +84,9 @@ int main(int argc, char** argv) {
 
     KeyFrame* initFrame = nullptr;
     KeyFrame lastF, lastLastF;
-#if defined(SHOW_ONLINE_3D_RESULT)
+
     thread* viewerThread;
-#endif
+
     bool isInitialized = false;
     vector<KeyFrame*>& win = optimizer.window_;
     double accDist = 0.;
@@ -142,9 +142,11 @@ int main(int argc, char** argv) {
             initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
-#if defined(SHOW_ONLINE_3D_RESULT)
-            viewerThread = new thread(Run, &optimizer);
-#endif
+
+            if (config->debugShowOnlineResult3D) {
+                viewerThread = new thread(Run, &optimizer);
+            }
+
             continue;  // 认为初始化完毕
         }
         ShowImage(curF.edgeImg_[0], "edgeImg" + to_string(i), showImg);
@@ -163,16 +165,17 @@ int main(int argc, char** argv) {
         // 显示线程使用
         interaction->visualCurF = curF;
         interaction->visualCurFinit = curF;
-
+        int findMatchNum = 0;
         if (!isInitialized) {
             // 初始化深度图
             lastLastF = lastF;
             lastF = curF;
-            const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+            const double findMatchRatio =
+                win.back()->UpdateDepth(curF, findMatchNum);
             if (config->messageLevel <= MessageLevel::Error)
-                cout << "kfConvergeEdgeRatio, accDist: " << kfConvergeEdgeRatio
-                     << ", " << accDist << endl;
-            if (kfConvergeEdgeRatio > 0.1 ||
+                cout << "findMatchRatio, accDist: " << findMatchRatio << ", "
+                     << accDist << endl;
+            if (findMatchRatio > 0.1 ||
                 (accDist > 0.1 && (curF.id_ - initFrame->id_ > 30)) ||
                 accDist > config->needNewKFtrans || config->useDepthImage) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
@@ -196,7 +199,8 @@ int main(int argc, char** argv) {
 
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
-        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        const double findMatchRatio =
+            win.back()->UpdateDepth(curF, findMatchNum);
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
         // win.back()->CullingBadDepth(&curF);
         chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
@@ -211,7 +215,8 @@ int main(int argc, char** argv) {
 
 #else
         // step1
-        const double kfConvergeEdgeRatio = win.back()->UpdateDepth(curF);
+        const double findMatchRatio =
+            win.back()->UpdateDepth(curF, findMatchNum);
         // step2
         optimizer.SetInitLambda(0);
         //optimizer.TrackLocalMap(&curF);
@@ -240,20 +245,25 @@ int main(int argc, char** argv) {
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
         const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
-        bool case1 =
-                 false,  // initDepthRatio < config->needNewKFMaxMatchEdgeRatio,
-            case2 = true,  // kfConvergeEdgeRatio > 0.3,
-            case3 = T12.t_wb_.norm() > config->needNewKFtrans,
-             case4 =
-                 Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot,
-             case5 = accDist > config->needNewKFtrans,
-             case6 = curF.id_ - win.back()->id_ > 5;
+        const bool case2 =
+            (findMatchRatio < 0.1 || findMatchNum < 500) &&
+            0;  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
+        const bool case3 = T12.t_wb_.norm() > config->needNewKFtrans;
+        const bool case4 =
+            Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
+        const bool case5 = accDist > config->needNewKFtrans;
+        const bool case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
-        cout << "case1-5: " << case1 << " " << case2 << " " << case3 << " "
-             << case4 << " " << case5 << " accdist: " << accDist << endl;
+        cout << fmt::format(
+                    "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
+                    "trans "
+                    "dist: {:.2f}, "
+                    "rot ang: {:.1f}deg, accumulate dist: {:.2f}, ",
+                    findMatchRatio, findMatchNum, T12.t_wb_.norm(),
+                    Quat2RPY(T12.q_wb_).norm() * kRad2Deg, accDist)
+             << endl;
         chrono::steady_clock::time_point t10, t11;
-        if (((case1 || case3 || case4) && case2 && case6 && case5) ||
-            needKFbySight) {
+        if (((case3 || case4 || case5 || case2) && case6) || needKFbySight) {
             {
                 static bool first = true;
                 ofstream f;
@@ -332,25 +342,21 @@ int main(int argc, char** argv) {
     }
 #endif
 
-#if defined(SHOW_ONLINE_3D_RESULT)
-    viewerThread->join();
-    delete viewerThread;
-#endif
+    if (config->debugShowOnlineResult3D) {
+        viewerThread->join();
+        delete viewerThread;
+    }
 
     return 0;
 }
 
-#define SHOW_GLOBAL_MAP 0
 void Run(Optimizer* optimizer) {
     while (1) {
-#if SHOW_GLOBAL_MAP
-        interaction->ShowGlobalMapPoint();
-#else
-        // UpdatePointCloud(historicalKF);
-        if (!optimizer->window_.empty()) {
+        if (config->debugShowGlobalMap) {
+            interaction->ShowGlobalMapPoint();
+        } else if (!optimizer->window_.empty()) {
             optimizer->ShowLocalMap();
         }
-#endif
         usleep(10 * 1000);
     }
 }

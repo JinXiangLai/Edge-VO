@@ -48,7 +48,7 @@ class KeyFrame {
         const int equalparts);
     size_t InitializeLandmark();
     int ReuseLandmark(KeyFrame* kf1);
-    double UpdateDepth(const KeyFrame& kf2);
+    double UpdateDepth(const KeyFrame& kf2, int& findMatchNum);
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);

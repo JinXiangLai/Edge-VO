@@ -99,12 +99,12 @@ class Optimizer {
 
     void CullingErrorLandmark(KeyFrame* curF = nullptr);
 
-    void UpdateDepthInWindow() {
-        // 使用之前的KF对新的KF进行深度滤波
-        for (int i = 0; i < int(window_.size()) - 1; ++i) {
-            window_.back()->UpdateDepth(*window_[i]);
-        }
-    }
+    // void UpdateDepthInWindow() {
+    //     // 使用之前的KF对新的KF进行深度滤波，这个没啥
+    //     for (int i = 0; i < int(window_.size()) - 1; ++i) {
+    //         window_.back()->UpdateDepth(*window_[i]);
+    //     }
+    // }
 
     void AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
                               const Pose& T12, const int lvl = 0);

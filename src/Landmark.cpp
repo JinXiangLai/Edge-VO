@@ -55,9 +55,12 @@ void Landmark::Update(const double delta_z, const bool useInvDepth) {
 
 bool Landmark::ObvUpdate(const double invDepth, const double variance) {
     const double diff = abs(invZ_ - invDepth);
-    if (diff > sqrt(invDepthCov_) * 3.0) {
+    if (diff > sqrt(invDepthCov_) * 2.0) {
         invDepthCov_ *= expandRatio;
         failObvTime_++;
+        if (failObvTime_ > obvTime_) {
+            SetOutOfRange();
+        }
         return false;
     }
 
@@ -81,6 +84,12 @@ bool Landmark::FuseInvDepth(const Landmark& lk2) {
     invZ_ = (u1 * cov2 + u2 * cov1) / sumCov;
     // invDepthCov_ = (cov1 * cov2) / sumCov;
     return true;
+}
+
+bool Landmark::AbnormalConvergeLandmark() {
+    // 用于debug输出异常的landmark以优化匹配算法
+    const double z = GetPositiveDepth(invZ_);
+    return (z < 0.5 || z > 10.0) && (obvTime_ > 5 || Converge());
 }
 
 void Landmark::UpdateUncertainty(const bool updateObv) {
@@ -110,20 +119,10 @@ void Landmark::ResetFEJ() {
 }
 
 bool Landmark::Converge() const {
-    // 这个标准差是很不准的，所以不能用其判断
-    // return uncertainty_ < config->maxDepthConvergeStd &&
-    //     z_ > config->minDepth && z_ < config->maxDepth;
-    // TODO：考虑把后续找不到匹配的深度估计值剔除才能最终实现一个基础版
-    // OK，那些<0.5m深度的点，可以在一次观测收敛，但是被观测次数确实很少的，据此可以剔除
-    const double stddev = sqrt(invDepthCov_);
-    const double invZ1 = invZ_ - stddev;
-    const double invZ2 = invZ_ + stddev;
-    if (invZ1 < 1e-9 || invZ2 < 1e-9) {
+    if (invZ_ < 1e-9) {
         return false;
     }
-    const double diff = abs(GetPositiveDepth(invZ1) - GetPositiveDepth(invZ2));
-    return diff < config->maxDepthConvergeStd;
-    // return initFromPropagate_;
+    return sqrt(invDepthCov_) / invZ_ < 0.1;
 }
 
 bool Landmark::ManySupport() const {

@@ -1938,8 +1938,11 @@ void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
 }
 
 double Optimizer::TransformDepthMap2CurrentFrame(KeyFrame* kf2) {
-    for (KeyFrame* kf1 : window_) {
-        ::TransformDepthMap2CurrentFrame(kf1, kf2, *cam_);
+    // for (KeyFrame* kf1 : window_) {
+    //     ::TransformDepthMap2CurrentFrame(kf1, kf2, *cam_);
+    // }
+    if (!window_.empty()) {
+        ::TransformDepthMap2CurrentFrame(window_.back(), kf2, *cam_);
     }
 
     double convergeNum = 0;

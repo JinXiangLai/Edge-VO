@@ -78,6 +78,8 @@ class Landmark {
     bool ObvUpdate(const double invDepth, const double variance);
 
     bool FuseInvDepth(const Landmark& lk2);
+
+    bool AbnormalConvergeLandmark();
 };
 
 #endif
