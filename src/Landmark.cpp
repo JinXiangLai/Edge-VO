@@ -136,7 +136,7 @@ bool Landmark::Converge() const {
     if (invZ_ < 1e-9) {
         return false;
     }
-    return sqrt(invDepthCov_) / invZ_ < 0.1;
+    return sqrt(invDepthCov_) / invZ_ < 0.1 && obvTime_ > 5;
 }
 
 bool Landmark::ManySupport() const {
