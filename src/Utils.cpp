@@ -1295,29 +1295,11 @@ double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
             continue;
         }
 
-        Eigen::Vector2d ep2 =
-            GetEpipolarLineDirection(T21.t_wb_, px2.cast<double>(), cam);
-        if (ep2.isApproxToConstant(0)) {
-            continue;
-        }
-        Eigen::Vector2d ep1 =
-            GetEpipolarLineDirection(T12.t_wb_, lk1->uv_.cast<double>(), cam);
-        if (ep1.isApproxToConstant(0)) {
-            continue;
-        }
-        const double depthScale = Pc1.z() / Pc2.z();
-        if (depthScale < 1.0) {
-            ep1 /= depthScale;
-        } else {
-            ep2 *= depthScale;
-        }
-
-        const vector<double> desc1 = CalculateDescriptor(
-            lk1->host_->grayImg_, lk1->uv_.cast<double>(), ep1);
-        Eigen::Vector2d bestPx2(0, 0), farPx(0, 0), nearPx(0, 0);
+        Eigen::Vector2d bestPx2(0, 0), farPx(0, 0), nearPx(0, 0),
+            epipolarP1(0, 0), ep2(0, 0);
         const double matchScore =
             kf1->FindMatchesWithEpipolarConstraintOnImagePlane(
-                kf2, lk1, bestPx2, farPx, nearPx, ep1);
+                kf2, lk1, bestPx2, farPx, nearPx, epipolarP1, ep2);
         if (matchScore < 0) {
             // 转换失败
             ++findMatchFailNum;
@@ -1440,7 +1422,7 @@ bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
                                          idepth2)) {
         return false;
     }
-    
+
     const double ratio = idepth1 / idepth2;
     if (ratio > 0.75 && ratio < 1.25) {
         return true;
@@ -1473,6 +1455,26 @@ bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
     }
 
     return true;
+}
+
+double CalculateVarianceByOffsetPx2(const Eigen::Vector2d& kp1,
+                                    const Eigen::Vector2d& kp2,
+                                    const Eigen::Vector2d& ep2,
+
+                                    const Eigen::Matrix3d& invK0,
+                                    const Pose& T12, const double offsetRatio) {
+    const Eigen::Vector2d pxOffset1 = kp2 - offsetRatio * ep2;
+    const Eigen::Vector2d pxOffset2 = kp2 + offsetRatio * ep2;
+    double idepth1 = 0;
+    double idepth2 = 0;
+    if (!GetHostFrameObservationInvDepth(kp1, pxOffset1, invK0, T12, idepth1)) {
+        return 1e6;
+    }
+    if (!GetHostFrameObservationInvDepth(kp1, pxOffset2, invK0, T12, idepth2)) {
+        return 1e6;
+    }
+
+    return pow(idepth1 - idepth2, 2) * 0.25;  // 取一半
 }
 
 double CalculateVariance(const double& estInvDepth1, const Eigen::Vector2d& kp1,

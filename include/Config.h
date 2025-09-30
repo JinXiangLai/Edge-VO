@@ -103,6 +103,7 @@ class Config {
     bool debugShowGlobalMap;
     bool debugRunOnDesktop;
     bool debugShowOnlineResult3D;
+    double matchNoise;
 };
 
 extern Config* config;  // 外部可以定义及使用的全局变量，只在main函数初始化一次

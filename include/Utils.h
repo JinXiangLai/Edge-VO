@@ -332,6 +332,13 @@ bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
                                      const Eigen::Matrix3d& invK0,
                                      const Pose& T12, double& idepth1);
 
+double CalculateVarianceByOffsetPx2(const Eigen::Vector2d& kp1,
+                                    const Eigen::Vector2d& kp2,
+                                    const Eigen::Vector2d& ep2,
+                                    const Eigen::Matrix3d& invK0,
+                                    const Pose& T12,
+                                    const double offsetRatio = 3.0);
+
 double CalculateVariance(const double& estIdepth1, const Eigen::Vector2d& kp1,
                          const Eigen::Vector2d& kp2, const Pose& T21,
                          const Eigen::Matrix3d& invK, const Eigen::Matrix3d& K);

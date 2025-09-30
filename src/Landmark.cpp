@@ -68,7 +68,7 @@ bool Landmark::ObvUpdate(const double invDepth, const double variance) {
     const double &u1 = invZ_, &cov1 = invDepthCov_;
     const double sumCov = cov1 + cov2;
     invZ_ = (u2 * cov1 + u1 * cov2) / sumCov;
-    invDepthCov_ = (cov1 * cov2) / sumCov;
+    invDepthCov_ = std::max(0.001, (cov1 * cov2) / sumCov);
     //UpdateUncertainty(true);
     obvTime_++;
     return true;
@@ -89,7 +89,7 @@ bool Landmark::FuseInvDepth(const Landmark& lk2) {
 bool Landmark::AbnormalConvergeLandmark() {
     // 用于debug输出异常的landmark以优化匹配算法
     const double z = GetPositiveDepth(invZ_);
-    return (z < 0.5 || z > 10.0) && (obvTime_ > 5 || Converge());
+    return (z < 0.5 || z > 10.0) && Converge();
 }
 
 bool Landmark::CheckInvDepthQualitySuccessByProject() {
@@ -98,7 +98,7 @@ bool Landmark::CheckInvDepthQualitySuccessByProject() {
         return false;
     }
 
-    if(continousPassCheckNum_ > 3) {
+    if (continousPassCheckNum_ > 3) {
         passReprojectCheck_ = true;
         return true;
     }
@@ -136,7 +136,8 @@ bool Landmark::Converge() const {
     if (invZ_ < 1e-9) {
         return false;
     }
-    return sqrt(invDepthCov_) / invZ_ < 0.1 && obvTime_ > 5;
+    const double stddev = sqrt(invDepthCov_);
+    return (stddev < 0.001 || stddev / invZ_ < 0.1) && obvTime_ > 5;
 }
 
 bool Landmark::ManySupport() const {

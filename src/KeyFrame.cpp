@@ -843,10 +843,10 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
         // 每个Landmark只能由一个host控制，在转移控制权之前，只能更新其在host系下的depth
         // const vector<Eigen::Vector2d> kp2 = lk1->FindMatches(kf2);
         Eigen::Vector2d bestPx2(0, 0), farPx2(0, 0), nearPx2(0, 0),
-            epipolarP1(0, 0);
+            epipolarP1(0, 0), ep2(0, 0);
         // 这里才是开始找匹配像素点
         const double error = FindMatchesWithEpipolarConstraintOnImagePlane(
-            &kf2, lk1, bestPx2, farPx2, nearPx2, epipolarP1);
+            &kf2, lk1, bestPx2, farPx2, nearPx2, epipolarP1, ep2);
 
         if (lk1->obvTime_ == 0) {
             // 首次创建深度假设
@@ -913,15 +913,18 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
             if (lk1->IsDebugPoint()) {
-                DrawTriangulateCase(1.0/estInvD1, 1.0/estInvD2, *lk1,
+                DrawTriangulateCase(1.0 / estInvD1, 1.0 / estInvD2, *lk1,
                                     epipolarP1.cast<int>(), bestPx2.cast<int>(),
                                     farPx2.cast<int>(), nearPx2.cast<int>(),
                                     kf2.debugGrayImg_, Tc1c2, true);
             }
 #endif
-            const double estCov =
-                CalculateVariance(estInvD1, lk1->uv_.cast<double>(), bestPx2,
-                                  Tc2c1, cam_->Kinv_[0], cam_->K_[0]);
+            // const double estCov =
+            //     CalculateVariance(estInvD1, lk1->uv_.cast<double>(), bestPx2,
+            //                       Tc2c1, cam_->Kinv_[0], cam_->K_[0]);
+            const double estCov = CalculateVarianceByOffsetPx2(
+                lk1->uv_.cast<double>(), bestPx2, ep2, cam_->Kinv_[0], Tc1c2,
+                config->matchNoise);
             if (i % 1000 == 0)
                 cout << "1th invz: " << lk1->invZ_
                      << ", cov: " << lk1->invDepthCov_
@@ -1237,7 +1240,7 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
 double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
     Eigen::Vector2d& farPx2, Eigen::Vector2d& nearPx2,
-    Eigen::Vector2d& epipolarP1) {
+    Eigen::Vector2d& epipolarP1, Eigen::Vector2d& ep2) {
     if (lk1 == nullptr || lk1->IsOutOfRange()) {
         // cout << "Error lk1 is nullptr or out of range!\n";
         AddReportElement("lk1 is nullptr or out of range!");
@@ -1301,7 +1304,7 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     nearPx2 = cam_->Project2PixelPlane(nearPc2);
     // 从 far->near 的方向向量，ep1极线向量的方向相对图像需要与此保持一致
     // 极点对应着最小深度投影(因为是归一化平面交点)
-    Eigen::Vector2d ep2 = nearPx2 - farPx2;
+    ep2 = nearPx2 - farPx2;
     const double ep2Len = ep2.norm();
     ep2 = ep2.normalized();
     if (depthScale < 1.0) {
