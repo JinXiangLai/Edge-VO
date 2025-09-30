@@ -205,7 +205,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCost(
             if (p.J_Pc2_T12_.empty()) {
                 const Eigen::Vector3d dt = Pc1 - T12[i].t_wb_;
                 // * Pc2 w.r.t R12
-                J_Pc2_T12.block(0, 0, 3, 3) = skewSymmetric(T21.q_wb_ * dt);
+                J_Pc2_T12.block(0, 0, 3, 3) = SkewSymmetric(T21.q_wb_ * dt);
                 // * Pc2 w.r.t t12
                 J_Pc2_T12.block(0, 3, 3, 3) = -T21.q_wb_.toRotationMatrix();
                 if (p.J_Pc2_T12_.empty())
@@ -1295,7 +1295,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                     J_Pc2_Twc2;  // ------------------------> optimization variable
                 const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
                 // Pc2 w.r.t Rwc2
-                J_Pc2_Twc2.block(0, 0, 3, 3) = skewSymmetric(
+                J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(
                     target->Tcw_.q_wb_ * dt);  // Twc_.q_wb_.inverse()
                 // Pc2 w.r.t Pwc2
                 J_Pc2_Twc2.block(0, 3, 3, 3) =
@@ -1324,7 +1324,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                     // Pw w.r.t Rwc1
                     J_Pw_Twc1.block(0, 0, 3, 3) =
                         -host->Twc_.q_wb_.toRotationMatrix() *
-                        skewSymmetric(pc1);
+                        SkewSymmetric(pc1);
                     // Pw w.r.t Pwc1
                     J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
 
@@ -1521,7 +1521,7 @@ double Optimizer::ConstructJ_H_b_g_byMatch() {
     //             Eigen::Matrix<double, 3, 6> J_Pc2_Twc2; // ------------------------> optimization variable
     //             const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
     //             // Pc2 w.r.t Rwc2
-    //             J_Pc2_Twc2.block(0, 0, 3, 3) = skewSymmetric(target->Tcw_.q_wb_ * dt); // Twc_.q_wb_.inverse()
+    //             J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(target->Tcw_.q_wb_ * dt); // Twc_.q_wb_.inverse()
     //             // Pc2 w.r.t Pwc2
     //             J_Pc2_Twc2.block(0, 3, 3, 3) = -target->Tcw_.q_wb_.toRotationMatrix(); // Twc.q_wb.R.transpose()
 
@@ -1543,7 +1543,7 @@ double Optimizer::ConstructJ_H_b_g_byMatch() {
     //                 // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
     //                 Eigen::Matrix<double, 3, 6> J_Pw_Twc1; // ------------------------> optimization variable
     //                 // Pw w.r.t Rwc1
-    //                 J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * skewSymmetric(pc1);
+    //                 J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * SkewSymmetric(pc1);
     //                 // Pw w.r.t Pwc1
     //                 J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
 
@@ -1674,7 +1674,7 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
         A2.block(0, 0, 3, 3) = invJr;
 
         // ΔP + Rwc1.T*(Pwc1 - Pwc2) w.r.t Rwc1
-        A1.block(3, 0, 3, 3) = skewSymmetric(R1.transpose() * dt);
+        A1.block(3, 0, 3, 3) = SkewSymmetric(R1.transpose() * dt);
 
         // ΔP + Rwc1.T*(Pwc1 - Pwc2) w.r.t Rwc2
 

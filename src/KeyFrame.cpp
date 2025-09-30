@@ -887,12 +887,12 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
             continue;
 
         } else if (!bestPx2.isApprox(Eigen::Vector2d::Zero())) {
-            double estD1 = -1;
-            double estD2 = -1;
-            if (!GetHostAndCurFrameObservationDepth(lk1->uv_.cast<double>(),
-                                                    bestPx2, cam_->Kinv_[0],
-                                                    Tc1c2, estD1, estD2)) {
-                cout << "2th Calculate d1: " << estD1 << " d2: " << estD2
+            double estInvD1 = -1;
+            double estInvD2 = -1;
+            if (!GetHostAndCurFrameObservationDepth(
+                    lk1->uv_.cast<double>(), bestPx2, cam_->Kinv_[0], Tc1c2,
+                    estInvD1, estInvD2)) {
+                cout << "2th Calculate d1: " << estInvD1 << " d2: " << estInvD2
                      << " failed! no update!"
                      << "kp1: " << lk1->uv_.transpose()
                      << " bestPx2: " << bestPx2.transpose() << endl;
@@ -900,10 +900,11 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
                 if (lk1->IsDebugPoint()) {
-                    DrawTriangulateCase(
-                        estD1, estD2, *lk1, epipolarP1.cast<int>(),
-                        bestPx2.cast<int>(), farPx2.cast<int>(),
-                        nearPx2.cast<int>(), kf2.debugGrayImg_, Tc1c2, false);
+                    DrawTriangulateCase(1.0 / estInvD1, 1.0 / estInvD2, *lk1,
+                                        epipolarP1.cast<int>(),
+                                        bestPx2.cast<int>(), farPx2.cast<int>(),
+                                        nearPx2.cast<int>(), kf2.debugGrayImg_,
+                                        Tc1c2, false);
                 }
 
 #endif
@@ -912,23 +913,22 @@ double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
             if (lk1->IsDebugPoint()) {
-                DrawTriangulateCase(estD1, estD2, *lk1, epipolarP1.cast<int>(),
-                                    bestPx2.cast<int>(), farPx2.cast<int>(),
-                                    nearPx2.cast<int>(), kf2.debugGrayImg_,
-                                    Tc1c2, true);
+                DrawTriangulateCase(1.0/estInvD1, 1.0/estInvD2, *lk1,
+                                    epipolarP1.cast<int>(), bestPx2.cast<int>(),
+                                    farPx2.cast<int>(), nearPx2.cast<int>(),
+                                    kf2.debugGrayImg_, Tc1c2, true);
             }
 #endif
-            const double invD1 = 1.0 / estD1;
             const double estCov =
-                CalculateVariance(invD1, lk1->uv_.cast<double>(), bestPx2,
+                CalculateVariance(estInvD1, lk1->uv_.cast<double>(), bestPx2,
                                   Tc2c1, cam_->Kinv_[0], cam_->K_[0]);
             if (i % 1000 == 0)
                 cout << "1th invz: " << lk1->invZ_
                      << ", cov: " << lk1->invDepthCov_
-                     << ", bestInvDepth: " << invD1 << ", estCov: " << estCov
+                     << ", bestInvDepth: " << estInvD1 << ", estCov: " << estCov
                      << endl;
 
-            if (lk1->ObvUpdate(invD1, estCov)) {
+            if (lk1->ObvUpdate(estInvD1, estCov)) {
                 ++findMatchNum;
                 lk1->lastFrameMatchPx_ =
                     bestPx2;  // 记录当前匹配成功点，后续用于异常深度剔除

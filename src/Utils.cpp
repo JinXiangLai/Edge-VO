@@ -52,7 +52,7 @@ vector<Eigen::Vector3d> TransformPoint2Pc(const Pose& T,
     return pc;
 }
 
-Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v) {
+Eigen::Matrix3d SkewSymmetric(const Eigen::Vector3d& v) {
     Eigen::Matrix3d m;
     m.setZero();
     m << 0, -v[2], v[1], v[2], 0, -v[0], -v[1], v[0], 0;
@@ -308,7 +308,7 @@ vector<Eigen::Vector2d> FindMatches(const Landmark& lk1, const KeyFrame& kf2,
     * Pc2_norm.T * [t21]x * R21 * Pc1_norm = 0 --------> 归一化平面上极线约束
     * [K.inv * px2].T * [t21]x * R21 * Pc1_norm = 0 ---> 像素平面上的极线约束 
     ********************************************/
-    Eigen::Vector3d _c = skewSymmetric(T21.t_wb_) *
+    Eigen::Vector3d _c = SkewSymmetric(T21.t_wb_) *
                          T21.q_wb_.toRotationMatrix() *
                          cam.InverseProject(kp1.cast<int>());
     // |k00 k01 k02|   |x|   |k00*x + k01*y + k02|
@@ -477,7 +477,7 @@ vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(
     * fx*x+cx = px_x ==> 归一化平面上[1/fx]米对应1个像素
     * fy*y+cy = px_y 
     ********************************************/
-    Eigen::Vector3d c = skewSymmetric(T21.t_wb_) *
+    Eigen::Vector3d c = SkewSymmetric(T21.t_wb_) *
                         T21.q_wb_.toRotationMatrix() *
                         cam.InverseProject(kp1.cast<int>());
     // c[0]*x + c[1]*y + c[2] = 0 ==> 归一化平面上的极线
@@ -544,7 +544,7 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp2, const Pose& T21,
     // TODO: 检验为什么该种三角化方式不行！！！
     // 直观理解就是，与kp2出发射线有交点的地图点均可满足该约束，因为没有用到kp1信息，故而无法确定Pc1
     const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2.cast<int>());
-    const Eigen::Matrix3d skew = skewSymmetric(kp2Norm);
+    const Eigen::Matrix3d skew = SkewSymmetric(kp2Norm);
     const Eigen::Matrix3d A = skew * T21.q_wb_.toRotationMatrix();
     const Eigen::Vector3d b = -skew * T21.t_wb_;
     return A.colPivHouseholderQr().solve(b);
@@ -562,8 +562,8 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp1,
     *****************************/
     const Eigen::Vector3d kp1Norm = cam.InverseProject(kp1.cast<int>());
     const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2.cast<int>());
-    const Eigen::Matrix3d skew1 = skewSymmetric(kp1Norm);
-    const Eigen::Matrix3d skew2 = skewSymmetric(kp2Norm);
+    const Eigen::Matrix3d skew1 = SkewSymmetric(kp1Norm);
+    const Eigen::Matrix3d skew2 = SkewSymmetric(kp2Norm);
     Eigen::Matrix<double, 6, 3> A;
     A.block(0, 0, 3, 3) = skew1 * Eigen::Matrix3d::Identity();
     A.block(3, 0, 3, 3) = skew2 * T21.q_wb_.toRotationMatrix();
@@ -1414,31 +1414,65 @@ double GetPositiveDepth(const double invZ) {
 bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
                                         const Eigen::Vector2d& kp2,
                                         const Eigen::Matrix3d& invK0,
-                                        const Pose& T12, double& depth1,
-                                        double& depth2) {
+                                        const Pose& T12, double& idepth1,
+                                        double& idepth2) {
     // s1 * Pn1 = R12 * s2 * Pn2 + P12
     // [Pn1 - R12*Pn2]_[3x2] * [s1, s2] = P12
-    const Eigen::Vector3d pn1 = invK0 * Eigen::Vector3d(kp1.x(), kp1.y(), 1.0);
-    const Eigen::Vector3d pn2 = invK0 * Eigen::Vector3d(kp2.x(), kp2.y(), 1.0);
+    // const Eigen::Vector3d pn1 = invK0 * Eigen::Vector3d(kp1.x(), kp1.y(), 1.0);
+    // const Eigen::Vector3d pn2 = invK0 * Eigen::Vector3d(kp2.x(), kp2.y(), 1.0);
 
-    const Eigen::Matrix3d rot_12 = T12.q_wb_.toRotationMatrix();
-    const Eigen::Vector3d& pos_12 = T12.t_wb_;
-    // 第一种解法
-    Eigen::Matrix<double, 3, 2> matrix_a = Eigen::Matrix<double, 3, 2>::Zero();
-    matrix_a.col(0) = pn1;
-    matrix_a.col(1) = -(rot_12 * pn2);
-    const Eigen::Vector2d res0 =
-        matrix_a.jacobiSvd(Eigen::ComputeFullU | Eigen::ComputeFullV)
-            .solve(pos_12);
+    // const Eigen::Matrix3d rot_12 = T12.q_wb_.toRotationMatrix();
+    // const Eigen::Vector3d& pos_12 = T12.t_wb_;
+    // // 第一种解法
+    // Eigen::Matrix<double, 3, 2> matrix_a = Eigen::Matrix<double, 3, 2>::Zero();
+    // matrix_a.col(0) = pn1;
+    // matrix_a.col(1) = -(rot_12 * pn2);
+    // const Eigen::Vector2d res0 =
+    //     matrix_a.jacobiSvd(Eigen::ComputeFullU | Eigen::ComputeFullV)
+    //         .solve(pos_12);
 
-    depth1 = res0.x();
-    depth2 = res0.y();
-    const double ratio = depth1 / depth2;
-    if (res0.x() > kMinSceneDepthInCamera &&
-        res0.y() > kMinSceneDepthInCamera && ratio > 0.75 && ratio < 1.25) {
+    // depth1 = res0.x();
+    // depth2 = res0.y();
+    if (!GetHostFrameObservationInvDepth(kp1, kp2, invK0, T12, idepth1)) {
+        return false;
+    }
+    if (!GetHostFrameObservationInvDepth(kp2, kp1, invK0, T12.Inverse(),
+                                         idepth2)) {
+        return false;
+    }
+    
+    const double ratio = idepth1 / idepth2;
+    if (ratio > 0.75 && ratio < 1.25) {
         return true;
     }
     return false;
+}
+
+bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
+                                     const Eigen::Vector2d& kp2,
+                                     const Eigen::Matrix3d& invK0,
+                                     const Pose& T12, double& idepth1) {
+    // s1 * Pn1 = R12 * s2 * Pn2 + P12
+    // s1 * R21 * Pn1 = s2 * Pn2 + R21 * P12
+    // s1 * [Pn2]x * R21 * Pn1 = [Pn2]x * R21 * P12
+    const Eigen::Vector3d pn1 = invK0 * Eigen::Vector3d(kp1.x(), kp1.y(), 1.0);
+    const Eigen::Vector3d pn2 = invK0 * Eigen::Vector3d(kp2.x(), kp2.y(), 1.0);
+
+    const Eigen::Matrix3d rot_21 = T12.q_wb_.toRotationMatrix().transpose();
+    const Eigen::Vector3d& pos_12 = T12.t_wb_;
+    const Eigen::Matrix3d m = SkewSymmetric(pn2) * rot_21;
+    const Eigen::Vector3d p1 = m * pn1;
+    const double denominator = (m * pos_12).dot(p1);
+    if (abs(denominator) < 1e-9) {
+        return false;
+    }
+    idepth1 = (p1.dot(p1)) / (m * pos_12).dot(p1);
+
+    if (idepth1 < 0. || idepth1 > 1.0 / kMinSceneDepthInCamera) {
+        return false;
+    }
+
+    return true;
 }
 
 double CalculateVariance(const double& estInvDepth1, const Eigen::Vector2d& kp1,

@@ -95,7 +95,7 @@ inline bool InRange(const cv::Mat& img, const Eigen::Vector2i& p) {
            p.y() < img.rows - jumpPxNum * imgScale;  // 把车头像素滤掉
 }
 
-Eigen::Matrix3d skewSymmetric(const Eigen::Vector3d& v);
+Eigen::Matrix3d SkewSymmetric(const Eigen::Vector3d& v);
 
 template <typename T>
 double BilinearInterpolate(const cv::Mat& img, const Eigen::Vector2d& p) {
@@ -324,8 +324,13 @@ double GetPositiveDepth(const double invZ);
 bool GetHostAndCurFrameObservationDepth(const Eigen::Vector2d& kp1,
                                         const Eigen::Vector2d& kp2,
                                         const Eigen::Matrix3d& invK0,
-                                        const Pose& T12, double& depth1,
-                                        double& depth2);
+                                        const Pose& T12, double& idepth1,
+                                        double& idepth2);
+
+bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
+                                     const Eigen::Vector2d& kp2,
+                                     const Eigen::Matrix3d& invK0,
+                                     const Pose& T12, double& idepth1);
 
 double CalculateVariance(const double& estIdepth1, const Eigen::Vector2d& kp1,
                          const Eigen::Vector2d& kp2, const Pose& T21,
