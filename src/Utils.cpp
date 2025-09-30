@@ -1858,7 +1858,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
             //points.push_back({pc.x(), pc.y(), pc.z()});
             colors.push_back(curColor);
 
-            if (curf != nullptr) {
+            if (curf != nullptr && colors.back() == Color[COLOR::red]) {
                 const Eigen::Vector3d pc2 = curf->Tcw_ * pw;
                 const Eigen::Vector2i px2 =
                     curf->cam_->Project2PixelPlane(pc2).cast<int>();

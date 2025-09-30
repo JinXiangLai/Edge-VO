@@ -1172,6 +1172,12 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
         const Eigen::Vector3d pc1 = lk1->GetPc();
         const Eigen::Vector3d pc2 = T21 * pc1;
         const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+        if(InRange(grayImg_, px2.cast<int>())) {
+            if(kf2->dist_[0].at<float>(int(px2.x()), int(px2.y())) > 3.0) {
+                lk1->SetOutOfRange();
+                continue;
+            }
+        }
         const double residual = (px2 - lk1->lastFrameMatchPx_).head(2).norm();
         if (residual > 1.0) {
             lk1->continousFailCheckNum_++;

@@ -246,8 +246,7 @@ int main(int argc, char** argv) {
         // step2：为剩余的edge point产生的landmark
         const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
         const bool case2 =
-            (findMatchRatio < 0.1 || findMatchNum < 500) &&
-            0;  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
+            (findMatchRatio < 0.1 || findMatchNum < 500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
         const bool case3 = T12.t_wb_.norm() > config->needNewKFtrans;
         const bool case4 =
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
