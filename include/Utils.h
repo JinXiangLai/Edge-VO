@@ -360,7 +360,7 @@ Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
 
 Eigen::Vector2i ParseKeypointSet(const std::string& s);
 
-void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
+bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
                                 Eigen::Vector2d& ep1);
 
 enum KeyboardEvent { Reset, StepByStep };

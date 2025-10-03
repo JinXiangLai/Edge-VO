@@ -117,10 +117,23 @@ class KeyFrame {
     std::ofstream invDepthUncertaintyFile_;
     bool firstWriteUncertainty_ = true;
 
+    void OpticalFlowTrackLandmark(const KeyFrame& f2);
+    struct OpticalFlowStruct {
+        cv::Mat prevImg_;
+        std::vector<cv::Point2f> prevPts_;
+        std::vector<Landmark*> trackLandmark_;
+    };
+    void SetOpticalFlowStruct();
+    double UpdateWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
+    void DrawOpticalMatchImg();
+
+    OpticalFlowStruct optFlw_;
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                 const Eigen::Vector2i& matchKp2,
-                                const cv::Mat& debugImg2);
+                                const cv::Mat& debugImg2,
+                                const bool drawOpticalFlow = false);
     void DrawEpipolarMatchEachFrame(const Eigen::Vector2i& kp1,
                                     const Eigen::Vector2i& lp2Start,
                                     const Eigen::Vector2i& lp2End,

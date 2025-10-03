@@ -73,6 +73,7 @@ KeyFrame::KeyFrame(const KeyFrame& f)
         // 因此可能产生意外情况
         landmark_.back()->host_ = this;
     }
+    SetOpticalFlowStruct();
     debugGrayImg_ = f.debugGrayImg_;
     depthImage_ = f.depthImage_;
 }
@@ -91,6 +92,16 @@ KeyFrame::~KeyFrame() {
     }
 
     std::cout << this << " Releasw KF id: " << id_ << std::endl;
+}
+
+void KeyFrame::SetOpticalFlowStruct() {
+    optFlw_.prevImg_ = grayImg_;
+    optFlw_.prevPts_.reserve(landmark_.size());
+    for (const auto& p : landmark_) {
+        // 添加landmark对跟踪成功点的相互观测
+        optFlw_.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
+        optFlw_.trackLandmark_.push_back(p);
+    }
 }
 
 void KeyFrame::operator=(const KeyFrame& f) {
@@ -124,6 +135,8 @@ void KeyFrame::operator=(const KeyFrame& f) {
         // 因此可能产生意外情况
         landmark_.back()->host_ = this;
     }
+    //optFlw_ = f.optFlw_; // 不能直接这么设
+    SetOpticalFlowStruct();
 #else
     ReleaseMat();
     // 这样会导致cv::Mat等堆内存无法释放
@@ -452,6 +465,108 @@ void KeyFrame::ResetDebugMessage() {
     matchResultStatiscs_.clear();
 }
 
+void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
+
+    if (optFlw_.prevPts_.empty()) {
+        cout << "here optFlw_.prevPts_ should not be empty!!!";
+        exit(-1);
+    }
+
+    vector<cv::Point2f> nextPts;
+    vector<uchar> status;
+    vector<float> error;
+    cv::calcOpticalFlowPyrLK(optFlw_.prevImg_, f2.grayImg_, optFlw_.prevPts_,
+                             nextPts, status, error);
+    vector<Landmark*> trackLandmark;
+    const auto debugPts1 = optFlw_.prevPts_;
+    optFlw_.prevPts_.clear();
+    for (size_t i = 0; i < status.size(); ++i) {
+        if (status[i] == 1 && error[i] < 20) {
+            // 重新赋值landmark在当前帧上的观测
+            optFlw_.prevPts_.emplace_back(nextPts[i]);
+            trackLandmark.emplace_back(optFlw_.trackLandmark_[i]);
+            Eigen::Vector2i p1(int(debugPts1[i].x), int(debugPts1[i].y));
+            Eigen::Vector2i p2(int(nextPts[i].x), int(nextPts[i].y));
+            DrawBestMatchEachFrame(p1, p2, f2.grayImg_, true);
+        }
+    }
+
+    WriteDebugImage2VideoEachFrame(f2.id_);
+    // 跟踪成功后，重新赋值
+    cout << "optical flow tracked point num: " << trackLandmark.size() << endl;
+    optFlw_.trackLandmark_ = trackLandmark;
+    optFlw_.prevImg_ = f2.grayImg_;
+}
+
+double KeyFrame::UpdateWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum) {
+    OpticalFlowTrackLandmark(kf2);
+    findMatchNum = 0;
+    const Pose Tc1c2 = priorTwc_.Inverse() * kf2.priorTwc_;
+    const Pose Tc2c1 = Tc1c2.Inverse();
+    if (Tc1c2.t_wb_.norm() < 1e-3 || config->useDepthImage) {
+        // 位移过小，不能进行更新
+        findMatchNum = landmark_.size();
+        return 1.0;
+    }
+
+    ResetDebugMessage();
+    for (size_t i = 0; i < optFlw_.trackLandmark_.size(); ++i) {
+        Landmark* lk1 = optFlw_.trackLandmark_[i];
+        double estInvD1 = -1;
+        double estInvD2 = -1;
+        const Eigen::Vector2d bestPx2(optFlw_.prevPts_[i].x,
+                                      optFlw_.prevPts_[i].y);
+        if (!GetHostAndCurFrameObservationDepth(lk1->uv_.cast<double>(),
+                                                bestPx2, cam_->Kinv_[0], Tc1c2,
+                                                estInvD1, estInvD2)) {
+            cout << "2th Calculate d1: " << estInvD1 << " d2: " << estInvD2
+                 << " failed! no update!"
+                 << "kp1: " << lk1->uv_.transpose()
+                 << " bestPx2: " << bestPx2.transpose() << endl;
+            continue;
+        }
+        const Eigen::Vector2d ep2 = Eigen::Vector2d(1, 1) * sqrt(2) * 0.5;
+        const double estCov = CalculateVarianceByOffsetPx2(
+            lk1->uv_.cast<double>(), bestPx2, ep2, cam_->Kinv_[0], Tc1c2,
+            config->matchNoise);
+        if (i % 1000 == 0)
+            cout << "1th invz: " << lk1->invZ_ << ", cov: " << lk1->invDepthCov_
+                 << ", bestInvDepth: " << estInvD1 << ", estCov: " << estCov
+                 << endl;
+
+        if (lk1->ObvUpdate(estInvD1, estCov)) {
+            ++findMatchNum;
+        }
+
+        if (lk1->invDepthCov_ > config->maxObvDepthStd) {
+            lk1->SetOutOfRange();
+        }
+        if (firstWriteUncertainty_) {
+            invDepthUncertaintyFile_.open(
+                fmt::format("{}/kf_{}_depth_uncertainty.csv",
+                            config->debugMessageSaveFolder, id_));
+            invDepthUncertaintyFile_
+                << "#pointId, cov, invDepth, depth, "
+                   "trueDepth, depthDiff, obvTime, failObvTime"
+                << endl;
+            firstWriteUncertainty_ = false;
+        }
+        // unf << " [" << to_string(lk1->depthRange_[0]) << ", " << to_string(lk1->depthRange_[1]) << "] std, depth: "
+        if (lk1->trueDepth_ > 0.01 && lk1->AbnormalConvergeLandmark()) {
+            const double estDepth = GetPositiveDepth(lk1->invZ_);
+            invDepthUncertaintyFile_
+                << lk1->uv_.x() << "_" << lk1->uv_.y() << ", "
+                << lk1->invDepthCov_ << ", " << lk1->invZ_ << ", " << estDepth
+                << ", " << lk1->trueDepth_ << ", "
+                << (estDepth - lk1->trueDepth_) << ", " << lk1->obvTime_ << ", "
+                << lk1->failObvTime_ << endl;
+        }
+    }
+
+    cout << "successful findMatchNum: " << findMatchNum << endl;
+    return double(findMatchNum) / landmark_.size();
+}
+
 void KeyFrame::ReportMatchResult() {
     cout << "keyframe id: " << id_ << "Match result statiscs report: " << endl;
     int sum = 0;
@@ -469,13 +584,18 @@ void KeyFrame::ReportMatchResult() {
 #if defined(WRITE_MATCH_PAIR_IMAGE)
 void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                                       const Eigen::Vector2i& matchKp2,
-                                      const cv::Mat& debugImg2) {
+                                      const cv::Mat& debugImg2,
+                                      const bool drawOpticalFlow) {
     if (videoBestMatchDebugImg_.empty()) {
         videoBestMatchDebugImg_ =
             cv::Mat(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
                     cv::Scalar{0, 0, 0});
         Mat im1, im2;
-        cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+        if (drawOpticalFlow) {
+            cvtColor(optFlw_.prevImg_, im1, COLOR_GRAY2BGR);
+        } else {
+            cvtColor(debugGrayImg_, im1, COLOR_GRAY2BGR);
+        }
         cvtColor(debugImg2, im2, COLOR_GRAY2BGR);
         im1.copyTo(videoBestMatchDebugImg_.colRange(0, debugGrayImg_.cols));
         im2.copyTo(videoBestMatchDebugImg_.colRange(
@@ -511,10 +631,13 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
                 "match point keyframe2 id: " + to_string(kf2Id),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
-    cv::putText(videoEpipolarMatchDebugImg_,
-                "match ep keyframe2 id: " + to_string(kf2Id),
-                cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
-                kColor.at("red"), 1);
+    if (!videoEpipolarMatchDebugImg_.empty()) {
+        cv::putText(videoEpipolarMatchDebugImg_,
+                    "match ep keyframe2 id: " + to_string(kf2Id),
+                    cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
+                    kColor.at("red"), 1);
+    }
+
     if (!videoEpipolarFailMatchDebugImg_.empty()) {
         cv::putText(videoEpipolarFailMatchDebugImg_,
                     "fail ep keyframe2 id: " + to_string(kf2Id),
@@ -539,12 +662,12 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id) {
         cout << "Open debug video path: " << videoPath << endl;
     }
 
-    debugVideoWriter.write(videoEpipolarMatchDebugImg_);
+    //debugVideoWriter.write(videoEpipolarMatchDebugImg_);
     debugVideoWriter.write(videoBestMatchDebugImg_);
-    debugVideoWriter.write(videoEpipolarFailMatchDebugImg_);
-    videoEpipolarMatchDebugImg_.release();
+    //debugVideoWriter.write(videoEpipolarFailMatchDebugImg_);
+    //videoEpipolarMatchDebugImg_.release();
     videoBestMatchDebugImg_.release();
-    videoEpipolarFailMatchDebugImg_.release();
+    //videoEpipolarFailMatchDebugImg_.release();
 }
 
 void KeyFrame::WriteDebugTriangulateCase2Video() {
@@ -800,10 +923,13 @@ size_t KeyFrame::InitializeLandmark() {
         }
     }
 
+    SetOpticalFlowStruct();  // 设置光流跟踪的匹配结构
     return landmark_.size();
 }
 
 double KeyFrame::UpdateDepth(const KeyFrame& kf2, int& findMatchNum) {
+
+    return UpdateWithOpticalFlow(kf2, findMatchNum);
 
     double matchEdgeNum = 0;
     convergeEdgeNum_ = 0;  // 重新统计当前KF的收敛边缘点集
@@ -1172,8 +1298,8 @@ double KeyFrame::CullingBadDepth(KeyFrame* kf2) {
         const Eigen::Vector3d pc1 = lk1->GetPc();
         const Eigen::Vector3d pc2 = T21 * pc1;
         const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-        if(InRange(grayImg_, px2.cast<int>())) {
-            if(kf2->dist_[0].at<float>(int(px2.x()), int(px2.y())) > 3.0) {
+        if (InRange(grayImg_, px2.cast<int>())) {
+            if (kf2->dist_[0].at<float>(int(px2.x()), int(px2.y())) > 3.0) {
                 lk1->SetOutOfRange();
                 continue;
             }
@@ -1332,7 +1458,9 @@ double KeyFrame::FindMatchesWithEpipolarConstraintOnImagePlane(
     }
 
     // 保证双目图像上极线方向相对于图像是从左到右还是从右到左保持一致
-    CheckEpipolarLineDirection(ep2, ep1);
+    if (!CheckEpipolarLineDirection(ep2, ep1)) {
+        return EpipolarMatchType::occulsionORnoBestMatch;
+    }
 
     // OK，接下来在对极线上等距取5个点，据此来计算SSD
     ep1 *= config->minSearchStep;

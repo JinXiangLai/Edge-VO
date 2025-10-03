@@ -109,6 +109,7 @@ Config::Config(const std::string& yamlFilePath) {
     debugShowOnlineResult3D = f["debugShowOnlineResult3D"].as<bool>();
 
     matchNoise = f["matchNoise"].as<double>();
+    useAvgDiff = f["useAvgDiff"].as<bool>();
 }
 
 Config* config = nullptr;

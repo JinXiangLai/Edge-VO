@@ -18,7 +18,8 @@ using namespace cv;
 
 void Run(Optimizer* optimizer);
 
-const cv::Point kViz3DWindowPos(1920 + 1920 / 2, 1080 - 100); // 窗口左上角点在屏幕上的位置
+const cv::Point kViz3DWindowPos(1920 + 1920 / 2,
+                                1080 - 100);  // 窗口左上角点在屏幕上的位置
 
 int main(int argc, char** argv) {
 
@@ -116,7 +117,7 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 0
+#if 1
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -202,7 +203,7 @@ int main(int argc, char** argv) {
         const double findMatchRatio =
             win.back()->UpdateDepth(curF, findMatchNum);
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
-        win.back()->CullingBadDepth(&curF);
+        //win.back()->CullingBadDepth(&curF);
         chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
 
         chrono::steady_clock::time_point t8, t9;
@@ -246,11 +247,13 @@ int main(int argc, char** argv) {
         // step2：为剩余的edge point产生的landmark
         const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
         const bool case2 =
-            (findMatchRatio < 0.1 || findMatchNum < 500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
+            (findMatchRatio < 0.1 ||
+             findMatchNum <
+                 500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
         const bool case3 = T12.t_wb_.norm() > config->needNewKFtrans;
         const bool case4 =
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
-        const bool case5 = accDist > config->needNewKFtrans;
+        const bool case5 = accDist > config->needNewKFtrans && 0;
         const bool case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
@@ -262,7 +265,8 @@ int main(int argc, char** argv) {
                     Quat2RPY(T12.q_wb_).norm() * kRad2Deg, accDist)
              << endl;
         chrono::steady_clock::time_point t10, t11;
-        if (((case3 || case4 || case5 || case2) && case6) || needKFbySight) {
+        //if (((case3 || case4 || case5 || case2) && case6) || needKFbySight) {
+        if (case2 || case3 || case4) {
             {
                 static bool first = true;
                 ofstream f;
@@ -295,9 +299,10 @@ int main(int argc, char** argv) {
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-            // win.back()->FuseDepth();
+            win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
+            cout << "Add new keyframe id: " << curF.id_;
             t11 = chrono::steady_clock::now();
             interaction->visualLastKF = win.back();
 

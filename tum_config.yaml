@@ -1,12 +1,12 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
+dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
 Camera.model: "pinhole"
 
 # fr1
-# Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
-# Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
+#Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
+#Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
 Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
@@ -24,6 +24,7 @@ minDepth: 0.01
 matchNoise: 3.0 # 沿极线方向的匹配误差像素
 
 maxDescriptorDist: 10 # or 使用光度残差时重新设置，如果使用去均值的SSD，这个值应该设的小，越大越宽松
+useAvgDiff: false
 goodDescriptorDistRatio: 0.6 # 使用 ratio * maxDescriptorDist来判断跟踪效果
 maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差阈值在该范围内
 
@@ -45,7 +46,7 @@ maxActiveLandmarkEachKF: 500
 
 
 fastTh: 7 # 角点，暂不启用，目标是仅利用边缘点
-fastNum: 0
+fastNum: 0 # 大于周边16个像素多少个
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
 
@@ -56,8 +57,8 @@ showDebugImg: false
 firstImgIdx: 0
 loopClosureImgIdx: 10
 
-cannyLowerTh: 60 # 150
-cannyupperTh: 80 # 160
+cannyLowerTh: 80 # 150
+cannyupperTh: 120 # 160
 
 # 存在相邻边缘像素被匹配的情况
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
@@ -70,7 +71,7 @@ minObvDepthStd: 0.000000001 # 0.1
 minObvTime: 3
 
 
-minGradientOFkeyPoint: 10
+minGradientOFkeyPoint: 15
 # 当使用梯度之后，该变量不再被需要了? 
 # 不是的，LSD-SLAM也会选择最大梯度附近[3x3]邻域内的点都作为特征点
 maxDTdistOFkeyPoint: 0.1 # DT图像上值不超过该数的选为关键点，用以产生地图点
@@ -104,5 +105,5 @@ debugKFpointSet: [97_167]
 
 # 显示相关flag
 debugShowGlobalMap: false # 默认显示局部地图
-debugRunOnDesktop: true # 是否运行在台式机上，台式机无法显示过多的元素
+debugRunOnDesktop: false # 是否运行在台式机上，台式机无法显示过多的元素
 debugShowOnlineResult3D: true # 是否显示viz3d窗口

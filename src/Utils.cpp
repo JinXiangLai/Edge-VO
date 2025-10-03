@@ -998,7 +998,8 @@ double CalculateSSD(const std::vector<double>& v1,
                     const int desLen) {
     double sum = 0;
     double avg = avg1 - avg2;
-    // avg = 0;
+    if (!config->useAvgDiff)
+        avg = 0;
     for (int i = 0; i < desLen; ++i) {
         sum += abs(v1[i] - avg - v2[i]);
     }
@@ -1011,6 +1012,8 @@ double CalculateSSD(const std::vector<double>& v1,
     double avg = (std::accumulate(v1.begin(), v1.end(), 0.0) -
                   std::accumulate(v2.begin(), v2.end(), 0.0)) /
                  v1.size();
+    if (!config->useAvgDiff)
+        avg = 0;
     for (int i = 0; i < desLen; ++i) {
         sum += abs(v1[i] - avg - v2[i]);
     }
@@ -1608,13 +1611,19 @@ Eigen::Vector2i ParseKeypointSet(const std::string& s) {
     return {stoi(s.substr(0, _pos)), stoi(s.substr(_pos + 1, s.size()))};
 }
 
-void CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
+bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
                                 Eigen::Vector2d& ep1) {
     // 保证极线方向在图像上遵循一致的方向
-    const double cosValue = ep1.dot(ep2);
+    const double cosValue = ep1.dot(ep2)/(ep1.norm()*ep2.norm());
+    const double ang = acos(cosValue) * kRad2Deg;
+    constexpr double kMaxCrossAng = 30;  // deg
+    if (!(abs(ang) < kMaxCrossAng || abs(ang) > 180 - kMaxCrossAng)) {
+        return false;
+    }
     if (cosValue < 0) {
         ep1 *= -1;
     }
+    return true;
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
