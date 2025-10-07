@@ -30,11 +30,11 @@ maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差�
 
 maxDepthConvergeStd: 0.01 # 深度收敛的标准差，由于逆深度与正深度是非线性关系，不能给正深度的收敛标准
 abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与优化步骤
-huberDelta: 4 # 胡伯核函数参数
+huberDelta: 36 # chi2=6x6, 胡伯核函数参数
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 9
 imgTimeOffset: 0.0 # sec,时间同步误差
-needNewKFtrans: 0.25 # 选取新KF的条件
+needNewKFtrans: 0.1 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.1 # 匹配边缘点数量小于该阈值时，需要选定新KF
 # TODO: 这个误差模型将极大的影响深度估计，这里直接是将其当作误差角度使用，值为1时不行
@@ -45,7 +45,7 @@ messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
 
 
-fastTh: 7 # 角点，暂不启用，目标是仅利用边缘点
+fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
 fastNum: 0 # 大于周边16个像素多少个
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况

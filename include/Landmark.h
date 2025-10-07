@@ -17,40 +17,39 @@ class Landmark {
    public:
     // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Landmark(const Eigen::Vector2i& px, KeyFrame* host,
+    Landmark(const Eigen::Vector2d& px, KeyFrame* host,
              const std::shared_ptr<Camera> cam, const uint64_t desc,
              const double invZ);
     Landmark() {}
     Eigen::Vector3d GetPcNorm() const;
-    Eigen::Vector3d GetPc() const;
-    Eigen::Vector3d GetPw() const;
+    Eigen::Vector3d GetPc(const bool useBackUpStatus = false) const;
+    Eigen::Vector3d GetPw(const bool useBackUpStatus = false) const;
     int Size() const;  // 优化变量的维度
-    void Update(const double delta_z, const bool useInvDepth);
-    void UpdateUncertainty(const bool updateObv = false);
+    void Update(const double delta_z);
     bool Converge() const;
     bool ManySupport() const;
 
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
-    std::vector<Eigen::Vector2d> FindMatches(const KeyFrame& kf2);
 
     double invZ_ = kInitInvDepth;
+    double invZback_ = invZ_;
     double invDepthCov_ = kInitCov;
     double trueDepth_ = 0.;
 
-    double depthRange_[2] = {0, 0};
     uint64_t descriptor_ = 0;
     // TODO: 结合光度残差分布给定优化的权重值
     int obvTime_ = 0;      // 路标点被看的次数可以反映其可信度
     int failObvTime_ = 0;  // 遮挡或者重复纹理导致失败
     int checkTime_ = 0;
     bool initFromPropagate_ = false;
+    bool initialized_ = false;
 
     //std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame* host_;      // cnchor frame
-    Eigen::Vector2i uv_;  // host帧下的像素坐标z
+    Eigen::Vector2d uv_;  // host帧下的像素坐标z
 
-    std::map<KeyFrame*, Eigen::Vector2i> target_;
+    std::map<KeyFrame*, Eigen::Vector2d> target_;
     std::shared_ptr<Camera> cam_;
 
     // keep FEJ
@@ -72,10 +71,12 @@ class Landmark {
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 
     bool IsDebugPoint() {
-        return config->pixelCount.count(uv_) && trueDepth_ != 0;
+        return config->pixelCount.count(uv_.cast<int>()) && trueDepth_ != 0;
     }
 
     bool ObvUpdate(const double invDepth, const double variance);
+
+    void SetTriangulateResult(const double invZ);
 
     bool FuseInvDepth(const Landmark& lk2);
 
@@ -83,6 +84,12 @@ class Landmark {
 
     // bool CheckInvDepthQualityByProject(const KeyFrame& lastLastFrame);
     bool CheckInvDepthQualitySuccessByProject();
+
+    bool TransformHost2OtherKF(KeyFrame* kf2);
+
+    void BackUpStatus();
+
+    void CopyStatus();
 
     // 利用重投影残差检验收敛逆深度的质量
     bool passReprojectCheck_ = false;

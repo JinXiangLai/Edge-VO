@@ -78,14 +78,15 @@ vector<Eigen::Vector2i> Camera::UndistortPoints(vector<Eigen::Vector2i> px,
     return res;
 }
 
-Eigen::Vector3d Camera::InverseProject(const Eigen::Vector2i& uv,
-                                       const double& z, const int level) const {
-    Eigen::Vector3d p(uv[0], uv[1], 1.0);
-    // {(x-cx)/fx, (y-cy)/fy}
-    p = Kinv_[level] * p;
-    // cout << "K.inv * p: " << p.transpose() << endl;
-    return p * z;
-}
+//template <typename T>
+//Eigen::Vector3d Camera::InverseProject(const Eigen::Matrix<T, 2, 1>& uv,
+//                                       const double& z, const int level) const {
+//    Eigen::Vector3d p(double(uv[0]), double(uv[1]), 1.0);
+//    // {(x-cx)/fx, (y-cy)/fy}
+//    p = Kinv_[level] * p;
+//    // cout << "K.inv * p: " << p.transpose() << endl;
+//    return p * z;
+//}
 
 // 暂时无用
 bool Camera::InImagePlaneRange(const Eigen::Vector2d& p,

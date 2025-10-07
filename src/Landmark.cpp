@@ -9,48 +9,38 @@ using namespace cv;
 
 class KeyFrame;
 
-Landmark::Landmark(const Eigen::Vector2i& px, KeyFrame* host,
+Landmark::Landmark(const Eigen::Vector2d& px, KeyFrame* host,
                    const shared_ptr<Camera> cam, const uint64_t desc,
                    const double invZ)
-    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px), cam_(cam) {
-    //invDepthCov_ = std::pow(1. / config->maxDepth, 2);
-    depthRange_[0] = config->minDepth;
-    depthRange_[1] = config->maxDepth;
-}
+    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px), cam_(cam) {}
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
     return cam_->InverseProject(uv_, 1.0);
 }
 
-Eigen::Vector3d Landmark::GetPc() const {
-    return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
+Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
+    if (!useBackUpStatus)
+        return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
+
+    return cam_->InverseProject(uv_, GetPositiveDepth(invZback_));
 }
 
-Eigen::Vector3d Landmark::GetPw() const {
-    return host_->Twc_ * GetPc();
+Eigen::Vector3d Landmark::GetPw(const bool useBackUpStatus) const {
+    return host_->Twc_ * GetPc(useBackUpStatus);
 }
 
 int Landmark::Size() const {
     return 1;
 }
 
-void Landmark::Update(const double delta_z, const bool useInvDepth) {
-    double invZ = invZ_;
-    if (useInvDepth) {
-        invZ += delta_z;
-    } else {
-        const double z = 1.0 / invZ_ + delta_z;
-        invZ = 1 / z;
-    }
+void Landmark::Update(const double delta_z) {
+    invZ_ += delta_z;
+}
 
-    // 为了保证优化算法的连续性，这里必须要修改
-    //if (z > depthRange_[0] && z < depthRange_[1] || 1) {
-    //    z_ = z;
-    //    invZ_ = invZ;
-    //    // TODO: 使用H*Δx = g，假设量测噪声为1个pixel，据此计算新的不确定度
-    //    depthCov_ *= 0.9;
-    //    UpdateUncertainty(false);
-    //}
+void Landmark::SetTriangulateResult(const double invZ) {
+    invZ_ = invZ;
+    obvTime_ = 1;
+    initialized_ = true;
 }
 
 bool Landmark::ObvUpdate(const double invDepth, const double variance) {
@@ -106,20 +96,29 @@ bool Landmark::CheckInvDepthQualitySuccessByProject() {
     return false;
 }
 
-void Landmark::UpdateUncertainty(const bool updateObv) {
-    const double stddev = sqrt(invDepthCov_);
-    depthRange_[0] = GetPositiveDepth(invZ_ + stddev);
-    depthRange_[1] = GetPositiveDepth(invZ_ - stddev);
-    if (updateObv)
-        ++obvTime_;
+bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
+    const Eigen::Vector3d pc1 = GetPc();
+    const Pose T21 = kf2->Tcw_ * host_->Twc_;
+    const Eigen::Vector3d pc2 = T21 * pc1;
+    if (pc2.z() < kMinSceneDepthInCamera) {
+        return false;
+    }
+    invZ_ = 1.0 / pc2.z();
+    if (target_.count(host_)) {
+        target_.erase(host_);
+    }
+    host_ = kf2;
+    uv_ = target_.at(kf2);
+    // TODO：暂不使用首次雅可比
+    return true;
 }
 
-vector<Eigen::Vector2d> Landmark::FindMatches(const KeyFrame& kf2) {
-    // TODO: 考虑不是host帧而是其他观测帧投影呢？
-    const Pose T21 = kf2.Tcw_ * host_->Twc_;
-    // 需要全局函数作用符"::"以实现类外全局函数的调用
-    vector<Eigen::Vector2d> kp2 = ::FindMatches(*this, kf2, T21, *cam_);
-    return kp2;
+void Landmark::CopyStatus() {
+    invZback_ = invZ_;
+}
+
+void Landmark::BackUpStatus() {
+    invZ_ = invZback_;
 }
 
 void Landmark::ResetFEJ() {
@@ -133,11 +132,12 @@ void Landmark::ResetFEJ() {
 }
 
 bool Landmark::Converge() const {
-    if (invZ_ < 1e-9) {
-        return false;
-    }
-    const double stddev = sqrt(invDepthCov_);
-    return (stddev < 0.001 || stddev / invZ_ < 0.1) && obvTime_ > 5;
+    //if (invZ_ < 1e-9) {
+    //    return false;
+    //}
+    //const double stddev = sqrt(invDepthCov_);
+    //return (stddev < 0.001 || stddev / invZ_ < 0.1) && obvTime_ > 5;
+    return obvTime_ > 0;
 }
 
 bool Landmark::ManySupport() const {

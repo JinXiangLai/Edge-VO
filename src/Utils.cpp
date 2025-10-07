@@ -295,175 +295,6 @@ char DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
     return cv::waitKey(0);
 }
 
-vector<Eigen::Vector2d> FindMatches(const Landmark& lk1, const KeyFrame& kf2,
-                                    const Pose& T21, const Camera& cam) {
-    const Eigen::Vector2d& kp1 = lk1.uv_.cast<double>();
-    const Mat& edgeImg = kf2.edgeImg_[0];
-    const int w = edgeImg.cols, h = edgeImg.rows;
-    /******** 使用极线约束寻找匹配关键点 ********
-    * R21 * s1 * Pc1_norm + t21 = s2 * Pc2_norm
-    * R21 * s1/s2 * Pc1_norm + 1/s2 * t21 = Pc2_norm
-    * [t21]x * R21 * s1/s2 * Pc1_norm = [t21]x * Pc2_norm
-    * Pc2_norm.T * [t21]x * R21 * s1/s2 * Pc1_norm = 0
-    * Pc2_norm.T * [t21]x * R21 * Pc1_norm = 0 --------> 归一化平面上极线约束
-    * [K.inv * px2].T * [t21]x * R21 * Pc1_norm = 0 ---> 像素平面上的极线约束 
-    ********************************************/
-    Eigen::Vector3d _c = SkewSymmetric(T21.t_wb_) *
-                         T21.q_wb_.toRotationMatrix() *
-                         cam.InverseProject(kp1.cast<int>());
-    // |k00 k01 k02|   |x|   |k00*x + k01*y + k02|
-    // |k10 k11 k12| * |y| = |k10*x + k11*y + k12|
-    // |k20 k21 k22|   |1|   |k20*x + k21*y + k22|
-    //                                                                   |c0|
-    // [k00*x + k01*y + k02, k10*x + k11*y + k12, k20*x + k21*y + k22] * |c1| =
-    //                                                                   |c2|
-    // k00*c0*x + k01*c0*y + k02*c0 +
-    // k10*c1*x + k11*c1*y + k12*c1 +
-    // k20*c2*x + k21*c2*y + k22*c2 = (k00*c0 + k10*c1 + k20*c2)*x +
-    //                                (k01*c0 + k11*c1 + k21*c2)*y +
-    //                                (k02*c0 + k12*c1 + k22*c2)
-    // 像素平面上极线约束的参数
-    const Eigen::Matrix3d Ki = cam.Kinv_[0];
-    const double k00 = Ki.row(0)[0], k01 = Ki.row(0)[1], k02 = Ki.row(0)[2],
-                 k10 = Ki.row(1)[0], k11 = Ki.row(1)[1], k12 = Ki.row(1)[2],
-                 k20 = Ki.row(2)[0], k21 = Ki.row(2)[1], k22 = Ki.row(2)[2];
-    const double c0 = k00 * _c[0] + k10 * _c[1] + k20 * _c[2],
-                 c1 = k01 * _c[0] + k11 * _c[1] + k21 * _c[2],
-                 c2 = k02 * _c[0] + k12 * _c[1] + k22 * _c[2];
-    // c[0]*x + c[1]*y + c[2] = 0
-    // y = -c[0]/c[1]*x - c[2]/c[1]
-
-    // TODO：直接去读DT图就行
-    auto Kp2Useful = [&kf2, &lk1, &w](Eigen::Vector2i& p2, int& score) -> bool {
-        const Mat& edgeImg = kf2.edgeImg_[0];
-
-        if (!InRange(edgeImg, p2)) {
-            return false;
-        }
-
-        int x = p2[0], y = p2[1];
-        bool isEdge = edgeImg.at<uchar>(y, x) == 0;
-        // if(!isEdge) {
-        //     // 允许小的像素偏差
-        //     vector<Eigen::Vector2i> xy = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}, {-1, 1}, {1, 1}, {-1, -1}, {1, -1}};
-        //     for(const Eigen::Vector2i &dp : xy) {
-        //         Point2i p(x+dp.x(), y+dp.y());
-        //         if(edgeImg.at<uchar>(p) == 0) {
-        //             isEdge = true;
-        //             // 赋值边缘像素点
-        //             p2.x() = p.x;
-        //             p2.y() = p.y;
-        //             break;
-        //         }
-        //     }
-        // }
-        if (!isEdge) {
-            return false;
-        }
-
-        const Eigen::Vector2i p1 = lk1.uv_;
-
-#ifndef USE_SSD
-#if USE_POINT_MAP_ID
-        const int descId = kf2.pointMapId_.at({p2.x(), p2.y()});
-#else
-        const int id = p2.y() * w + p2.x();
-        const int descId = kf2.pointMapId_.at(id);
-#endif
-        const u_int64_t d2 = kf2.descriptor_[descId];
-        score = CalculateDescriptorScore(lk1.descriptor_, d2);
-        return score < config->maxDescriptorDist;
-#else
-        score = CalculatePatchSSD(lk1.host_, &kf2, p1, p2);
-        return score <
-               config
-                   ->maxSSDdist;  // 是否应该保证极线搜索范围不能过大呢？前后像素应该差不多吧
-#endif
-    };
-
-    Eigen::Vector2i xRange, yRange;
-    GetProjectRange(lk1, T21, cam, xRange, yRange);
-    const int minCol = max(xRange[0], 0);
-    const int maxCol = min(xRange[1], edgeImg.cols);
-    const int minRow = max(yRange[0], 0);
-    const int maxRow = min(yRange[1], edgeImg.rows);
-
-    vector<Eigen::Vector2d> kp2;
-    vector<pair<int, Eigen::Vector2i>> scoreKp2;
-    auto IsZero = [](const double a) -> bool {
-        return abs(a) < 1e-10;
-    };
-    const double roundOff = 0.5;  // 0.5 四舍五入参数
-
-    if (IsZero(c1) && IsZero(c0)) {
-        return kp2;
-    } else if (IsZero(c1) && !IsZero(c0)) {
-        const int x = -c2 / c0 + roundOff;
-        cout << "epilor line col: " << x << endl;
-        for (int y = minRow; y < maxRow; ++y) {
-            Eigen::Vector2i px{x, y};
-            int score = INT_MAX;
-            if (Kp2Useful(px, score)) {
-                scoreKp2.push_back(make_pair(score, px));
-            }
-        }
-    } else if (!IsZero(c1) && IsZero(c0)) {
-        const int y = -c2 / c1 + roundOff;
-        cout << "epilor line row: " << y << endl;
-        for (int x = minCol; x < maxCol; ++x) {
-            Eigen::Vector2i px{x, y};
-            int score = INT_MAX;
-            if (Kp2Useful(px, score)) {
-                scoreKp2.push_back(make_pair(score, px));
-            }
-        }
-    } else {
-        // y = ax + b
-        const double a = -c0 / c1, b = -c2 / c1;
-        for (int x = minCol; x < maxCol; ++x) {
-            const int y = a * x + b + roundOff;
-            Eigen::Vector2i px{x, y};
-            int score = INT_MAX;
-            // TODO：如果是合法的，那么下一步就跳过几个像素，以提高搜索效率
-            if (Kp2Useful(px, score)) {
-                scoreKp2.push_back(make_pair(score, px));
-            }
-        }
-    }
-
-#if 0
-    // 找到最匹配的
-    if(scoreKp2.size() > 1) {
-        sort(scoreKp2.begin(), scoreKp2.end(), [](const pair<int, Eigen::Vector2i> &p1, 
-            const pair<int, Eigen::Vector2i> &p2) -> bool {return p1.first < p2.first;} );
-        // cout << "scoreKp2[0].first, scoreKp2[1].first: " << scoreKp2[0].first << ", " << scoreKp2[1].first << ", " << int(config->bestMatchRatio * scoreKp2[1].first) << endl;
-        // // 这里存在相邻像边缘像素的ssd差距很小的情况，所以直接取第一个就好了
-        // if(scoreKp2[0].first < int(config->bestMatchRatio * scoreKp2[1].first) ) {
-        //     // 这个条件可能过于苛刻，会影响结果？不是苛刻的原因
-        //     kp2.push_back(scoreKp2[0].second.cast<double>());
-        // }
-        const double goodScore = scoreKp2[0].first < int(config->bestMatchRatio * scoreKp2[1].first);
-        const double badDist = (scoreKp2[0].second - scoreKp2[1].second).norm() > 5;
-        if(goodScore || (!goodScore && !badDist) )
-            kp2.push_back(scoreKp2[0].second.cast<double>());
-    } else if(scoreKp2.size() == 1) {
-        kp2.push_back(scoreKp2[0].second.cast<double>());
-    }
-
-#else
-    // for(int i = 0; i < config->maxKeepEpilorMatchPointNum && i < scoreKp2.size(); ++i) {
-    sort(scoreKp2.begin(), scoreKp2.end(),
-         [](const pair<int, Eigen::Vector2i>& p1,
-            const pair<int, Eigen::Vector2i>& p2) -> bool {
-             return p1.first < p2.first;
-         });
-    for (int i = 0; i < scoreKp2.size(); ++i) {
-        kp2.push_back(scoreKp2[i].second.cast<double>());
-    }
-#endif
-    return kp2;
-}
-
 // 比像素平面上的极线约束多了N次投影到像素平面的运算
 vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(
     const Eigen::Vector2d& kp1, const Mat& edgeImg, const Pose& T21,
@@ -478,8 +309,7 @@ vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(
     * fy*y+cy = px_y 
     ********************************************/
     Eigen::Vector3d c = SkewSymmetric(T21.t_wb_) *
-                        T21.q_wb_.toRotationMatrix() *
-                        cam.InverseProject(kp1.cast<int>());
+                        T21.q_wb_.toRotationMatrix() * cam.InverseProject(kp1);
     // c[0]*x + c[1]*y + c[2] = 0 ==> 归一化平面上的极线
     // y = -c[0]/c[1]*x - c[2]/c[1]
 
@@ -543,7 +373,7 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp2, const Pose& T21,
     *****************************/
     // TODO: 检验为什么该种三角化方式不行！！！
     // 直观理解就是，与kp2出发射线有交点的地图点均可满足该约束，因为没有用到kp1信息，故而无法确定Pc1
-    const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2.cast<int>());
+    const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2);
     const Eigen::Matrix3d skew = SkewSymmetric(kp2Norm);
     const Eigen::Matrix3d A = skew * T21.q_wb_.toRotationMatrix();
     const Eigen::Vector3d b = -skew * T21.t_wb_;
@@ -560,8 +390,8 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp1,
     *
     * R21 * Pc1 + t21 = z * kp2_norm
     *****************************/
-    const Eigen::Vector3d kp1Norm = cam.InverseProject(kp1.cast<int>());
-    const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2.cast<int>());
+    const Eigen::Vector3d kp1Norm = cam.InverseProject(kp1);
+    const Eigen::Vector3d kp2Norm = cam.InverseProject(kp2);
     const Eigen::Matrix3d skew1 = SkewSymmetric(kp1Norm);
     const Eigen::Matrix3d skew2 = SkewSymmetric(kp2Norm);
     Eigen::Matrix<double, 6, 3> A;
@@ -580,9 +410,9 @@ double TriangulateDepth(const Eigen::Vector2d& kp1, const Eigen::Vector2d& kp2,
                         const Pose& T21, const Camera& cam) {
     Pose T12 = T21.Inverse();
 
-    Eigen::Vector3d f_ref = cam.InverseProject(kp1.cast<int>());
+    Eigen::Vector3d f_ref = cam.InverseProject(kp1);
     f_ref.normalize();
-    Eigen::Vector3d f_curr = cam.InverseProject(kp2.cast<int>());
+    Eigen::Vector3d f_curr = cam.InverseProject(kp2);
     f_curr.normalize();
 
     // 方程
@@ -610,104 +440,6 @@ double TriangulateDepth(const Eigen::Vector2d& kp1, const Eigen::Vector2d& kp2,
     return depth_estimation;
 }
 
-bool CheckDepthQuality(const Landmark& lk1, const Pose& T12,
-                       const Eigen::Vector2d& p2, const double z) {
-    // case 1: 距离校验
-    if (z < lk1.depthRange_[0] || z > lk1.depthRange_[1]) {
-        return false;
-    }
-
-    // case 2: 进行视差角校验
-    const Eigen::Vector3d v1 = lk1.cam_->InverseProject(lk1.uv_, z);
-    const Eigen::Vector3d v2 = v1 - T12.t_wb_;
-    const double ang = acos(v1.dot(v2) / v1.norm() / v2.norm()) * kRad2Deg;
-    if (ang < config->minGoodTriangulateAngle ||
-        ang > config->maxGoodTriangulateAngle) {
-        return false;
-    }
-
-    // case 3: 进行重投影质量校验
-    const Eigen::Vector3d pc2 = T12.Inverse() * v1;
-    if (pc2.z() / z < 0.7 || pc2.z() / z > 1.4) {
-        return false;
-    }
-
-    // case 4： 深度未收敛时不好判断，不启用
-    // const Eigen::Vector2d px2 = lk1.cam_->Project2PixelPlane(pc2);
-    // const double projError = (p2-px2).norm();
-    // return projError < 1.0; // max(3.0, 5.0-lk1.obvTime_); // 容许一定的偏差，只要在估计深度过程中逐渐收敛即可，需要与obvNum一起使用
-
-    return true;
-}
-
-bool UpdateLandmarkDepth(const vector<Eigen::Vector2d>& kp2, const Pose& T21,
-                         const Camera& cam, Landmark& lk,
-                         const Eigen::Vector2d& deltaPx2) {
-    // TODO:需要根据现实条件实现该函数，如使用光度残差作为阈值
-    const Pose T12 = T21.Inverse();
-
-    const Eigen::Vector2d kp1 = lk.uv_.cast<double>();
-
-    Eigen::Vector3d pc1 = Triangulate(kp1, kp2[0], T21, cam);
-    const double d1 = TriangulateDepth(kp1, kp2[0], T21, cam);
-    const Eigen::Vector3d pc1New = cam.InverseProject(kp1.cast<int>(), d1);
-    // cout << "pc1.z, pc1New.z, diff: " << pc1.z() << " " << pc1New.z() << " " << pc1.z() - pc1New.z() << endl;
-    pc1 = pc1New;
-    if (!CheckDepthQuality(lk, T12, kp2[0], pc1.z())) {
-        return false;
-    }
-
-#if 1
-    // 这样计算不确定度感觉效果很差
-    const double deltaDepth =
-        GetDepthUncertainty(kp2[0], deltaPx2, pc1.z(), cam);
-    // const double deltaDepth = GetOnePixelUncertainty(T12.t_wb_, pc1, cam.fx_);
-    double u2 = 1.0 / pc1.z(),
-           cov2 = std::pow(1.0 / pc1.z() - 1.0 / (pc1.z() + deltaDepth),
-                           2);  // 考虑基线的影响
-#else
-    // 这样反而结果正常，why?建模不准
-    const double u2 = pc1.z(),
-                 cov2 = 50 * max(0.1, 1 - double(lk.obvTime_) / 5);
-#endif
-    double u1 = lk.invZ_, cov1 = lk.invDepthCov_;
-    const double std1 = sqrt(cov1);
-    if (lk.obvTime_ == 0) {
-        // 首次初始化
-        u1 = u2;
-        //cov1 = cov2;
-        // cov2 = cov1 * 0.25; // 不完全信赖第一次的三角化
-    } else {
-        // 一致性校验
-        if (u2 < u1 - std1 * 3 || u2 > u1 + std1 * 3) {
-            return false;
-        }
-        cov1 *= 1.1;  // KF propagate
-    }
-    //cout << "maxDepth, minDepth, depth size, cov1: " << maxDepth << " " << minDepth << " "
-    //     << depth.size() << " " << cov1 << endl;
-    // 信息融合，标准差一直减小
-    lk.invZ_ = (u2 * cov1 + u1 * cov2) / (cov1 + cov2);
-    lk.invDepthCov_ = (cov1 * cov2) / (cov1 + cov2);
-    //cout << "u1, u2, cov1, cov2, z: " << u1 << " " << u2 << " " << cov1 << " " << cov2
-    //     << " " << landmark.z_ << endl;
-    lk.UpdateUncertainty(true);
-
-    static ofstream unf;
-    static bool first = 1;
-    if (first) {
-        unf.open("depth_uncertainty.csv");
-        unf.close();
-        first = false;
-    }
-    unf.open("depth_uncertainty.csv", ios::app);
-    unf << fixed << &lk << " [" << lk.depthRange_[0] << ", "
-        << lk.depthRange_[1] << "] std, depth: " << lk.invDepthCov_ << " "
-        << lk.invZ_ << endl;
-    unf.close();
-    return true;
-}
-
 Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d& rpy,
                                const Eigen::Vector3d& t, const double deg2rad) {
     Eigen::Quaterniond q_c1c2 =
@@ -725,7 +457,7 @@ void varifyTriangulate() {
 
     const Eigen::Vector2d px1{15, 17};
     const double z1 = 5.0;
-    const Eigen::Vector3d pc1 = cam->InverseProject(px1.cast<int>(), z1);
+    const Eigen::Vector3d pc1 = cam->InverseProject(px1, z1);
     cout << "pc1: " << pc1.transpose() << endl;
     cout << "px1: " << cam->Project2PixelPlane(pc1).transpose() << endl;
 
@@ -982,17 +714,6 @@ uint64_t CalculateDescriptor(const Mat& grayImg, const Eigen::Vector2i& px) {
     return des;
 }
 
-int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2) {
-    // 异或，相同值0，不同值为1,意味着score越小越匹配
-    uint64_t d = v1 ^ v2;
-    int sum = 0;
-    for (int i = 0; i < KeyFrame::descDim; ++i) {
-        sum += bool((d >> i) & 1);
-    }
-    // cout << "sum: " << sum << endl;
-    return sum;
-}
-
 double CalculateSSD(const std::vector<double>& v1,
                     const std::vector<double>& v2, double avg1, double avg2,
                     const int desLen) {
@@ -1018,46 +739,6 @@ double CalculateSSD(const std::vector<double>& v1,
         sum += abs(v1[i] - avg - v2[i]);
     }
     return sum;
-}
-
-// No used any more
-void GetProjectRange(const Landmark& lp, const Pose& T21, const Camera& cam,
-                     Eigen::Vector2i& xRange, Eigen::Vector2i& yRange) {
-    const Eigen::Vector3d pc1_1 = cam.InverseProject(lp.uv_, lp.depthRange_[0]);
-    const Eigen::Vector3d pc1_2 = cam.InverseProject(lp.uv_, lp.depthRange_[1]);
-    const Eigen::Vector3d pc2_1 = T21 * pc1_1;
-    const Eigen::Vector3d pc2_2 = T21 * pc1_2;
-    const Eigen::Vector2i uv1 = cam.Project2PixelPlane(pc2_1).cast<int>();
-    const Eigen::Vector2i uv2 = cam.Project2PixelPlane(pc2_2).cast<int>();
-    if (uv1[0] > uv2[0]) {
-        xRange[0] = uv2[0];
-        xRange[1] = uv1[0];
-    } else {
-        xRange[0] = uv1[0];
-        xRange[1] = uv2[0];
-    }
-
-    int xLen = xRange[1] - xRange[0];
-    if (xLen < config->minEpipolarSearchLine) {
-        const int diff = config->minEpipolarSearchLine - xLen;
-        xRange[0] = max(6, xRange[0] - diff / 2);
-        xRange[1] = min(lp.host_->edgeImg_[0].cols - 6, xRange[1] + diff / 2);
-    }
-
-    if (uv1[1] > uv2[1]) {
-        yRange[0] = uv2[1];
-        yRange[1] = uv1[1];
-    } else {
-        yRange[0] = uv1[1];
-        yRange[1] = uv2[1];
-    }
-
-    int yLen = yRange[1] - yRange[0];
-    if (yLen < config->minEpipolarSearchLine) {
-        const int diff = config->minEpipolarSearchLine - yLen;
-        yRange[0] = max(6, yRange[0] - diff / 2);
-        yRange[1] = min(lp.host_->edgeImg_[0].rows - 6, yRange[1] + diff / 2);
-    }
 }
 
 double GetOnePixelUncertainty(const Eigen::Vector3d& t12,
@@ -1109,9 +790,8 @@ double GetDepthUncertainty(const Eigen::Vector2d& px2,
     // Δd = |d - d'| = | (tanβ2/tanβ2' - 1) * d'|
     // 或者 Δd = | (tanβ2'/tanβ2 - 1) * d |
     const Eigen::Vector2d px2_ = px2 + deltaPix2,
-                          p2Norm = cam.InverseProject(px2.cast<int>()).head(2),
-                          p2Norm_ =
-                              cam.InverseProject(px2_.cast<int>()).head(2);
+                          p2Norm = cam.InverseProject(px2).head(2),
+                          p2Norm_ = cam.InverseProject(px2_).head(2);
 
     const double tanBelta2 = 1.0 / p2Norm.norm();
     const double tanBelta2_ = 1.0 / p2Norm_.norm();  // > 0的实数
@@ -1195,52 +875,6 @@ Eigen::Matrix3d InverseRightJacobianSO3(const Eigen::Vector3d& v) {
                W * W * (1.0 / d2 - (1.0 + cos(d)) / (2.0 * d * sin(d)));
 }
 
-int DrawMatch(KeyFrame* kf1, KeyFrame* kf2, const std::string& name) {
-    if (kf1 == kf2) {
-        return 0;
-    }
-    std::vector<Eigen::Vector2i> px1, px2;
-
-    for (Landmark* p : kf1->landmark_) {
-        if (p != nullptr && p->target_.count(kf2)) {
-            // 说明还是将host也加入相互观测方便
-            px1.push_back(p->target_[kf1]);
-            px2.push_back(p->target_[kf2]);
-        }
-    }
-    if (px1.empty()) {
-        px1.push_back({0, 0});
-        px2.push_back({0, 0});
-    }
-    DrawMatch(kf1->edgeImg_[0], kf2->edgeImg_[0], px1, px2, name);
-    return px1.size();
-}
-
-int DrawMatch(vector<Landmark*>& ps, KeyFrame* kf2, const std::string& name) {
-    vector<Eigen::Vector2i> Px1, Px2;
-    shared_ptr<Camera> cam = kf2->cam_;
-    for (int i = 0; i < ps.size(); ++i) {
-        Landmark* p = ps[i];
-        KeyFrame* host = p->host_;
-        const Eigen::Vector3d pc1 = p->GetPc();
-        const Eigen::Vector3d pw = host->Twc_ * pc1;
-
-        const Eigen::Vector3d pc2 = kf2->Tcw_ * pw;
-        if (pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
-            continue;
-        }
-        const Eigen::Vector2i px2 = cam->Project2PixelPlane(pc2).cast<int>();
-        if (!InRange(kf2->dist_[0], px2.cast<int>())) {
-            continue;
-        }
-
-        Px1.push_back(p->uv_);
-        Px2.push_back(px2);
-    }
-    DrawMatch(ps[0]->host_->edgeImg_[0], kf2->edgeImg_[0], Px1, Px2, name);
-    return Px1.size();
-}
-
 void VizInteraction(const cv::viz::KeyboardEvent& event, void* _b) {
     // 因为q or Q键是默认注册的按键，所以...
     // 如果使用它们，反应有延迟
@@ -1262,102 +896,6 @@ void VizInteraction(const cv::viz::KeyboardEvent& event, void* _b) {
                (event.code == 'D' || event.code == 'd')) {
         interaction->drawEpipolarMatch = !interaction->drawEpipolarMatch;
     }
-}
-
-double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
-                                      Camera& cam) {
-    Pose T21 = kf2->Twc_.Inverse() * kf1->Twc_;
-    Pose T12 = T21.Inverse();
-    int initNum = 0;
-    if (kf2->landmark_.empty()) {
-        kf2->InitializeLandmark();
-    }
-
-    const int w = kf1->grayImg_.cols, h = kf1->grayImg_.rows;
-    int transformTotalNum = 0;
-    int varianceDecreaseNum = 0;
-    int findMatchFailNum = 0;  // 需在极线上搜索到匹配才能传播
-
-    for (int i = 0; i < static_cast<int>(kf1->landmark_.size()); ++i) {
-        Landmark* lk1 = kf1->landmark_[i];
-        if (lk1 == nullptr || lk1->IsOutOfRange() || lk1->invZ_ < 1e-9) {
-            continue;
-        }
-
-        const Eigen::Vector3d Pc1 = lk1->GetPc();
-        if (Pc1.z() < config->minDepth || Pc1.z() > config->maxDepth) {
-            continue;
-        }
-
-        const Eigen::Vector3d Pc2 = T21 * Pc1;
-        if (Pc2.z() < config->minDepth || Pc2.z() > config->maxDepth) {
-            continue;
-        }
-        const Eigen::Vector2i px2 = cam.Project2PixelPlane(Pc2).cast<int>();
-        if (!InRange(kf2->grayImg_, px2)) {
-            continue;
-        }
-
-        Eigen::Vector2d bestPx2(0, 0), farPx(0, 0), nearPx(0, 0),
-            epipolarP1(0, 0), ep2(0, 0);
-        const double matchScore =
-            kf1->FindMatchesWithEpipolarConstraintOnImagePlane(
-                kf2, lk1, bestPx2, farPx, nearPx, epipolarP1, ep2);
-        if (matchScore < 0) {
-            // 转换失败
-            ++findMatchFailNum;
-            continue;
-        }
-
-#if USE_POINT_MAP_ID
-        int id = kf2->pointMapId_.at({int(bestPx2.x()), int(bestPx2.y())});
-#else
-        const int key = int(bestPx2.y()) * w + int(bestPx2.x());
-        if (!kf2->pointMapId_.count(key)) {
-            ++findMatchFailNum;
-            continue;
-        }
-        int id = kf2->pointMapId_.at(key);
-#endif
-        Landmark* lk2 = kf2->landmark_[id];
-        double var2 = 1e9;
-        const double matchResidual = (px2.cast<double>() - bestPx2).norm();
-        if (!LandmarkTransformHost(*lk1, T21, cam.Kinv_[0], Pc2.z(), var2,
-                                   varianceDecreaseNum, matchResidual)) {
-            continue;
-        }
-        ++transformTotalNum;
-
-        const double invZ2 = 1.0 / Pc2.z();
-        if (lk2->obvTime_ > 0 && invZ2 > lk2->invZ_ &&
-            abs(invZ2 - lk2->invZ_) < sqrt(lk2->invDepthCov_) * 2.0) {
-            // // 使用较近的点替代
-            lk2->invZ_ = invZ2;
-            lk2->invDepthCov_ = var2;
-        } else if (lk2->obvTime_ == 0) {
-            lk2->invZ_ = invZ2;
-            // 这里我们初始化kp2的不确定度，它应该比较大
-            lk2->invDepthCov_ = var2;
-        } else {
-            continue;
-        }
-
-        lk2->UpdateUncertainty(false);  // 避免obvTime为0,导致重新初始化
-        // 量测次数也要转移，目前问题较大的是深度异常大的点也会投影到下一帧
-        lk2->obvTime_ = lk1->obvTime_;
-        lk2->failObvTime_ = lk1->failObvTime_;
-        lk2->initFromPropagate_ = true;
-
-        ++initNum;
-    }
-    cout << fmt::format(
-        "transformTotalNum: {}, varianceDecreaseNum: {}, findMatchFailNum: {} "
-        "abnormal ratio: "
-        "{:.1f}, fail transform ratio: {:.1f}, init from last KF num: {}\n",
-        transformTotalNum, varianceDecreaseNum, findMatchFailNum,
-        double(varianceDecreaseNum) / transformTotalNum,
-        double(findMatchFailNum) / transformTotalNum, initNum);
-    return double(initNum) / kf2->landmark_.size();
 }
 
 double CalculatePatchSSD(const KeyFrame* kf1, const KeyFrame* kf2,
@@ -1454,6 +992,19 @@ bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
     idepth1 = (p1.dot(p1)) / (m * pos_12).dot(p1);
 
     if (idepth1 < 0. || idepth1 > 1.0 / kMinSceneDepthInCamera) {
+        return false;
+    }
+
+    // TODO：还要检验视差角
+    const Eigen::Vector3d ray1 = -pn1 / idepth1;  // 相机1系下的地图点坐标
+    const Eigen::Vector3d ray2 = ray1 + T12.t_wb_;
+    const double cosAng = ray1.dot(ray2) / (ray1.norm() * ray2.norm());
+    // 必须在3度到120度范围内
+    const double ang = acos(cosAng) * kRad2Deg;
+    constexpr double kMinCrossAng = 2.0;
+    constexpr double kMaxCrossAng = 120.0;
+    if (ang < kMinCrossAng || ang > kMaxCrossAng) {
+        cout << "triangulate ang: " << ang << "deg! Error!" << endl;
         return false;
     }
 
@@ -1614,7 +1165,7 @@ Eigen::Vector2i ParseKeypointSet(const std::string& s) {
 bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
                                 Eigen::Vector2d& ep1) {
     // 保证极线方向在图像上遵循一致的方向
-    const double cosValue = ep1.dot(ep2)/(ep1.norm()*ep2.norm());
+    const double cosValue = ep1.dot(ep2) / (ep1.norm() * ep2.norm());
     const double ang = acos(cosValue) * kRad2Deg;
     constexpr double kMaxCrossAng = 30;  // deg
     if (!(abs(ang) < kMaxCrossAng || abs(ang) > 180 - kMaxCrossAng)) {
@@ -1842,11 +1393,11 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     Mat curImg, curInitImg;
     const unsigned int curId = curf->id_;
     if (curf != nullptr) {
-        cvtColor(curf->edgeImg_[0], curImg, cv::COLOR_GRAY2BGR);
-        cvtColor(curfInit->edgeImg_[0], curInitImg, cv::COLOR_GRAY2BGR);
+        cvtColor(curf->debugGrayImg_, curImg, cv::COLOR_GRAY2BGR);
+        cvtColor(curfInit->debugGrayImg_, curInitImg, cv::COLOR_GRAY2BGR);
     }
     Mat curKFimg;
-    cvtColor(curkf->edgeImg_[0], curKFimg, cv::COLOR_GRAY2BGR);
+    cvtColor(curkf->debugGrayImg_, curKFimg, cv::COLOR_GRAY2BGR);
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,

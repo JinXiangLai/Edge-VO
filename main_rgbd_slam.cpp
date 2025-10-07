@@ -44,11 +44,7 @@ int main(int argc, char** argv) {
     interaction->window = &window;
     InitColor();
 
-    const bool useInvZ = config->useInvZ;
-    const bool showImg = config->showDebugImg;
     const int firstImgIdx = config->firstImgIdx;
-    const int loopClosureImgIdx = config->loopClosureImgIdx;
-
     // 读取外部数据
     vector<string> vstrImages;
     vector<double> vTimeStamps;
@@ -69,11 +65,11 @@ int main(int argc, char** argv) {
     }
     LoadPriorOdom(config->dataDir, vPriorPose);
 
-    for (int i = 1; i < vTimeStamps.size(); ++i) {
+    for (size_t i = 1; i < vTimeStamps.size(); ++i) {
         Assert(vTimeStamps[i] - vTimeStamps[i - 1] > 0,
                "Check img timestamp error!!!");
     }
-    for (int i = 1; i < vPriorPose.size(); ++i) {
+    for (size_t i = 1; i < vPriorPose.size(); ++i) {
         //cout << fixed << vPriorPose[i][0] << " | " << vPriorPose[i-1][0] << endl;
         Assert(vPriorPose[i][0] >= vPriorPose[i - 1][0],
                "Check odom timestamp error!!!");
@@ -93,7 +89,7 @@ int main(int argc, char** argv) {
     double accDist = 0.;
     stack<KeyFrame>
         unmappedFrame;  // 由于当前把每一帧都用来更新深度，所以不需要像lsd slam那样保留一些帧
-    for (int i = firstImgIdx; i < vTimeStamps.size(); ++i) {
+    for (size_t i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img,
@@ -117,22 +113,10 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-#if 1
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-        curF.CannyEdgeDetect();
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-        curF.GenerateDTandDerivative();
         chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-#else
-        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-        curF.ExtractEdge();
-        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-        curF.GenerateDTandDerivative();
-        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-        curF.GenerateKeyPoint();
-        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-#endif
 
         if (!initFrame) {
             initFrame = new KeyFrame(curF);
@@ -140,7 +124,6 @@ int main(int argc, char** argv) {
             initFrame->SetTwc(Pose());
             initFrame->depthImage_ = depthImg;
             lastF = *initFrame;
-            initFrame->InitializeLandmark();
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = win.back();
 
@@ -150,7 +133,6 @@ int main(int argc, char** argv) {
 
             continue;  // 认为初始化完毕
         }
-        ShowImage(curF.edgeImg_[0], "edgeImg" + to_string(i), showImg);
 
         // 使用KF更新当前帧的pose
         const Pose Twc2 = curF.priorTwc_;
@@ -172,74 +154,55 @@ int main(int argc, char** argv) {
             lastLastF = lastF;
             lastF = curF;
             const double findMatchRatio =
-                win.back()->UpdateDepth(curF, findMatchNum);
-            if (config->messageLevel <= MessageLevel::Error)
-                cout << "findMatchRatio, accDist: " << findMatchRatio << ", "
-                     << accDist << endl;
-            if (findMatchRatio > 0.1 ||
-                (accDist > 0.1 && (curF.id_ - initFrame->id_ > 30)) ||
+                win.back()->TrackWithOpticalFlow(curF, findMatchNum);
+            cout << "Initializing findMatchRatio, accDist: " << findMatchRatio
+                 << ", " << accDist << endl;
+            if (findMatchRatio < 0.5 ||
+                (accDist > 0.2 && (curF.id_ - initFrame->id_ > 30)) ||
                 accDist > config->needNewKFtrans || config->useDepthImage) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 accDist = 0.;
                 cout << "\n******\nInitialized!\n******\n";
-            } else {
-                continue;
+                // TODO: 初始化，首帧固定为单位阵，计算当前帧位姿
+                optimizer.AddOneKeyFeame(new KeyFrame(curF));
             }
+
+            continue;
         }
 
-#if 1
         // Step: 利用当前帧更新深度图
-        // step1: 优化当前帧pose
-        optimizer.SetInitLambda(1.0);
+
         // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
-        bool needKFbySight = false;
-        //optimizer.TrackLocalMap(
-        //    &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
 
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
         const double findMatchRatio =
-            win.back()->UpdateDepth(curF, findMatchNum);
+            win.back()->TrackWithOpticalFlow(curF, findMatchNum);
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
-        //win.back()->CullingBadDepth(&curF);
+
+        // step1: 优化当前帧pose
+        optimizer.SetInitLambda(1.0);
+        bool needKFbySight = false;
+        optimizer.TrackLocalMap(
+            &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+
+        // TODO 1：利用跟踪结果更新当前帧pose，做当前帧和关键帧之间的BA优化
+        // 这里暂时利用真值实现
+
+        // TODO 2：利用跟踪帧进行必要的三角化(这个应该是在添加关键帧之后进行局部BA之后进行)
         chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
 
-        chrono::steady_clock::time_point t8, t9;
-        if (win.back()->updateFrameCount_ % 5 == 0 && accDist > 0.03) {
-            chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
-            // win.back()->FuseDepth();
-            chrono::steady_clock::time_point t9 = chrono::steady_clock::now();
-            //cout << "Fuse depth spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
-        }
+        chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
 
-#else
-        // step1
-        const double findMatchRatio =
-            win.back()->UpdateDepth(curF, findMatchNum);
-        // step2
-        optimizer.SetInitLambda(0);
-        //optimizer.TrackLocalMap(&curF);
-#endif
+        chrono::steady_clock::time_point t9 = chrono::steady_clock::now();
+        //cout << "Fuse depth spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
 
         // 显示线程更新使用
         interaction->visualCurF = curF;  // 记录优化pose后的当前帧
         // step3: 剔除地图外点, TODO: 应该使用融合而不是剔除策略！！！
         // optimizer.CullingErrorLandmark(&curF);
-
-        // step4: 将深度图传递给当前帧
-        // 将当前帧重投影点附近的深度值都赋值为基于高斯分布的深度
-        // 在优化过程中，假设光度差服从t分布，可以计算出对应的优化权重值
-        // double initDepthRatio = optimizer.TransformDepthMap2CurrentFrame(&curF);
-        // cout << "curF depth map initialized depth ratio: " << initDepthRatio << endl;
-        // win.back()->FuseDepth();
-
-        // if((lastF.Twc_.Inverse() * curF.Twc_).t_wb_.norm() > 0.2) {
-        //     ShowPointCloud(curF.landmark_);
-        //     // 只能赋值内容，不能赋值地址
-        //     lastF = curF;
-        // }
 
         // 当跟踪成功的点数量少于一定比例且运动满足阈值时，生成新的KF
         // Step: 当前帧选为新关键帧，
@@ -247,13 +210,13 @@ int main(int argc, char** argv) {
         // step2：为剩余的edge point产生的landmark
         const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
         const bool case2 =
-            (findMatchRatio < 0.1 ||
+            (findMatchRatio < 0.5 ||
              findMatchNum <
                  500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
         const bool case3 = T12.t_wb_.norm() > config->needNewKFtrans;
         const bool case4 =
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
-        const bool case5 = accDist > config->needNewKFtrans && 0;
+        const bool case5 = accDist > config->needNewKFtrans;
         const bool case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
@@ -289,20 +252,14 @@ int main(int argc, char** argv) {
 
             accDist = 0.;
 
-#ifndef USE_DT_RESIDUAL
-            // 同时未跟踪上landmark的边缘点生成新的landmark
-            curF.InitializeLandmark();
-#else
-            // nothing
-#endif
             // 可视化滑窗内点云
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-            win.back()->FuseDepth();
             t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
-            cout << "Add new keyframe id: " << curF.id_;
+            // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
+            cout << "Add new keyframe id: " << curF.id_ << "\n";
             t11 = chrono::steady_clock::now();
             interaction->visualLastKF = win.back();
 

@@ -4,6 +4,8 @@
 #include <fstream>
 #include <memory>
 
+#include <opencv2/opencv.hpp>
+
 #include "Camera.h"
 #include "Landmark.h"
 #include "Pose.h"
@@ -39,68 +41,27 @@ class KeyFrame {
     void operator=(const KeyFrame& f);
 
     // 可能需要corase2fine的配准
-    void CannyEdgeDetect();
-    void ExtractEdge();
-    void GenerateDTandDerivative();
-    size_t GenerateLandmark(
-        KeyFrame& kf1, std::vector<std::vector<Eigen::Vector2d>>& debugGoodKp1,
-        std::vector<std::vector<Eigen::Vector2d>>& debugGoodKp2,
-        const int equalparts);
-    size_t InitializeLandmark();
-    int ReuseLandmark(KeyFrame* kf1);
-    double UpdateDepth(const KeyFrame& kf2, int& findMatchNum);
+    size_t InitializeLandmark(const KeyFrame* lastKf);
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
     void SetTwc(const Pose& Twc);
-    int TrackLandmarkByEpilorLine(const KeyFrame& kf1);
-    double CullingBadDepth(KeyFrame* kf2);
 
     void ReleaseMat();
-    void FuseDepth();
-    bool MoveNearPx2IntoBoundary(Eigen::Vector2d& pClose,
-                                 const Eigen::Vector2d& ep2,
-                                 const Eigen::Vector2d& pFar);
-
-    // 输出far2->near2，以及相机1的极点，绘制p1->epipolarP1
-    double FindMatchesWithEpipolarConstraintOnImagePlane(
-        const KeyFrame* kf2, Landmark* lk1, Eigen::Vector2d& bestPx2,
-        Eigen::Vector2d& farPx, Eigen::Vector2d& nearPx,
-        Eigen::Vector2d& epipolarP1, Eigen::Vector2d& ep2);
-
-    double SearchBestMatchAlongEpipolarLine(const Eigen::Vector2d& farPx2,
-                                            const Eigen::Vector2d& nearPx2,
-                                            const Eigen::Vector2d& ep2,
-                                            const KeyFrame& kf2,
-                                            const std::vector<double>& v1,
-                                            Eigen::Vector2d& bestPx2);
-
     void GenerateKeyPoint();
 
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
-    // canny边缘图像已经去畸变了
-    std::vector<cv::Mat> edgeImg_, dist_, dx_, dy_;
 
     std::shared_ptr<Camera> cam_;
-    Pose Twc_;
+    Pose Twc_, TwcBack_;
     // TODO： 增加该字段，减小Inverse()次数
-    Pose Tcw_;
+    Pose Tcw_, TcwBack_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<std::vector<Eigen::Vector2i>> unPx_;  // 像素平面上的去畸变点
+    std::vector<Eigen::Vector2d> unKeypoints_;  // 像素平面上的去畸变点
     std::vector<Landmark*>
         landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
-    // std::vector<Eigen::Matrix<float, kDescriptorPatchSize, 1> > descriptor_;
-    std::vector<uint64_t> descriptor_;
-    static constexpr int descDim = 63;
-
-#if USE_POINT_MAP_ID
-    std::unordered_map<Eigen::Vector2i, int, TupleHash>
-        pointMapId_;  // 像素坐标与vector索引的映射
-#else
-    std::unordered_map<int, int> pointMapId_;  // key: y*width + x
-#endif
 
     bool outOfRange_ = false;
     int convergeEdgeNum_ = 0;
@@ -109,10 +70,18 @@ class KeyFrame {
     // debug 优化算法
     cv::Mat depthImage_;
 
+    void CopyStatus();
+
+    void BackUpStatus();
+
     std::map<std::string, int> matchResultStatiscs_;
     void ReportMatchResult();
     void AddReportElement(const std::string& key);
     void ResetDebugMessage();
+
+    void OpticalFlowTrackExcute(const cv::Mat& prevImg, const cv::Mat& curImg,
+                                std::vector<cv::Point2f>& prevPts,
+                                std::vector<Landmark*>& prevTrackLandmark);
 
     std::ofstream invDepthUncertaintyFile_;
     bool firstWriteUncertainty_ = true;
@@ -122,10 +91,26 @@ class KeyFrame {
         cv::Mat prevImg_;
         std::vector<cv::Point2f> prevPts_;
         std::vector<Landmark*> trackLandmark_;
+        // TODO： 保留历史关键帧的跟踪结果
+        std::vector<cv::Point2f> prevHistoryPts_;
+        std::vector<Landmark*> trackHistoryLandmark_;
+        int totalFeatureCreated_ = 0;
+        int GetTrackFeatureNum() {
+            return prevPts_.size() + prevHistoryPts_.size();
+        }
+        double GetTrackFeatureRatio() {
+            return double(GetTrackFeatureNum()) / totalFeatureCreated_;
+        }
+        int SetTotalFeatureCreated() {
+            totalFeatureCreated_ = GetTrackFeatureNum();
+            return totalFeatureCreated_;
+        }
     };
-    void SetOpticalFlowStruct();
-    double UpdateWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
+    void SetOpticalFlowStructCurFrame();
+    double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
+    void ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw);
     void DrawOpticalMatchImg();
+    void GenerateUndistordMap();
 
     OpticalFlowStruct optFlw_;
 
@@ -143,7 +128,7 @@ class KeyFrame {
                                         const Eigen::Vector2i& lp2Start,
                                         const Eigen::Vector2i& lp2End,
                                         const cv::Mat& debugImg2);
-    void WriteDebugImage2VideoEachFrame(const int kf2Id);
+    void WriteDebugImage2VideoEachFrame(const int kf2Id, const std::string& debugVideoName);
     void DrawTriangulateCase(
         const double estD1, const double estD2, const Landmark& lk1,
         const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
@@ -158,6 +143,8 @@ class KeyFrame {
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
     // TODO：保留一些Landmark的深度收敛过程
 #endif
+
+    static cv::Mat map1, map2;
 };
 
 #endif

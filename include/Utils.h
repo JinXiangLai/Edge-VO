@@ -193,22 +193,12 @@ cv::Mat DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
                   const std::string& name = "matches", const int ratio = 1,
                   const int jump = 10);
 
-int DrawMatch(KeyFrame* kf1, KeyFrame* kf2,
-              const std::string& name = "Last track first kf matches");
-
-int DrawMatch(std::vector<Landmark*>& ps, KeyFrame* kf2,
-              const std::string& name = "Project landmark to last frame");
-
 char DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
                const std::vector<Eigen::Vector2i>& trajKp1,
                const std::vector<Eigen::Vector2i>& trajKp2,
                const std::vector<Eigen::Vector2i>& goodKp2,
                const std::string& name = "epipolar matches",
                const int ratio = 1, const int jump = 10);
-
-std::vector<Eigen::Vector2d> FindMatches(const Landmark& lk1,
-                                         const KeyFrame& kf2, const Pose& T21,
-                                         const Camera& cam);
 
 std::vector<Eigen::Vector2d> FindMatchesWithEpipolarConstraintOnImagePlane(
     const Eigen::Vector2d& kp1, const cv::Mat& edgeImg, const Pose& T21,
@@ -223,10 +213,6 @@ Eigen::Vector3d Triangulate(const Eigen::Vector2d& kp1,
 
 double TriangulateDepth(const Eigen::Vector2d& kp1, const Eigen::Vector2d& kp2,
                         const Pose& T21, const Camera& cam);
-
-bool UpdateLandmarkDepth(const std::vector<Eigen::Vector2d>& kp2,
-                         const Pose& T21, const Camera& cam, Landmark& lk,
-                         const Eigen::Vector2d& deltaPx2);
 
 Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d& rpy,
                                const Eigen::Vector3d& t,
@@ -267,11 +253,6 @@ double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1>& d1,
 
 uint64_t CalculateDescriptor(const cv::Mat& grayImg, const Eigen::Vector2i& px);
 
-int CalculateDescriptorScore(const uint64_t v1, const uint64_t v2);
-
-void GetProjectRange(const Landmark& lp, const Pose& T21, const Camera& cam,
-                     Eigen::Vector2i& xRange, Eigen::Vector2i& yRange);
-
 void ShowPointCloud(const std::vector<Landmark*>& ps);
 
 void ShowPointCloud(const std::vector<Landmark*>& ps1,
@@ -298,12 +279,6 @@ Eigen::Matrix3d InverseRightJacobianSO3(
     const Eigen::Vector3d& v);  // BCH近似使用
 
 void VizInteraction(const cv::viz::KeyboardEvent& event, void* b);
-
-double TransformDepthMap2CurrentFrame(KeyFrame* kf1, KeyFrame* kf2,
-                                      Camera& cam);
-
-bool CheckDepthQuality(const Landmark& lk1, const Pose& T12,
-                       const Eigen::Vector2d& p2, const double z);
 
 double CalculatePatchSSD(const KeyFrame* kf1, const KeyFrame* kf2,
                          const Eigen::Vector2i& px1,
