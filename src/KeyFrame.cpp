@@ -363,7 +363,7 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id,
     int start_text_row = 20;
     int step_text_row = 10;
     cv::putText(videoBestMatchDebugImg_,
-                fmt::format("kf id: {} match point curF id: {}_debugVideoName",
+                fmt::format("kf id: {} match point curF id: {}_{}",
                             id_, kf2Id, debugVideoName),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);

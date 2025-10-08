@@ -23,17 +23,13 @@ class Optimizer {
         int usefulNum = 0;
     };
 
-    bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2, const int curFid);
+    bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
+                          const int curFid);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        const cv::Mat& img, const bool checkAbnormalLandmark=false);
-
-    ResidualInfo CalculateJacobianAndCost(std::vector<Landmark*>& lk1s,
-                                          const std::vector<Pose>& T12,
-                                          Eigen::MatrixXd& H,
-                                          Eigen::VectorXd& g, const int lvl);
+        const cv::Mat& img, const bool checkAbnormalLandmark = false);
 
     ResidualInfo CalculateJacobianAndCostCurFrame(
         const std::vector<Landmark*>& lk1s,
@@ -65,9 +61,10 @@ class Optimizer {
 
     ResidualInfo CalculateResidualWindow(
         const std::vector<Landmark*>& optLandmark,
-        const bool useBackUpStatus = false);
+        const bool useBackUpStatus = false,
+        const bool checkAbnormalLandmark = false);
 
-    bool SlidingWindowOptimize();
+    bool SlidingWindowOptimize(KeyFrame* curKF);
 
     bool SetOptimizeVariables();
 
@@ -75,9 +72,9 @@ class Optimizer {
     // 注意：胡伯核函数只能处理标量
     void HuberLoss(const double chi2, Eigen::Vector2d& rho, const int lvl = 0);
 
-    int SelectOneKF2Marginalization();
+    int SelectOneKF2Marginalization(const KeyFrame& curKF);
 
-    int SampleUsefulLandmark();
+    int SampleUsefulLandmark(const int margKFid);
 
     void UpdatePriorConstraint(Eigen::VectorXd& delta_x) {
         g_p_.noalias() += Hp_ * delta_x;
