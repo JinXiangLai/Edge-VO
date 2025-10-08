@@ -31,7 +31,7 @@ maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差�
 maxDepthConvergeStd: 0.01 # 深度收敛的标准差，由于逆深度与正深度是非线性关系，不能给正深度的收敛标准
 abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 6 # 胡伯核函数参数，sqrt(chi2)
-maxProjectError: 8 # 超过这个残差，意味着地图点错误，地图点需要被删除了
+maxProjectError: 12 # 超过这个残差，意味着地图点错误，地图点需要被删除了
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 9
 imgTimeOffset: 0.0 # sec,时间同步误差

@@ -67,6 +67,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
             double chi2 = (px - obvs[j]).squaredNorm();
             if (chi2 > maxChi2) {
                 lk1->noUsed_ = true;
+                continue;
             }
             Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
             HuberLoss(chi2, rho);
@@ -267,7 +268,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
     H.setZero();
     g.resize(optVariableDim);
     g.setZero();
-    constexpr double noUpdatePoseNum = 0.0;  // 或者是无穷大？
+    constexpr double noUpdatePoseNum = 1.0;  // 或者是无穷大？
 
     /******** 投影过程 ********
     * K.inv * (u1, v1, 1) -> Pc1_norm * z1 -> Twc1 * Pw1 -> Twc2.inv * Pw1 -> Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
@@ -1934,12 +1935,13 @@ int Optimizer::SelectOneKF2Marginalization() {
 
 bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
 
-    Pose Twc2 = kf2->Twc_;
+    const Pose noise = ConvertRPYandPostion2Pose({0.01, 0.02, 0}, {0.01, 0.02, 0}, kDeg2Rad);
+    Pose Twc2 = kf2->Twc_ * noise;
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
-    //onlyPoseUpdate_ = true;
+    onlyPoseUpdate_ = true;
     OptimizeCurFrame(window_.back()->optFlw_, Twc2, kf2->id_);
-    //onlyPoseUpdate_ = false;
+    onlyPoseUpdate_ = false;
 
     Pose beforeTwc2 = kf2->Twc_;
     kf2->SetTwc(Twc2);

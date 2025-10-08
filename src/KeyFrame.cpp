@@ -625,7 +625,7 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
                 d /= config->depthFactor;
                 landmark_[i] = new Landmark(unKeypoints_[i], this, cam_,
                                             descriptor, kInitInvDepth);
-                landmark_[i]->trueDepth_ = 1.0 / d;
+                landmark_[i]->trueDepth_ = d;
                 if (config->useDepthImage) {
                     landmark_[i]->invDepthCov_ = 0.005;
                     landmark_[i]->obvTime_ = 1e3;

@@ -38,7 +38,11 @@ void Landmark::Update(const double delta_z) {
 }
 
 void Landmark::SetTriangulateResult(const double invZ) {
-    invZ_ = invZ;
+    if (trueDepth_ < 0.1) {
+        // 使用真值深度来验证BA优化有效性
+        return;
+    }
+    invZ_ = 1.0 / trueDepth_; // invZ;
     obvTime_ = 1;
     initialized_ = true;
 }
