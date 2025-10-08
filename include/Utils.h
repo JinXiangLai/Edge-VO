@@ -338,6 +338,8 @@ Eigen::Vector2i ParseKeypointSet(const std::string& s);
 bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
                                 Eigen::Vector2d& ep1);
 
+std::string GetTriangulatePointName(const Eigen::Vector2d& p);
+
 enum KeyboardEvent { Reset, StepByStep };
 
 class InteractionParam {

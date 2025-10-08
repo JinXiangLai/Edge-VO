@@ -110,6 +110,7 @@ Config::Config(const std::string& yamlFilePath) {
 
     matchNoise = f["matchNoise"].as<double>();
     useAvgDiff = f["useAvgDiff"].as<bool>();
+    maxProjectError = f["maxProjectError"].as<double>();
 }
 
 Config* config = nullptr;

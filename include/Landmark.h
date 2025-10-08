@@ -49,7 +49,7 @@ class Landmark {
     KeyFrame* host_;      // cnchor frame
     Eigen::Vector2d uv_;  // host帧下的像素坐标z
 
-    std::map<KeyFrame*, Eigen::Vector2d> target_;
+    std::unordered_map<KeyFrame*, Eigen::Vector2d> target_;
     std::shared_ptr<Camera> cam_;
 
     // keep FEJ
@@ -90,6 +90,9 @@ class Landmark {
     void BackUpStatus();
 
     void CopyStatus();
+
+    //void AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv);
+    //std::mutex mute_;
 
     // 利用重投影残差检验收敛逆深度的质量
     bool passReprojectCheck_ = false;

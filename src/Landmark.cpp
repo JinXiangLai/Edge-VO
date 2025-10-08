@@ -121,6 +121,11 @@ void Landmark::BackUpStatus() {
     invZ_ = invZback_;
 }
 
+//void Landmark::AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv) {
+//    lock_guard<mutex> lock(mute_);
+//    target_.insert({kf, obv});
+//}
+
 void Landmark::ResetFEJ() {
     J_Pc2_Twc2.clear();
     J_Pc2_Pw.clear();

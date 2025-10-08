@@ -1001,7 +1001,7 @@ bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
     const double cosAng = ray1.dot(ray2) / (ray1.norm() * ray2.norm());
     // 必须在3度到120度范围内
     const double ang = acos(cosAng) * kRad2Deg;
-    constexpr double kMinCrossAng = 2.0;
+    constexpr double kMinCrossAng = 1.0;
     constexpr double kMaxCrossAng = 120.0;
     if (ang < kMinCrossAng || ang > kMaxCrossAng) {
         cout << "triangulate ang: " << ang << "deg! Error!" << endl;
@@ -1175,6 +1175,10 @@ bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
         ep1 *= -1;
     }
     return true;
+}
+
+string GetTriangulatePointName(const Eigen::Vector2d& p) {
+    return fmt::format("{}_{}", int(p.x() + 0.5), int(p.y() + 0.5));
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,

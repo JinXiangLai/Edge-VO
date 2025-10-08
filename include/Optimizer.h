@@ -23,12 +23,12 @@ class Optimizer {
         int usefulNum = 0;
     };
 
-    bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2);
+    bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2, const int curFid);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        const cv::Mat& img);
+        const cv::Mat& img, const bool checkAbnormalLandmark=false);
 
     ResidualInfo CalculateJacobianAndCost(std::vector<Landmark*>& lk1s,
                                           const std::vector<Pose>& T12,
@@ -73,8 +73,7 @@ class Optimizer {
 
     // rho[0]经胡伯核的损失函数值，rho[1]胡伯核关于chi2的一阶导数
     // 注意：胡伯核函数只能处理标量
-    void HuberLoss(const double chi2, Eigen::Vector2d& rho,
-                     const int lvl = 0);
+    void HuberLoss(const double chi2, Eigen::Vector2d& rho, const int lvl = 0);
 
     int SelectOneKF2Marginalization();
 
@@ -98,6 +97,17 @@ class Optimizer {
 
     void RemoveOneKeyframe(const KeyFrame& curF);
 
+    void DrawTriangulateCase(const double estD1, const Landmark& lk1,
+                             const Eigen::Vector2i& matchKp2,
+                             const cv::Mat& debugImg2, const Pose& T12,
+                             const bool success = false);
+
+    void DrawProjectCase(const Landmark& lk1, const Eigen::Vector2d& matchKp2,
+                         const cv::Mat& debugImg2, const Pose& Twc2);
+
+    void WriteDebugTriangulateCase2Video(const int curFid);
+    cv::VideoWriter debugTriangulateWriter_;
+
    private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小
@@ -117,6 +127,8 @@ class Optimizer {
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
     Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法预知
     Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
+
+    std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
 };
 
 #endif

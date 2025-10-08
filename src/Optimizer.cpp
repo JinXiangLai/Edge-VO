@@ -41,14 +41,16 @@ Optimizer::~Optimizer() {
 Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img) {
+    const cv::Mat& img, const bool checkAbnormalLandmark) {
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
 
     ResidualInfo info;
+    string debugInfo("chi2 residuals: ");
+    int stepInfoOut = 30;
 
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
-
+    const double maxChi2 = config->maxProjectError * config->maxProjectError;
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark* lk1 = lk1s[j];
         if (lk1->noUsed_ || !lk1->initialized_) {
@@ -57,16 +59,26 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
         const bool inRange = InRange(img, px.cast<int>());
-        if (inRange) {
+        if (!checkAbnormalLandmark ||
+            (inRange && pc.z() > kMinSceneDepthInCamera)) {
             // 必须与计算Jacobian的残差计算方式一致
             // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
             // 而胡伯核函数的自变量是r^2
             double chi2 = (px - obvs[j]).squaredNorm();
+            if (chi2 > maxChi2) {
+                lk1->noUsed_ = true;
+            }
             Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
             HuberLoss(chi2, rho);
             info.cost += rho[0];
             ++info.usefulNum;
-        } else {
+            if (j % stepInfoOut == 0) {
+                debugInfo.append(fmt::format(
+                    "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
+                    "{:.0f}); ",
+                    chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+            }
+        } else if (checkAbnormalLandmark) {
             // 优化后，使得有些点投影到了图像外，这个时候，我们需要将其设置为 noUsed，
             // 并且，需要使用优化前的pose重新计算残差，
             // 优化后的pose产生的离群点总是存在滞后
@@ -79,7 +91,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 
     cout << fixed << "residual info.all.cost: " << info.cost
          << " useful num: " << info.usefulNum << "\n";
-
+    cout << fmt::format("debug residual info: {}\n", debugInfo);
     info.cost /= info.usefulNum;
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
@@ -255,7 +267,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
     H.setZero();
     g.resize(optVariableDim);
     g.setZero();
-    constexpr double noUpdatePoseNum = 1e20;  // 或者是无穷大？
+    constexpr double noUpdatePoseNum = 0.0;  // 或者是无穷大？
 
     /******** 投影过程 ********
     * K.inv * (u1, v1, 1) -> Pc1_norm * z1 -> Twc1 * Pw1 -> Twc2.inv * Pw1 -> Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
@@ -278,17 +290,17 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
 
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark& p = *lk1s[j];
-        if (p.noUsed_) {
+        if (p.noUsed_ || !p.initialized_) {
             continue;
         }
         const Eigen::Vector3d Pw1 = p.GetPw();
         const Eigen::Vector3d Pc2 = Tc2w * Pw1;
         const Eigen::Vector2d px2 = p.cam_->Project2PixelPlane(Pc2);
-        if (!InRange(p.host_->grayImg_, px2.cast<int>()) ||
-            Pc2.z() < kMinSceneDepthInCamera) {
-            p.noUsed_ = true;
-            continue;
-        }
+        //if (!InRange(p.host_->grayImg_, px2.cast<int>()) ||
+        //    Pc2.z() < kMinSceneDepthInCamera) {
+        //    p.noUsed_ = true;
+        //    continue;
+        //}
 
         const Eigen::Vector2d r = px2 - obvs[j];
         double chi2 = r.squaredNorm();
@@ -307,7 +319,6 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
             Eigen::Matrix<double, 3, 6>::Zero();
         // FEJ
-        // TODO: 使用不同的lvl层时，需要重置FEJ
         if (p.J_Pc2_T12_.empty()) {
             const Eigen::Vector3d dt = Pw1 - Twc2.t_wb_;
             // * Pc2 w.r.t R12
@@ -417,24 +428,39 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     const int pointSize = H.cols() - poseSize;
 
     const Eigen::MatrixXd& A = H.block(0, 0, poseSize, poseSize);
-    const Eigen::MatrixXd& B = H.block(0, poseSize, poseSize, pointSize);
-    const Eigen::MatrixXd& C = H.block(poseSize, 0, pointSize, poseSize);
     const Eigen::MatrixXd& D =
         H.block(poseSize, poseSize, pointSize, pointSize);
-    // cout << "B - C.T:\n" << B-C.transpose() <<endl;
-    Eigen::MatrixXd Dinv(D.rows(), D.cols());
+    Eigen::MatrixXd Dinv = Eigen::MatrixXd::Zero(D.rows(), D.cols());
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     for (int i = 0; i < pointSize; i += pointDim) {
         //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
-        Dinv.row(i)[i] = 1.0 / D.row(i)[i];
+        Dinv(i, i) = 1.0 / D(i, i);
     }
+    Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
+    if (A.isApproxToConstant(0)) {
+        // 仅更新point
+        deltaX.tail(pointSize) = Dinv * b.tail(pointSize);
+        //cout << "D:\n"
+        //     << D << endl
+        //     << "Dinv:\n"
+        //     << Dinv << endl
+        //     << "b.tail(pointSize): " << b.tail(pointSize).transpose() << endl;
+        //cout << setprecision(5)
+        //     << "only update deltaPoint: " << deltaX.tail(pointSize).transpose()
+        //     << endl;
+        return deltaX;
+    }
+    const Eigen::MatrixXd& B = H.block(0, poseSize, poseSize, pointSize);
+    const Eigen::MatrixXd& C = H.block(poseSize, 0, pointSize, poseSize);
+    // cout << "B - C.T:\n" << B-C.transpose() <<endl;
+
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     //const Eigen::MatrixXd E = -B * Dinv;
     // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
-    Eigen::MatrixXd E(B.rows(), Dinv.cols());
+    Eigen::MatrixXd E = Eigen::MatrixXd::Zero(B.rows(), Dinv.cols());
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
-            E.row(i)[j] = -B.row(i)[j] * Dinv.row(j)[j];
+            E(i, j) = -B(i, j) * Dinv(j, j);
     }
     chrono::steady_clock::time_point t1_1 = chrono::steady_clock::now();
 
@@ -448,33 +474,41 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     // 求pose增量
+    //cout << "A:\n"
+    //     << A << endl
+    //     << "B:\n"
+    //     << B << endl
+    //     << "C:\n"
+    //     << C << endl
+    //     << "D:\n"
+    //     << D << endl;
+    //cout << "Dinv:\n" << Dinv << endl << "E:\n" << E << endl;
     Eigen::MatrixXd newA = A + E * C;
+    //cout << "newA:\n" << newA << endl;
     // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
     //Eigen::VectorXd new_b = leftMatrix * b;
     // | I  E|
     // | 0  I| * b
     Eigen::VectorXd new_b = b;
-    new_b.middleRows(0, poseSize).noalias() =
-        b.middleRows(0, poseSize) + E * b.tail(b.rows() - poseSize);
+    new_b.head(poseSize) = b.head(poseSize) + E * b.tail(pointSize);
     Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-
+    //cout << "b: " << b.transpose() << endl
+    //     << "newb: " << new_b.transpose() << endl;
     // 求point增量
     // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
-    Eigen::VectorXd deltaPoint =
-        Dinv * (new_b.middleRows(poseSize, pointSize) - C * deltaPose);
+    Eigen::VectorXd deltaPoint = Dinv * (new_b.tail(pointSize) - C * deltaPose);
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     // cout << setprecision(5) << "deltaPoint: "<< deltaPoint.transpose() << endl;
-
-    Eigen::VectorXd deltaX(deltaPose.rows() + deltaPoint.rows());
-    deltaX.middleRows(0, poseSize) = deltaPose;
-    deltaX.middleRows(poseSize, pointSize) = deltaPoint;
+    deltaX.head(poseSize) = deltaPose;
+    deltaX.tail(pointSize) = deltaPoint;
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
 
     cout << setprecision(5) << "deltaPose: " << deltaPose.transpose() << endl;
+    cout << setprecision(5) << "deltaPoint: " << deltaPoint.transpose() << endl;
 
     cout << "calculate D.inv spend: "
          << to_string(chrono::duration<double>(t1 - t0).count()) << endl;
@@ -659,13 +693,14 @@ bool Optimizer::ExecuteWindowOptimize() {
 }
 
 bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
-                                 Pose& Twc2) {
+                                 Pose& Twc2, const int curFid) {
 
     // 构建优化问题所需观测
     vector<Landmark*> lk1s;
     vector<Eigen::Vector2d> obvs;
     lk1s.reserve(optFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
+    constexpr int kDebugNum = 2000;
     for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
         // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
         Landmark* lk = optFlw.trackLandmark_[i];
@@ -674,6 +709,12 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             lk1s.emplace_back(lk);
             const cv::Point2f& p = optFlw.prevPts_[i];
             obvs.emplace_back(p.x, p.y);
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+            //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
+#endif
+        }
+        if (lk1s.size() > kDebugNum) {
+            break;
         }
     }
 
@@ -685,6 +726,13 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             lk1s.emplace_back(lk);
             const cv::Point2f& p = optFlw.prevHistoryPts_[i];
             obvs.emplace_back(p.x, p.y);
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+            //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
+#endif
+        }
+
+        if (lk1s.size() > kDebugNum) {
+            break;
         }
     }
 
@@ -696,12 +744,14 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     }
 
     cout << "use " << lk1s.size() << " landmarks to optimize!\n";
-
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    //WriteDebugTriangulateCase2Video(curFid);
+#endif
     bool status = false;
     double initLambda = lambda_;
     lambda_ = initLambda;
     ResidualInfo lastCost =
-        CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_);
+        CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_, true);
     ResidualInfo firstCost = lastCost;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
@@ -709,6 +759,9 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         lastCost = CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
+        if (H_.diagonal().head(6).isApproxToConstant(0)) {
+            _lambda.head(6).setConstant(0);
+        }
 
         // debug, 返回J, 判断H, g计算的正确性
         // Eigen::MatrixXd _H = J.transpose() * J;
@@ -721,10 +774,10 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         // H = _H;
         // g = _g;
 
-        //cout << setprecision(5) << "H_:\n " << H_ << endl << endl;
-        //cout << setprecision(5) << "g_:\n " << g_ << endl << endl;
-
         H_.diagonal() += _lambda;
+        //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose() << endl
+        //     << endl;
+        //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl << endl;
         Eigen::VectorXd delta_x;
         // H_ /= lastCost.usefulNum;
         // g_ /= lastCost.usefulNum; 不需要除以吧
@@ -754,6 +807,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         if (!onlyPoseUpdate_) {
             updateId += Twc2.Size();
             for (size_t i = 0; i < lk1s.size(); ++i) {
+                // TODO：需要考虑lk1s[i]被设置为不使用的情况，
+                // 由于有匹配特征点，因此这里暂不设置为不使用
                 lk1s[i]->Update(
                     delta_x.middleRows(updateId, lk1s[0]->Size())[0]);
                 ++updateId;
@@ -835,11 +890,9 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
     // 直接在新KF中提取关键点，并放入optLkw_结构中，同时保留上一KF的跟踪结果仍进行跟踪
     KeyFrame* lastKf = window_.empty() ? nullptr : window_.back();
     kf->InitializeLandmark(lastKf);
-
+    int historyTriSucceedNum = 0;
+    int prevTriSucceedNum = 0;
     if (!window_.empty()) {
-#if defined(WRITE_MATCH_PAIR_IMAGE)
-        window_.back()->WriteDebugTriangulateCase2Video();
-#endif
         unordered_map<KeyFrame*, Pose> kf2T12;
         KeyFrame::OpticalFlowStruct optLkw = window_.back()->optFlw_;
         for (size_t i = 0; i < optLkw.trackHistoryLandmark_.size(); ++i) {
@@ -854,14 +907,22 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 if (!kf2T12.count(lk->host_)) {
                     kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
                 }
-                Pose T12 = kf2T12.at(lk->host_);
+                const Pose& T12 = kf2T12.at(lk->host_);
                 if (config->useDepthImage ||
                     !GetHostFrameObservationInvDepth(
                         lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
                     continue;
                 }
-
+                //const double var = CalculateVarianceByOffsetPx2(
+                //    lk->uv_, curObv, Eigen::Vector2d(2, 2), cam_->Kinv_[0], T12,
+                //    1.0);
+                //lk->ObvUpdate(idepth1, var);
                 lk->SetTriangulateResult(idepth1);
+                ++historyTriSucceedNum;
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+//DrawTriangulateCase(idepth1, *lk, curObv.cast<int>(),
+//                    kf->debugGrayImg_, T12);
+#endif
             }
         }
 
@@ -871,32 +932,48 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             const Eigen::Vector2d curObv(p.x, p.y);
             lk->target_.insert({kf, curObv});
             // 仅在这里三角化一次
-            double idepth1 = 0;
-            if (!kf2T12.count(lk->host_)) {
-                kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
-            }
-            Pose T12 = kf2T12.at(lk->host_);
+            if (!lk->initialized_) {
+                double idepth1 = 0;
+                if (!kf2T12.count(lk->host_)) {
+                    kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
+                }
+                const Pose& T12 = kf2T12.at(lk->host_);
 
-            if (config->useDepthImage ||
-                !GetHostFrameObservationInvDepth(
-                    lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
-                continue;
+                if (config->useDepthImage ||
+                    !GetHostFrameObservationInvDepth(
+                        lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
+                    continue;
+                }
+                // TODO：这里如何三角化两帧，因为事实上optLkw仅记录了之前Landmark，
+                // 难道只能使用上上关键帧来进行跟踪？或者直接在这里原地创建kf2的关键点！！！
+                // KF2新创建的landmark在不是历史帧的观测时，事实上也无法三角化，而能够三角化的只需要由历史帧来跟踪即可
+                // 因此创建新关键帧的条件应该是跟踪到的历史Landmark数量？？？
+                // 事实上，我们只需要优化当前帧的Twc即可利用历史KF的“已初始化”地图点进行BA优化，
+                // 因此就不需要在当前关键帧kf2保留idepth2
+
+                //const double var = CalculateVarianceByOffsetPx2(
+                //    lk->uv_, curObv, Eigen::Vector2d(2, 2), cam_->Kinv_[0], T12,
+                //    1.0);
+                //lk->ObvUpdate(idepth1, var);
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+                //DrawTriangulateCase(idepth1, *lk, curObv.cast<int>(),
+                //                    kf->debugGrayImg_, T12);
+#endif
+                lk->SetTriangulateResult(idepth1);
+                ++prevTriSucceedNum;
             }
-            // TODO：这里如何三角化两帧，因为事实上optLkw仅记录了之前Landmark，
-            // 难道只能使用上上关键帧来进行跟踪？或者直接在这里原地创建kf2的关键点！！！
-            // KF2新创建的landmark在不是历史帧的观测时，事实上也无法三角化，而能够三角化的只需要由历史帧来跟踪即可
-            // 因此创建新关键帧的条件应该是跟踪到的历史Landmark数量？？？
-            // 事实上，我们只需要优化当前帧的Twc即可利用历史KF的“已初始化”地图点进行BA优化，
-            // 因此就不需要在当前关键帧kf2保留idepth2
-            lk->SetTriangulateResult(idepth1);
         }
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+        WriteDebugTriangulateCase2Video(kf->id_);
+#endif
 
         // 这里的lastKf肯定不为nullptr，但是存在着三角化数量不够的情况
-        for (Landmark* lk : lastKf->landmark_) {
-            if (lk != nullptr && lk->ManySupport() && lk->Converge()) {
-                interaction->allMapPoints.push_back(lk->GetPw());
-            }
-        }
+        //for (Landmark* lk : lastKf->landmark_) {
+        //    if (lk != nullptr && lk->ManySupport() && lk->Converge()) {
+        //        interaction->allMapPoints.push_back(lk->GetPw());
+        //    }
+        //}
         // RemoveOneKeyframe(*kf); 在局部BA优化过程中移除
         // 同时需要把所有由该关键帧首次观测到的地图点转移所有权
         // 并且删除其余地图点在该帧上的观测
@@ -908,6 +985,50 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
     // TODO 2：进行三角化工作
 
     window_.push_back(kf);
+    cout << "add kf id: " << kf->id_ << "\n";
+    cout << fmt::format(
+        "Triangulate by KF_{} report: trackHistoryLandmark size: {}, "
+        "historyTriSucceedNum: {}, "
+        "prev trackLandmark size: {}, prevTriSucceedNum: {}\n",
+        kf->id_, window_.back()->optFlw_.trackHistoryLandmark_.size(),
+        historyTriSucceedNum, window_.back()->optFlw_.trackLandmark_.size(),
+        prevTriSucceedNum);
+}
+
+void Optimizer::WriteDebugTriangulateCase2Video(const int curFid) {
+    cout << "triPointMapDebugImage_ size: " << triPointMapDebugImage_.size()
+         << "\n";
+    if (triPointMapDebugImage_.empty()) {
+        return;
+    }
+
+    // 初始化边缘匹配的debug视频写入器
+    string videoPath = config->debugMessageSaveFolder;
+
+    const string curVideoPath =
+        fmt::format("{}/kf_id_{}_f_id_{}_triangulate.avi", videoPath,
+                    window_.back()->id_, curFid);
+    int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+    int fps = 30;
+    debugTriangulateWriter_.open(
+        curVideoPath, fourcc, fps,
+        triPointMapDebugImage_.begin()->second[0].size(), true);
+    if (!debugTriangulateWriter_.isOpened()) {
+        cerr << "Open debug video path: " << curVideoPath << " failed" << endl;
+        //exit(-1);
+        return;
+    }
+    cout << "Open debug video path: " << curVideoPath << endl;
+    for (auto& nameMapImgs : triPointMapDebugImage_) {
+        const string pointName = nameMapImgs.first;
+        for (cv::Mat& img : nameMapImgs.second) {
+            debugTriangulateWriter_.write(img);
+            img.release();
+            cout << "write tri img name: " << pointName << "\n";
+        }
+    }
+    debugTriangulateWriter_.release();
+    triPointMapDebugImage_.clear();
 }
 
 void Optimizer::RemoveOldestKeyFrame() {
@@ -1717,8 +1838,8 @@ bool Optimizer::SlidingWindowOptimize() {
 void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho,
                           const int lvl) {
 
-    const double scale = 1.0 / pow(2, lvl);
-    const double huberDelta = config->huberDelta * scale;
+    //const double scale = 1.0 / pow(2, lvl);
+    const double huberDelta = config->huberDelta;  //  * scale;
 
     const double huberDelta2 = huberDelta * huberDelta;
     if (chi2 > huberDelta2) {
@@ -1756,7 +1877,7 @@ void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho,
 
         // 经过查看 g2o源码，发现我原来的理解才是正确的，胡伯核函数只能是关于标量的实现
         // 因为这里胡伯核函数值关于状态量的关系简单，不需要像投影函数那样再线性化
-        rho[0] = 2 * sqrt(chi2) * huberDelta - huberDelta2;
+        rho[0] = sqrt(chi2) * huberDelta - 0.5 * huberDelta2;
         rho[1] = huberDelta / sqrt(chi2);
     } else {
         // r = 0.5*a^2 // 这里描述的是最终的残差形式
@@ -1817,7 +1938,7 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
     //onlyPoseUpdate_ = true;
-    OptimizeCurFrame(window_.back()->optFlw_, Twc2);
+    OptimizeCurFrame(window_.back()->optFlw_, Twc2, kf2->id_);
     //onlyPoseUpdate_ = false;
 
     Pose beforeTwc2 = kf2->Twc_;
@@ -1880,6 +2001,124 @@ void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
 
     window_.erase(window_.begin());
     cout << "Remove the first keyframe from window!";
+}
+
+void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
+                                    const Eigen::Vector2i& matchKp2,
+                                    const cv::Mat& debugImg2, const Pose& T12,
+                                    const bool success) {
+    const KeyFrame* host = lk1.host_;
+    const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
+    cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+    cv::Mat im1, im2;
+    cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
+    cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
+    im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+    im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
+
+    int start_text_row = 20;
+    int step_text_row = 20;
+    cv::putText(showImg, T12.QwbString(), cv::Point(10, (start_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+    cv::putText(showImg, T12.PwbString(),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+    const string caseName = success ? "Suc tri" : "Fai tri";
+    cv::putText(showImg,
+                fmt::format("{}_kf_id:{}", caseName, to_string(lk1.host_->id_)),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+
+    const cv::Vec3b& matchColor = kColor.at("yellow");
+
+    int radius = 3;
+
+    cv::Vec3b nearColor(0, 255, 0);
+    cv::Vec3b farColor(0, 0, 255);
+    const cv::Point pointDiff(debugGrayImg_.cols, 0);
+    const Eigen::Vector2i& kp1 = lk1.uv_.cast<int>();
+    cv::Point p1(kp1.x(), kp1.y());
+    cv::Point p2(matchKp2.x(), matchKp2.y());
+    constexpr double kTextRatio = 0.5;
+    const cv::Point textDiff(5, 0);
+    // 写必要信息
+    cv::putText(showImg,
+                fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1.x, p1.y,
+                            1.0 / estD1, lk1.trueDepth_, lk1.obvTime_ + 1),
+                p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
+                1);
+
+    // 画极线起终点，起点绿色，终点红色，连线蓝色
+    cv::line(showImg, p1, p2 + pointDiff, matchColor, 1);
+
+    // 画极线以查看匹配是否准确
+    cv::circle(showImg, p1, radius, matchColor, 1);
+    cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
+
+    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+    triPointMapDebugImage_[debugImgName].emplace_back(showImg);
+}
+
+void Optimizer::DrawProjectCase(const Landmark& lk1,
+                                const Eigen::Vector2d& matchKp2,
+                                const cv::Mat& debugImg2, const Pose& Twc2) {
+    const KeyFrame* host = lk1.host_;
+    const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
+    cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                    cv::Scalar{0, 0, 0});
+    cv::Mat im1, im2;
+    cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
+    cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
+    im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+    im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
+
+    int start_text_row = 20;
+    int step_text_row = 20;
+    const Pose T12 = host->Tcw_ * Twc2;
+    cv::putText(showImg,
+                fmt::format("kf id: {}, {}", host->id_, T12.PwbString()),
+                cv::Point(10, (start_text_row)), cv::FONT_ITALIC, 0.8,
+                kColor.at("red"), 1);
+    cv::putText(showImg, T12.QwbString(),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+
+    const cv::Point pointDiff(debugGrayImg_.cols, 0);
+    const cv::Point textDiff(5, 0);
+    const Eigen::Vector3d pc2 = Twc2.Inverse() * lk1.GetPw();
+    const Eigen::Vector2d px = cam_->Project2PixelPlane(pc2);
+    const double residual = (px - matchKp2).norm();
+    cv::Point pxi(int(px.x()), int(px.y()));
+    cv::Point kp2i(int(matchKp2.x()), int(matchKp2.y()));
+    cv::putText(showImg, fmt::format("r: {:.1f}", residual),
+                pointDiff + pxi + textDiff, cv::FONT_ITALIC, 0.8,
+                kColor.at("red"), 1);
+
+    const cv::Vec3b& matchColor = kColor.at("yellow");
+
+    int radius = 3;
+
+    const Eigen::Vector2d& kp1 = lk1.uv_;
+    cv::Point p1i(int(kp1.x()), int(kp1.y()));
+    constexpr double kTextRatio = 0.5;
+    // 写必要信息
+    cv::putText(showImg,
+                fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1i.x, p1i.y,
+                            1.0 / lk1.invZ_, lk1.trueDepth_, lk1.obvTime_ + 1),
+                p1i + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
+                1);
+
+    // 画极线起终点，起点绿色，终点红色，连线蓝色
+    cv::line(showImg, p1i, kp2i + pointDiff, matchColor, 1);
+
+    // 画极线以查看匹配是否准确
+    cv::circle(showImg, p1i, radius, matchColor, 1);
+    cv::circle(showImg, kp2i + pointDiff, radius, matchColor, 1);
+    cv::circle(showImg, pxi + pointDiff, radius, kColor.at("red"), 1);
+
+    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+    triPointMapDebugImage_[debugImgName].emplace_back(showImg);
 }
 
 void Optimizer::ShowLocalMap() {

@@ -34,6 +34,8 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
       Tcw_(Twc.Inverse()),
       priorTwc_(Twc),
       level_(level) {
+    GenerateUndistordMap();
+    cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
     debugGrayImg_ = grayImg_.clone();
 }
 
@@ -125,6 +127,7 @@ KeyFrame::~KeyFrame() {
 void KeyFrame::SetOpticalFlowStructCurFrame() {
     optFlw_.prevImg_ = grayImg_;
     optFlw_.prevPts_.reserve(landmark_.size());
+    optFlw_.trackLandmark_.reserve(landmark_.size());
     for (const auto& p : landmark_) {
         // 添加landmark对跟踪成功点的相互观测
         optFlw_.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
@@ -159,7 +162,6 @@ void KeyFrame::GenerateUndistordMap() {
 
         cam_->UpdateIntrinsicParam(newFx, newFx);
     }
-    cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
 }
 
 void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
@@ -200,7 +202,6 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
         return true;
     };
 
-    GenerateUndistordMap();
     // 创建FAST检测器
     cv::Ptr<cv::FastFeatureDetector> detector = cv::FastFeatureDetector::create(
         config->fastTh, true, cv::FastFeatureDetector::TYPE_9_16);
@@ -361,21 +362,21 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id,
     }
     int start_text_row = 20;
     int step_text_row = 10;
-    cv::putText(
-        videoBestMatchDebugImg_,
-        "match point keyframe2 id: " + to_string(kf2Id) + " " + debugVideoName,
-        cv::Point(10, (start_text_row += step_text_row)), cv::FONT_ITALIC, 1.0,
-        kColor.at("red"), 1);
+    cv::putText(videoBestMatchDebugImg_,
+                fmt::format("kf id: {} match point curF id: {}_debugVideoName",
+                            id_, kf2Id, debugVideoName),
+                cv::Point(10, (start_text_row += step_text_row)),
+                cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
     if (!videoEpipolarMatchDebugImg_.empty()) {
         cv::putText(videoEpipolarMatchDebugImg_,
-                    "match ep keyframe2 id: " + to_string(kf2Id),
+                    "match ep curF id: " + to_string(kf2Id),
                     cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
                     kColor.at("red"), 1);
     }
 
     if (!videoEpipolarFailMatchDebugImg_.empty()) {
         cv::putText(videoEpipolarFailMatchDebugImg_,
-                    "fail ep keyframe2 id: " + to_string(kf2Id),
+                    "fail ep curF id: " + to_string(kf2Id),
                     cv::Point(10, start_text_row), cv::FONT_ITALIC, 1.0,
                     kColor.at("red"), 1);
     }
