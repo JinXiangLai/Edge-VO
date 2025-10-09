@@ -184,12 +184,12 @@ int main(int argc, char** argv) {
 
         // step1: 优化当前帧pose
         Pose Ttemp = GetPredictPose(lastF, lastLastF);
-        Ttemp.q_wb_ = curF.Twc_.q_wb_;
         curF.SetTwc(Ttemp, true);
         optimizer.SetInitLambda(1.0);
         bool needKFbySight = false;
-        optimizer.TrackLocalMap(
+        const bool trackOk = optimizer.TrackLocalMap(
             &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+        needKFbySight = needKFbySight && trackOk;
         //needKFbySight = false; // 强制不使用
 
         // TODO 1：利用跟踪结果更新当前帧pose，做当前帧和关键帧之间的BA优化

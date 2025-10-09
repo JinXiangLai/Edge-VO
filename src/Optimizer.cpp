@@ -174,19 +174,12 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         // Pc2 w.r.t T12 [3x6]
         Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
             Eigen::Matrix<double, 3, 6>::Zero();
-        // FEJ
-        if (p.J_Pc2_T12_.empty()) {
-            const Eigen::Vector3d dt = Pw1 - Twc2.t_wb_;
-            // * Pc2 w.r.t R12
-            J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(Tc2w.q_wb_ * dt);
-            // * Pc2 w.r.t t12
-            J_Pc2_Twc2.block(0, 3, 3, 3) = -Tc2w.q_wb_.toRotationMatrix();
-            // 不使用FEJ！！！
-            //if (p.J_Pc2_T12_.empty())
-            //    p.J_Pc2_T12_.push_back(J_Pc2_T12);  // debug
-        } else {
-            J_Pc2_Twc2 = p.J_Pc2_T12_[0];
-        }
+
+        const Eigen::Vector3d dt = Pw1 - Twc2.t_wb_;
+        // * Pc2 w.r.t R12
+        J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(Tc2w.q_wb_ * dt);
+        // * Pc2 w.r.t t12
+        J_Pc2_Twc2.block(0, 3, 3, 3) = -Tc2w.q_wb_.toRotationMatrix();
 
         Eigen::Matrix<double, 3, 3> J_Pc2_Pw1;
         Eigen::Matrix<double, 3, 3> J_Pw1_Pc1;
@@ -538,7 +531,8 @@ bool Optimizer::ExecuteWindowOptimize() {
     chrono::steady_clock::time_point T2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(T2 - T1).count();
     if (!status) {
-        cerr << "window BA Reach max iteration time or lambda too large" << endl;
+        cerr << "window BA Reach max iteration time or lambda too large"
+             << endl;
     }
     cout << "First cost | final cost | decrease ratio in window: "
          << firstCost.cost << " | " << lastCost.cost << " | "
@@ -639,9 +633,9 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 
         // debug, 返回J, 判断H, g计算的正确性
         H_.diagonal() += _lambda;
-        //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose() << endl
+        //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose()
         //     << endl;
-        //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl << endl;
+        //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl;
         Eigen::VectorXd delta_x;
         if (!onlyPoseUpdate_) {
             delta_x = SchurCompleteSolve(H_, g_, 1, lastCost.usefulLandmarkNum,
@@ -710,7 +704,13 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         if (lambda_ != 0) {
             // LM 方法
             if (lastCost.cost <= newCost.cost) {
-                lambda_ *= 1.8;
+                const double costDiff = newCost.cost - lastCost.cost;
+                if (costDiff < 1.0) {
+                    lambda_ *= 1.1;
+                } else {
+                    lambda_ *= 1.8;
+                }
+
                 for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
                     if (!lk1s[i]->noUsed_) {
                         lk1s[i]->BackUpStatus();
@@ -1832,15 +1832,12 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
 
 bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
 
-    //const Pose noise =
-    //    ConvertRPYandPostion2Pose({0.01, 0.02, 0}, {0.01, 0.02, 0}, kDeg2Rad);
-    //Pose Twc2 = kf2->Twc_ * noise;
     Pose Twc2 = kf2->Twc_;
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
-    onlyPoseUpdate_ = true;
     int totalPointNum = 0;
     int usefulPointNum = 0;
+    onlyPoseUpdate_ = true;
     const bool optSuccess = OptimizeCurFrame(
         window_.back()->optFlw_, Twc2, kf2->id_, totalPointNum, usefulPointNum);
     onlyPoseUpdate_ = false;

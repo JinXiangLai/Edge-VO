@@ -34,7 +34,7 @@ void Pose::Update(const Eigen::Vector3d& delta_q,
                   const Eigen::Vector3d& delta_t) {
     // const Eigen::Matrix3d deltaR = Eigen::AngleAxisd(delta_q.norm(), delta_q.normalized()).toRotationMatrix();
     // q_wb_ *= Eigen::Quaterniond(deltaR);
-    q_wb_ *= Exp<double>(delta_q);  // Sophus库标准更新法
+    q_wb_ = q_wb_ * Exp<double>(delta_q);  // Sophus库标准更新法
     t_wb_ += delta_t;
 }
 
