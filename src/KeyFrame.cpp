@@ -23,6 +23,7 @@ cv::VideoWriter KeyFrame::debugTriangulateWriter;
 cv::Mat KeyFrame::map1;
 cv::Mat KeyFrame::map2;
 Pose KeyFrame::Tc0w;
+KeyFrame::OpticalFlowStruct KeyFrame::optFlw;
 
 class Landmark;
 
@@ -98,8 +99,6 @@ void KeyFrame::operator=(const KeyFrame& f) {
         // 因此可能产生意外情况
         landmark_.back()->host_ = this;
     }
-    //optFlw_ = f.optFlw_; // 不能直接这么设
-    SetOpticalFlowStructCurFrame();
 #else
     ReleaseMat();
     // 这样会导致cv::Mat等堆内存无法释放
@@ -112,7 +111,7 @@ void KeyFrame::operator=(const KeyFrame& f) {
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
     for (Landmark* lk : landmark_) {
-        if (lk != nullptr) {
+        if (lk != nullptr && lk->canBedelete_) {
             delete lk;
             lk = nullptr;
         }
@@ -126,14 +125,16 @@ KeyFrame::~KeyFrame() {
 }
 
 void KeyFrame::SetOpticalFlowStructCurFrame() {
-    optFlw_.prevImg_ = grayImg_;
-    optFlw_.prevPts_.reserve(landmark_.size());
-    optFlw_.trackLandmark_.reserve(landmark_.size());
+    optFlw.prevImg_ = grayImg_;
+    optFlw.prevPts_.reserve(landmark_.size());
+    optFlw.trackLandmark_.reserve(landmark_.size());
     for (const auto& p : landmark_) {
         // 添加landmark对跟踪成功点的相互观测
-        optFlw_.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
-        optFlw_.trackLandmark_.push_back(p);
+        optFlw.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
+        optFlw.trackLandmark_.push_back(p);
     }
+    cout << fmt::format("kf id: {}, SetOpticalFlowStructCurFrame num: {}\n",
+                        id_, optFlw.trackLandmark_.size());
 }
 
 void KeyFrame::GenerateUndistordMap() {
@@ -258,38 +259,35 @@ void KeyFrame::OpticalFlowTrackExcute(const cv::Mat& prevImg,
 
 void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
 
-    if (optFlw_.prevPts_.empty()) {
+    if (optFlw.prevPts_.empty()) {
         cout << "here optFlw_.prevPts_ should not be empty!!!";
         exit(-1);
     }
 
     // 上一关键帧对当前帧的跟踪结果
-    OpticalFlowTrackExcute(optFlw_.prevImg_, f2.grayImg_, optFlw_.prevPts_,
-                           optFlw_.trackLandmark_);
+    OpticalFlowTrackExcute(optFlw.prevImg_, f2.grayImg_, optFlw.prevPts_,
+                           optFlw.trackLandmark_);
     WriteDebugImage2VideoEachFrame(f2.id_, "lastKF_track_result.avi");
 
-    // 历史关键帧对当前帧的跟踪结果
-    cout << "optFlw_.prevHistoryPts_.size: " << optFlw_.prevHistoryPts_.size()
-         << endl;
-    if (!optFlw_.prevHistoryPts_.empty()) {
-        OpticalFlowTrackExcute(optFlw_.prevImg_, f2.grayImg_,
-                               optFlw_.prevHistoryPts_,
-                               optFlw_.trackHistoryLandmark_);
+    if (!optFlw.prevHistoryPts_.empty()) {
+        OpticalFlowTrackExcute(optFlw.prevImg_, f2.grayImg_,
+                               optFlw.prevHistoryPts_,
+                               optFlw.trackHistoryLandmark_);
         WriteDebugImage2VideoEachFrame(f2.id_, "historyKF_track_result.avi");
     }
 
-    optFlw_.prevImg_ = f2.grayImg_;
+    optFlw.prevImg_ = f2.grayImg_;
     // 跟踪成功后，重新赋值
-    cout << "optical flow tracked point num lastKf: "
-         << optFlw_.trackLandmark_.size() << endl;
-    cout << "optical flow tracked point num history Kf: "
-         << optFlw_.trackHistoryLandmark_.size() << endl;
+    cout << fmt::format(
+        "optical flow tracked info: trackLandmark_ num: {}, "
+        "trackHistoryLandmark_ num: {}\n",
+        optFlw.trackLandmark_.size(), optFlw.trackHistoryLandmark_.size());
 }
 
 double KeyFrame::TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum) {
     OpticalFlowTrackLandmark(kf2);
-    findMatchNum = optFlw_.GetTrackFeatureNum();
-    return optFlw_.GetTrackFeatureRatio();
+    findMatchNum = optFlw.GetTrackFeatureNum();
+    return optFlw.GetTrackFeatureRatio();
 }
 
 void KeyFrame::CopyStatus() {
@@ -327,7 +325,7 @@ void KeyFrame::DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,
                     cv::Scalar{0, 0, 0});
         cv::Mat im1, im2;
         if (drawOpticalFlow) {
-            cvtColor(optFlw_.prevImg_, im1, cv::COLOR_GRAY2BGR);
+            cvtColor(optFlw.prevImg_, im1, cv::COLOR_GRAY2BGR);
         } else {
             cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
         }
@@ -591,9 +589,9 @@ void KeyFrame::DrawTriangulateCase(
 
 size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
     // TODO：需要考虑由三角化前、后帧生成地图点而创建的landmark？
+    const OpticalFlowStruct lastKFoptFlw =
+        lastKf == nullptr ? OpticalFlowStruct() : optFlw;
     if (landmark_.empty()) {
-        const OpticalFlowStruct& lastKFoptFlw =
-            lastKf == nullptr ? OpticalFlowStruct() : lastKf->optFlw_;
         ExtractFastPoints(lastKFoptFlw);
         // initialKF会有该种情况
         landmark_.resize(unKeypoints_.size(), nullptr);
@@ -644,25 +642,25 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
     //此外还需把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
     if (lastKf != nullptr) {
         // 添加上一关键帧新提取的关键点
-        for (size_t i = 0; i < lastKf->optFlw_.prevPts_.size(); ++i) {
+        for (size_t i = 0; i < lastKFoptFlw.prevPts_.size(); ++i) {
 
-            optFlw_.prevHistoryPts_.emplace_back(lastKf->optFlw_.prevPts_[i]);
-            optFlw_.trackHistoryLandmark_.emplace_back(
-                lastKf->optFlw_.trackLandmark_[i]);
+            optFlw.prevHistoryPts_.emplace_back(lastKFoptFlw.prevPts_[i]);
+            optFlw.trackHistoryLandmark_.emplace_back(
+                lastKFoptFlw.trackLandmark_[i]);
         }
 
-        for (size_t i = 0; i < lastKf->optFlw_.prevHistoryPts_.size(); ++i) {
+        for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
             // 添加历史关键帧跟踪上的关键点
-            optFlw_.prevHistoryPts_.emplace_back(
-                lastKf->optFlw_.prevHistoryPts_[i]);
-            optFlw_.trackHistoryLandmark_.emplace_back(
-                lastKf->optFlw_.trackHistoryLandmark_[i]);
+            optFlw.prevHistoryPts_.emplace_back(
+                lastKFoptFlw.prevHistoryPts_[i]);
+            optFlw.trackHistoryLandmark_.emplace_back(
+                lastKFoptFlw.trackHistoryLandmark_[i]);
         }
     }
 
-    optFlw_.SetTotalFeatureCreated();
+    optFlw.SetTotalFeatureCreated();
 
-    return optFlw_
+    return optFlw
         .GetTrackFeatureNum();  // 历史关键帧和当前关键帧在当前灰度图上提取到的关键点数量
 }
 
@@ -673,7 +671,7 @@ void KeyFrame::Update(const Eigen::Vector3d& delta_q,
 }
 
 void KeyFrame::SetTwc(const Pose& Twc, const bool printDiff) {
-    if(printDiff && Tc0w.t_wb_.isApproxToConstant(0)) {
+    if (printDiff && Tc0w.t_wb_.isApproxToConstant(0)) {
         // 设置运行时世界系到数据集世界系的变换
         Tc0w = priorTwc_.Inverse();
     }

@@ -91,6 +91,8 @@ class Landmark {
 
     void CopyStatus();
 
+    void SetCanDelete() {canBedelete_ = true;}
+
     //void AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv);
     //std::mutex mute_;
 
@@ -101,6 +103,8 @@ class Landmark {
     void AddContinousCheckFailNum() { ++continousFailCheckNum_; }
     int continousPassCheckNum_ = 0;
     void AddContinousCheckPassNum() { ++continousPassCheckNum_; }
+
+    bool canBedelete_ = false;
 };
 
 #endif

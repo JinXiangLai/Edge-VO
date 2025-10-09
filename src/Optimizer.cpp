@@ -46,7 +46,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
-    int stepInfoOut = 30;
+    constexpr int kStepInfoOut = 300000;
 
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
@@ -74,7 +74,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
             info.cost += rho[0];
             ++info.totalConstraintNum;
             ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
-            if (j % stepInfoOut == 0) {
+            if (j % kStepInfoOut == 0) {
                 debugInfo.append(fmt::format(
                     "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
                     "{:.0f}); ",
@@ -752,19 +752,21 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
     // TODO: 上一帧需要添加对当前KF的观测，此外，
     // 如果上一帧的landmark继续被下一帧看到，应该也要实现持续跟踪的效果
     // 考虑是否需要转移landmark所有权？
-    // 直接在新KF中提取关键点，并放入optLkw_结构中，同时保留上一KF的跟踪结果仍进行跟踪
+    // 直接在新KF中提取关键点，并放入optFlw结构中，同时保留上一KF的跟踪结果仍进行跟踪
     KeyFrame* lastKf = window_.empty() ? nullptr : window_.back();
-    kf->InitializeLandmark(lastKf);
+    const int totalTrackLandmarkNum = kf->InitializeLandmark(lastKf);
+    cout << fmt::format("kf id: {}, optical flow total feature num: {}\n",
+                        kf->id_, totalTrackLandmarkNum);
     int historyTriSucceedNum = 0;
     int prevTriSucceedNum = 0;
 
+    KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
     if (!window_.empty()) {
         unordered_map<KeyFrame*, Pose> kf2T12;
-        KeyFrame::OpticalFlowStruct optLkw = window_.back()->optFlw_;
-        for (size_t i = 0; i < optLkw.trackHistoryLandmark_.size(); ++i) {
-            Landmark* lk = optLkw.trackHistoryLandmark_[i];
+        for (size_t i = 0; i < optFlw.trackHistoryLandmark_.size(); ++i) {
+            Landmark* lk = optFlw.trackHistoryLandmark_[i];
             // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
-            const cv::Point2f& p = optLkw.prevHistoryPts_[i];  // curFrameObv
+            const cv::Point2f& p = optFlw.prevHistoryPts_[i];  // curFrameObv
             const Eigen::Vector2d curObv(p.x, p.y);
             lk->target_.insert({kf, curObv});
             if (!lk->initialized_) {
@@ -788,9 +790,9 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             }
         }
 
-        for (size_t i = 0; i < optLkw.prevPts_.size(); ++i) {
-            Landmark* lk = optLkw.trackLandmark_[i];
-            const cv::Point2f& p = optLkw.prevPts_[i];  // curFrameObv
+        for (size_t i = 0; i < optFlw.prevPts_.size(); ++i) {
+            Landmark* lk = optFlw.trackLandmark_[i];
+            const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
             const Eigen::Vector2d curObv(p.x, p.y);
             lk->target_.insert({kf, curObv});
             // 仅在这里三角化一次
@@ -854,9 +856,8 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         "Triangulate by KF_{} report: trackHistoryLandmark size: {}, "
         "historyTriSucceedNum: {}, "
         "prev trackLandmark size: {}, prevTriSucceedNum: {}\n",
-        kf->id_, window_.back()->optFlw_.trackHistoryLandmark_.size(),
-        historyTriSucceedNum, window_.back()->optFlw_.trackLandmark_.size(),
-        prevTriSucceedNum);
+        kf->id_, optFlw.trackHistoryLandmark_.size(), historyTriSucceedNum,
+        optFlw.trackLandmark_.size(), prevTriSucceedNum);
 }
 
 void Optimizer::WriteDebugTriangulateCase2Video(const int curFid) {
@@ -899,35 +900,35 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     if (margKFid < 0) {
         return;
     }
-    cout << "window size: " << window_.size() << " begin remove oldest" << endl;
+
     KeyFrame* oldest = window_[0];
+    cout << fmt::format("window size: {}, begin remove kf id: {}\n",
+                        window_.size(), oldest->id_);
     // 在选择边缘化帧时已经把需要移除的帧移动到了开头
     window_.erase(window_.begin());
-    cout << "window[0]: " << window_[0] << endl;
-
-    // 释放KF，其对应的landmark已经释放
-    cout << "[WARNING] kf: " << oldest << " Set out of range flag" << endl;
-    // delete oldest; // 不能直接释放，因为其余指向该位置的指针并不会变成nullptr
-    oldest->SetOutOfRange();
-    historicalKF_.push_back(oldest);  // TODO: 排查内存泄漏，关闭
-    cout << "historicalKF_.size: " << historicalKF_.size() << endl;
 
     // 遍历滑窗内的每一个帧，若其有对最老帧的地图点观测，就转移地图点所有权
     // TODO：应该转移到相邻的下一帧才行，距离过远会删除很多有多个观测的帧
-    KeyFrame* newestKF = window_[margKFid + 1];
+    KeyFrame* nextKF = window_[margKFid + 1];
     int transformLandmarkNum = 0;
     for (Landmark* lk : oldest->landmark_) {
+        bool transformSucceed = false;
         for (auto kf2lk : lk->target_) {
             KeyFrame* kf = kf2lk.first;
-            if (newestKF != kf) {
+            if (nextKF != kf) {
                 continue;
             }
 
             // 把地图点的所有权转移到最新KF，其余的不要
-            if (lk->TransformHost2OtherKF(newestKF)) {
+            // 这里需要将lk从oldestKF中删除，并将其添加到下一个KF，且需要保持地址不变
+            if (lk->TransformHost2OtherKF(nextKF)) {
                 ++transformLandmarkNum;
+                transformSucceed = true;
             }
             break;
+        }
+        if (!transformSucceed) {
+            lk->SetCanDelete();
         }
     }
     cout << fmt::format("margKF transform landmark num: {}\n",
@@ -941,10 +942,28 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
             }
         }
     }
+    // 移除光流跟踪中被标记为可以删除的Landmark
+    auto RemoveDeleteLandmarkFromOpticalFlow =
+        [](vector<Landmark*>& lks, vector<cv::Point2f>& obvs) -> void {
+        vector<Landmark*>::iterator it1 = lks.begin();
+        vector<cv::Point2f>::iterator it2 = obvs.begin();
+        while (it1 != lks.end()) {
+            if ((*it1)->canBedelete_) {
+                it1 = lks.erase(it1);
+                it2 = obvs.erase(it2);
+                continue;
+            }
+            ++it1;
+            ++it2;
+        }
+    };
+    KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
+    RemoveDeleteLandmarkFromOpticalFlow(optFlw.trackLandmark_, optFlw.prevPts_);
+    RemoveDeleteLandmarkFromOpticalFlow(optFlw.trackHistoryLandmark_,
+                                        optFlw.prevHistoryPts_);
 
-    oldest->ReleaseMat();
     // 删除老帧看看是否会有影响
-    // delete oldest;
+    delete oldest;
     return;
 }
 
@@ -1838,8 +1857,8 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
     int totalPointNum = 0;
     int usefulPointNum = 0;
     onlyPoseUpdate_ = true;
-    const bool optSuccess = OptimizeCurFrame(
-        window_.back()->optFlw_, Twc2, kf2->id_, totalPointNum, usefulPointNum);
+    const bool optSuccess = OptimizeCurFrame(KeyFrame::optFlw, Twc2, kf2->id_,
+                                             totalPointNum, usefulPointNum);
     onlyPoseUpdate_ = false;
     const double usefulRatio = double(usefulPointNum) / totalPointNum;
     cout << fmt::format(

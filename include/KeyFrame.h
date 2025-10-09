@@ -112,7 +112,7 @@ class KeyFrame {
     void DrawOpticalMatchImg();
     void GenerateUndistordMap();
 
-    OpticalFlowStruct optFlw_;
+    static OpticalFlowStruct optFlw;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,

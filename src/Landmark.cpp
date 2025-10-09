@@ -106,19 +106,24 @@ bool Landmark::CheckInvDepthQualitySuccessByProject() {
 }
 
 bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
-    const Eigen::Vector3d pc1 = GetPc();
-    const Pose T21 = kf2->Tcw_ * host_->Twc_;
-    const Eigen::Vector3d pc2 = T21 * pc1;
-    if (pc2.z() < kMinSceneDepthInCamera) {
-        return false;
+    // 同时考虑未初始化和已初始化的量
+    if (initialized_) {
+        const Eigen::Vector3d pc1 = GetPc();
+        const Pose T21 = kf2->Tcw_ * host_->Twc_;
+        const Eigen::Vector3d pc2 = T21 * pc1;
+        if (pc2.z() < kMinSceneDepthInCamera) {
+            return false;
+        }
+        invZ_ = 1.0 / pc2.z();
     }
-    invZ_ = 1.0 / pc2.z();
+
     if (target_.count(host_)) {
         target_.erase(host_);
     }
     host_ = kf2;
     uv_ = target_.at(kf2);
     // TODO：暂不使用首次雅可比
+    kf2->landmark_.emplace_back(this);
     return true;
 }
 

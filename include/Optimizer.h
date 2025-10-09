@@ -119,7 +119,6 @@ class Optimizer {
     // edge slam使用
     // 关键帧滑窗优化使用
     std::vector<KeyFrame*> window_;
-    std::vector<KeyFrame*> historicalKF_;
     Pose* margTwc_ = nullptr;
     std::vector<Landmark*>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
