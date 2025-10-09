@@ -20,7 +20,8 @@ class Optimizer {
 
     struct ResidualInfo {
         double cost = 0;
-        int usefulNum = 0;
+        int totalConstraintNum = 0;
+        int usefulLandmarkNum = 0;
     };
 
     bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
@@ -45,7 +46,7 @@ class Optimizer {
     // TODO： 先不考虑边缘化，而是直接丢弃首帧
     void MarginalizeOldestKeyFrame();
 
-    void RemoveOldestKeyFrame();
+    void RemoveOldestKeyFrame(const int margKFid);
 
     void ShowLocalMap();
 

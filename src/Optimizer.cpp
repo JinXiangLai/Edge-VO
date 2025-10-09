@@ -72,7 +72,8 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
             Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
             HuberLoss(chi2, rho);
             info.cost += rho[0];
-            ++info.usefulNum;
+            ++info.totalConstraintNum;
+            ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
             if (j % stepInfoOut == 0) {
                 debugInfo.append(fmt::format(
                     "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
@@ -90,15 +91,17 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
         }
     }
 
-    cout << fixed << "residual info.all.cost: " << info.cost
-         << " useful num: " << info.usefulNum << "\n";
-    cout << fmt::format("debug residual info: {}\n", debugInfo);
-    info.cost /= info.usefulNum;
+    const double meanCost = info.cost / info.totalConstraintNum;
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    const double spendTime = chrono::duration<double>(t1 - t0).count();
 
-    cout << "noInrangeNum | mean cost | spend time: "
-         << (lk1s.size() - info.usefulNum) << " | " << info.cost << " | "
-         << chrono::duration<double>(t1 - t0).count() << "s" << endl;
+    cout << fmt::format(
+        "curF BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
+        "total constraint num: {}, mean cost: {:.1f}, spend time: {}\ndebug "
+        "residual info: {}\n",
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost,
+        spendTime, debugInfo);
+    info.cost = meanCost;
     if (isnan(info.cost) || isinf(info.cost)) {
         info.cost = DBL_MAX;
     }
@@ -159,7 +162,8 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         Eigen::Vector2d rho;
         HuberLoss(chi2, rho);
         info.cost += rho[0];
-        ++info.usefulNum;
+        ++info.usefulLandmarkNum;
+        ++info.totalConstraintNum;
 
         Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
         const double d = 1 / Pc2.z();
@@ -246,10 +250,14 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
             g.middleRows(bj, B.cols()) -= B.transpose() * r * w * rho[1];
         }
     }
-    cout << "jac info.all.cost: " << info.cost
-         << " useful num: " << info.usefulNum << "\n";
-    info.cost /= info.usefulNum;
-    cout << "jac mean cost: " << info.cost << "\n";
+
+    const double meanCost = info.cost / info.totalConstraintNum;
+    cout << fmt::format(
+        "curF BA construct H&g: residual info.all.cost: {:.1f}, useful "
+        "landmark num: {}, "
+        "total constraint num: {}, mean cost: {:.1f}\n",
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
+    info.cost = meanCost;
     return info;
 }
 
@@ -380,15 +388,6 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
 bool Optimizer::ExecuteWindowOptimize() {
     ResidualInfo lastCost = CalculateResidualWindow(optLandmark_, false, true);
 
-    // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
-    // 其信息已经通过深度点的传播转移到后面的KF中
-    // MarginalizeOldestKeyFrame();
-
-    // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
-    // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
-    // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-    RemoveOldestKeyFrame();
-
     // 丢失追踪，重新进行
     if (optLandmark_.size() < 10) {
         cerr << fmt::format("optLandmark_ size: {} too small!!!\n",
@@ -430,8 +429,8 @@ bool Optimizer::ExecuteWindowOptimize() {
             cout << "Prior Message Added!!!" << endl;
             ;
         } else {
-            _lambda.head(6).setConstant(DBL_MAX);  // 首帧的约束足够大
-            //_lambda.head(window_.size() * 6)
+            _lambda.head(6).setConstant(1e10);  // 首帧的约束足够大
+            //_lambda.head(window_.size() * window_[0]->Tcw_.Size())
             //    .setConstant(DBL_MAX);  // 不优化位姿
             cout << "Fixed First Frame!!!" << endl;
         }
@@ -441,7 +440,7 @@ bool Optimizer::ExecuteWindowOptimize() {
         if (!onlyPoseUpdate_) {
             chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
             delta_x = SchurCompleteSolve(
-                H_, g_, window_.size(), lastCost.usefulNum,
+                H_, g_, window_.size(), lastCost.usefulLandmarkNum,
                 window_[0]->Twc_.Size(), optLandmark_[0]->Size());
             chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
             cout << "SchurCompleteSolve spend: "
@@ -483,20 +482,21 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow(optLandmark_);
-        if (newCost.usefulNum != lastCost.usefulNum && 0) {
+        if (newCost.usefulLandmarkNum != lastCost.usefulLandmarkNum && 0) {
             // TODO：这里需要使用更新前的pose
             cout << "[WARNING]: "
                  << "recalculate last cost, last usefulNUm, new usefulNum: "
-                 << lastCost.cost << ", " << lastCost.usefulNum << ", "
-                 << newCost.usefulNum << endl;
+                 << lastCost.cost << ", " << lastCost.usefulLandmarkNum << ", "
+                 << newCost.usefulLandmarkNum << endl;
             // TODO: 重新计算时，需要使用旧的poses，旧的landmarks位置，以及新的landmarks的noUsed标志，比较麻烦
             lastCost = CalculateResidualWindow(optLandmark_, true);
-            cout << "new usefulNum: " << lastCost.usefulNum << endl;
+            cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
         }
         cout << fixed << "iterate " << i
              << " times, last_cost, new_cost: " << lastCost.cost << " "
              << newCost.cost << " lambda: " << lambda_ << "  usefulNum rate: "
-             << double(lastCost.usefulNum) / optLandmark_.size() << endl;
+             << double(lastCost.usefulLandmarkNum) / optLandmark_.size()
+             << endl;
 
         if (lambda_ != 0) {
             // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
@@ -538,7 +538,7 @@ bool Optimizer::ExecuteWindowOptimize() {
     chrono::steady_clock::time_point T2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(T2 - T1).count();
     if (!status) {
-        cerr << "Reach max iteration time or lambda too large" << endl;
+        cerr << "window BA Reach max iteration time or lambda too large" << endl;
     }
     cout << "First cost | final cost | decrease ratio in window: "
          << firstCost.cost << " | " << lastCost.cost << " | "
@@ -616,19 +616,19 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     ResidualInfo lastCost =
         CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_, true);
     ResidualInfo firstCost = lastCost;
-    if (firstCost.usefulNum < 20) {
+    if (firstCost.usefulLandmarkNum < 20) {
         cout << fmt::format("Error first useful constrint num: {}\n",
-                            firstCost.usefulNum);
+                            firstCost.usefulLandmarkNum);
         return false;
     }
-    usefulPointNum = firstCost.usefulNum;
+    usefulPointNum = firstCost.usefulLandmarkNum;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     for (int i = 0; i < maxIte_; ++i) {
         lastCost = CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
-        if (lastCost.usefulNum < 20) {
+        if (lastCost.usefulLandmarkNum < 20) {
             cout << fmt::format("Error useful constrint num: {}\n",
-                                lastCost.usefulNum);
+                                lastCost.usefulLandmarkNum);
             return false;
         }
         Eigen::VectorXd _lambda(H_.rows());
@@ -644,7 +644,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl << endl;
         Eigen::VectorXd delta_x;
         if (!onlyPoseUpdate_) {
-            delta_x = SchurCompleteSolve(H_, g_, 1, lastCost.usefulNum,
+            delta_x = SchurCompleteSolve(H_, g_, 1, lastCost.usefulLandmarkNum,
                                          Twc2.Size(), lk1s[0]->Size());
         } else {
             delta_x = H_.ldlt().solve(g_);
@@ -683,18 +683,18 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         ResidualInfo newCost =
             CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_);
         constexpr int maxCullPointEachTime = 10;
-        if (abs(lastCost.usefulNum - newCost.usefulNum) >
+        if (abs(lastCost.usefulLandmarkNum - newCost.usefulLandmarkNum) >
             maxCullPointEachTime) {
             // TODO: 这里暂时不考虑深度值也更新的情况
             // 需要使用旧的poses，旧的landmarks位置，以及新的landmarks的noUsed标志，比较麻烦
             // 但由于这里只更新pose，所以影响应该不大吧！！！
             cout << "[WARNING-0]: "
                  << "recalculate last cost, last usefulNUm, new usefulNum: "
-                 << lastCost.cost << ", " << lastCost.usefulNum << ", "
-                 << newCost.usefulNum << endl;
+                 << lastCost.cost << ", " << lastCost.usefulLandmarkNum << ", "
+                 << newCost.usefulLandmarkNum << endl;
             lastCost = CalculateResidualCurFrame(lk1s, obvs, poseBackup,
                                                  optFlw.prevImg_);
-            cout << "new usefulNum: " << lastCost.usefulNum << endl;
+            cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
         }
         // else if(lastCost.usefulNum - newCost.usefulNum >= maxCullPointEachTime) {
         //     // 避免一次删除过多point
@@ -703,9 +703,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         // }
         cout << fixed << "iterate " << i
              << " times, lastCost | newCost: " << lastCost.cost << " | "
-             << newCost.cost << " &lambda: " << lambda_
-             << " &usefulNum rate: " << double(lastCost.usefulNum) / lk1s.size()
-             << endl
+             << newCost.cost << " &lambda: " << lambda_ << " &usefulNum rate: "
+             << double(lastCost.usefulLandmarkNum) / lk1s.size() << endl
              << endl;
 
         if (lambda_ != 0) {
@@ -737,13 +736,13 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(t2 - t1).count();
     if (!status) {
-        cerr << "Reach max iteration time or lambda too large" << endl;
+        cerr << "frame BA Reach max iteration time or lambda too large" << endl;
     }
     cout << "First cost | final cost | decrease ratio | usefulNum ratio: "
          << firstCost.cost << " | " << lastCost.cost << " | "
          << (1. - lastCost.cost / firstCost.cost) * 100 << "%"
-         << " | " << (double(lastCost.usefulNum) / lk1s.size()) * 100 << "%"
-         << endl;
+         << " | " << (double(lastCost.usefulLandmarkNum) / lk1s.size()) * 100
+         << "%" << endl;
     cout << "Total Optimize spend " << spendTime << "s\n" << endl;
 
     return status;
@@ -896,8 +895,8 @@ void Optimizer::WriteDebugTriangulateCase2Video(const int curFid) {
     triPointMapDebugImage_.clear();
 }
 
-void Optimizer::RemoveOldestKeyFrame() {
-    if (static_cast<int>(window_.size()) <= config->maxKFnumInWindow) {
+void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
+    if (margKFid < 0) {
         return;
     }
     cout << "window size: " << window_.size() << " begin remove oldest" << endl;
@@ -914,7 +913,8 @@ void Optimizer::RemoveOldestKeyFrame() {
     cout << "historicalKF_.size: " << historicalKF_.size() << endl;
 
     // 遍历滑窗内的每一个帧，若其有对最老帧的地图点观测，就转移地图点所有权
-    KeyFrame* newestKF = window_.back();
+    // TODO：应该转移到相邻的下一帧才行，距离过远会删除很多有多个观测的帧
+    KeyFrame* newestKF = window_[margKFid + 1];
     int transformLandmarkNum = 0;
     for (Landmark* lk : oldest->landmark_) {
         for (auto kf2lk : lk->target_) {
@@ -987,7 +987,8 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
-            if (!p->initialized_ || p->IsOutOfRange() || p->target_.empty()) {
+            if (!p->initialized_ || p->IsOutOfRange() ||
+                p->target_.size() < 3) {
                 continue;
             }
             p->ResetFEJ();
@@ -1046,26 +1047,29 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
                     Eigen::Vector2d rho;
                     HuberLoss(chi2, rho);
                     tempInfo.cost += rho[0];
-                    ++tempInfo.usefulNum;
+                    ++tempInfo.totalConstraintNum;
                 }
             }
 
             // 只有未被其余观测标记异常的地图点才可参与残差构建
-            if (!p->noUsed_) {
+            if (!p->noUsed_ && tempInfo.totalConstraintNum > 1) {
                 info.cost += tempInfo.cost;
-                info.usefulNum += tempInfo.usefulNum;
+                info.totalConstraintNum += tempInfo.totalConstraintNum;
+                ++info.usefulLandmarkNum;
             }
         }
     }
 
-    const double meanCost = info.cost / info.usefulNum;
+    const double meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
-        "cal residual usefulNum: {}, total cost: {}, mean cost: {}.\n",
-        info.usefulNum, info.cost, meanCost);
+        "window BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
+        "total constraint num: {}, mean cost: {:.1f}\n",
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
+
     info.cost = meanCost;
     if (isnan(info.cost) || isinf(info.cost)) {
         cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
-                            info.cost, info.usefulNum);
+                            info.cost, info.usefulLandmarkNum);
         info.cost = DBL_MAX;
     }
     return info;
@@ -1252,16 +1256,16 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
     // TODO: 有很多landmark不能参与计算，需要将其排除在H及g信息之外，典型的如：
     // opt variable dim: 22902
     // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
-    int usefulLandmarkNum = -1;  // 并不是每个landmark都有效可以作为优化变量
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
         if (p->noUsed_) {
             cout << fmt::format(
                 "no cal res jac num: {}, addr: {}, idepth: {}\n",
-                info.usefulNum, reinterpret_cast<size_t>(p), p->invZ_);
+                info.usefulLandmarkNum, reinterpret_cast<size_t>(p), p->invZ_);
             continue;
         }
-        ++usefulLandmarkNum;
+
+        // TODO：注意，必须确保每个landmark都能构建残差以成为状态变量，否则优化变量位置会有问题，导致最终更新出错
         KeyFrame* host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
@@ -1276,6 +1280,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
         // 最新关键帧没有反向追踪能力
         if (host->id_ != window_.back()->id_) {
             // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
+
             for (const auto& kf2obv : p->target_) {
                 // TODO：需要注意每个关键帧、每个landmark在H矩阵中的位置
                 KeyFrame* target = kf2obv.first;
@@ -1294,7 +1299,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 Eigen::Vector2d rho;
                 HuberLoss(chi2, rho);
                 info.cost += rho[0];
-                ++info.usefulNum;
+                ++info.totalConstraintNum;
 
                 debugKFMapResidualNum[target] += 1;
                 resNum += resDim;
@@ -1385,7 +1390,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 const double w = 1.0;  // /p->depthCov_;
                 const int a1i = resNum, a1j = kfMapCol[host], a2i = resNum,
                           a2j = kfMapCol[target], bi = resNum,
-                          bj = depthStartCol + usefulLandmarkNum;
+                          bj = depthStartCol + info.usefulLandmarkNum;
                 // clang-format off
             /********************* 利用稀疏性计算H=J'*J ****************************
             * | A1'|
@@ -1429,11 +1434,15 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 g_.middleRows(bj, depthDim) -= B.transpose() * r * w * rho[1];
             }
         }
+
+        ++info.usefulLandmarkNum;
     }
-    const double meanCost = info.cost / info.usefulNum;
+    const double meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
-        "construct H usefulNum: {}, total cost: {}, mean cost: {}.\n",
-        info.usefulNum, info.cost, meanCost);
+        "window BA: construct H&g residual info.all.cost: {:.1f}, useful "
+        "landmark num: {}, "
+        "total constraint num: {}, mean cost: {:.1f}\n",
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
     info.cost = meanCost;
     return info;
 }
@@ -1727,6 +1736,14 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         return false;
     }
     SetInitLambda(1.0);
+    // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+    // 其信息已经通过深度点的传播转移到后面的KF中
+    // MarginalizeOldestKeyFrame();
+
+    // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
+    // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
+    // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
+    //RemoveOldestKeyFrame(margKFid);
     return ExecuteWindowOptimize();
 }
 
@@ -1835,7 +1852,7 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
 
     Pose beforeTwc2 = kf2->Twc_;
     if (optSuccess) {
-        kf2->SetTwc(Twc2);
+        kf2->SetTwc(Twc2);  // 关闭这个出现错乱，证明优化有效
     }
 
     cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_ << endl;
