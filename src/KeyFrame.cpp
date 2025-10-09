@@ -22,6 +22,7 @@ cv::VideoWriter KeyFrame::debugTriangulateWriter;
 #endif
 cv::Mat KeyFrame::map1;
 cv::Mat KeyFrame::map2;
+Pose KeyFrame::Tc0w;
 
 class Landmark;
 
@@ -363,8 +364,8 @@ void KeyFrame::WriteDebugImage2VideoEachFrame(const int kf2Id,
     int start_text_row = 20;
     int step_text_row = 10;
     cv::putText(videoBestMatchDebugImg_,
-                fmt::format("kf id: {} match point curF id: {}_{}",
-                            id_, kf2Id, debugVideoName),
+                fmt::format("kf id: {} match point curF id: {}_{}", id_, kf2Id,
+                            debugVideoName),
                 cv::Point(10, (start_text_row += step_text_row)),
                 cv::FONT_ITALIC, 1.0, kColor.at("red"), 1);
     if (!videoEpipolarMatchDebugImg_.empty()) {
@@ -671,9 +672,18 @@ void KeyFrame::Update(const Eigen::Vector3d& delta_q,
     Tcw_ = Twc_.Inverse();
 }
 
-void KeyFrame::SetTwc(const Pose& Twc) {
+void KeyFrame::SetTwc(const Pose& Twc, const bool printDiff) {
+    if(printDiff && Tc0w.t_wb_.isApproxToConstant(0)) {
+        // 设置运行时世界系到数据集世界系的变换
+        Tc0w = priorTwc_.Inverse();
+    }
+
     Twc_ = Twc;
     Tcw_ = Twc.Inverse();
+    if (printDiff) {
+        const Pose diff = (Tc0w * priorTwc_) * Tcw_;
+        cout << "predict pose diff with prior: " << diff << "\n";
+    }
 }
 
 void KeyFrame::ReleaseMat() {

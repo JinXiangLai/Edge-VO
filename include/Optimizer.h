@@ -24,7 +24,7 @@ class Optimizer {
     };
 
     bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
-                          const int curFid);
+                          const int curFid, int& totalPointNum, int& usefulPointNum);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,

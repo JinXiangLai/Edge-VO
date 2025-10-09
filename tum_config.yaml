@@ -33,7 +33,7 @@ abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与
 huberDelta: 6 # 胡伯核函数参数，sqrt(chi2)
 maxProjectError: 12 # 超过这个残差，意味着地图点错误，地图点需要被删除了
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 5
+maxKFnumInWindow: 9
 imgTimeOffset: 0.0 # sec,时间同步误差
 needNewKFtrans: 0.1 # 选取新KF的条件
 needNewKFrot: 5.0 # deg
@@ -54,7 +54,7 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 0
+firstImgIdx: 30
 loopClosureImgIdx: 10
 
 cannyLowerTh: 80 # 150

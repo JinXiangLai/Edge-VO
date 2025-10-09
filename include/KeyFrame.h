@@ -45,7 +45,7 @@ class KeyFrame {
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
-    void SetTwc(const Pose& Twc);
+    void SetTwc(const Pose& Twc, const bool printDiff = false);
 
     void ReleaseMat();
     void GenerateKeyPoint();
@@ -145,6 +145,7 @@ class KeyFrame {
 #endif
 
     static cv::Mat map1, map2;
+    static Pose Tc0w; // 运行时世界系c0，到数据集真值轨迹w的变换
 };
 
 #endif

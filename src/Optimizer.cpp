@@ -153,11 +153,6 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         const Eigen::Vector3d Pw1 = p.GetPw();
         const Eigen::Vector3d Pc2 = Tc2w * Pw1;
         const Eigen::Vector2d px2 = p.cam_->Project2PixelPlane(Pc2);
-        //if (!InRange(p.host_->grayImg_, px2.cast<int>()) ||
-        //    Pc2.z() < kMinSceneDepthInCamera) {
-        //    p.noUsed_ = true;
-        //    continue;
-        //}
 
         const Eigen::Vector2d r = px2 - obvs[j];
         double chi2 = r.squaredNorm();
@@ -392,7 +387,7 @@ bool Optimizer::ExecuteWindowOptimize() {
     // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
     // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
     // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-    //RemoveOldestKeyFrame();
+    RemoveOldestKeyFrame();
 
     // 丢失追踪，重新进行
     if (optLandmark_.size() < 10) {
@@ -558,14 +553,15 @@ bool Optimizer::ExecuteWindowOptimize() {
 }
 
 bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
-                                 Pose& Twc2, const int curFid) {
+                                 Pose& Twc2, const int curFid,
+                                 int& totalPointNum, int& usefulPointNum) {
 
     // 构建优化问题所需观测
     vector<Landmark*> lk1s;
     vector<Eigen::Vector2d> obvs;
     lk1s.reserve(optFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
-    constexpr int kDebugNum = 2000;
+    constexpr int kDebugNum = 20000;
     for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
         // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
         Landmark* lk = optFlw.trackLandmark_[i];
@@ -601,6 +597,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         }
     }
 
+    totalPointNum = lk1s.size();
+
     if (lk1s.empty()) {
         cout << "useful landmark num for opt is: " << lk1s.size()
              << " Error! may be no initialized???\n";
@@ -612,16 +610,27 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     //WriteDebugTriangulateCase2Video(curFid);
 #endif
-    bool status = false;
+    bool status = true;
     double initLambda = lambda_;
     lambda_ = initLambda;
     ResidualInfo lastCost =
         CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_, true);
     ResidualInfo firstCost = lastCost;
+    if (firstCost.usefulNum < 20) {
+        cout << fmt::format("Error first useful constrint num: {}\n",
+                            firstCost.usefulNum);
+        return false;
+    }
+    usefulPointNum = firstCost.usefulNum;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     for (int i = 0; i < maxIte_; ++i) {
         lastCost = CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
+        if (lastCost.usefulNum < 20) {
+            cout << fmt::format("Error useful constrint num: {}\n",
+                                lastCost.usefulNum);
+            return false;
+        }
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
         if (H_.diagonal().head(6).isApproxToConstant(0)) {
@@ -629,29 +638,15 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         }
 
         // debug, 返回J, 判断H, g计算的正确性
-        // Eigen::MatrixXd _H = J.transpose() * J;
-        // Eigen::VectorXd _g = -J.transpose() * b;
-        // const Eigen::MatrixXd dH = H-_H;
-        // const Eigen::VectorXd dg = g-_g;
-        // cout << setprecision(5) << "H-_H:\n " << dH.diagonal().transpose() << endl << endl;
-        // cout << setprecision(5) << "g-_g:\n " << dg.transpose() << endl << endl;
-        // cout << "dH, dg norm: " << dH.norm() << " " << dg.norm() << endl;
-        // H = _H;
-        // g = _g;
-
         H_.diagonal() += _lambda;
         //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose() << endl
         //     << endl;
         //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl << endl;
         Eigen::VectorXd delta_x;
-        // H_ /= lastCost.usefulNum;
-        // g_ /= lastCost.usefulNum; 不需要除以吧
         if (!onlyPoseUpdate_) {
             delta_x = SchurCompleteSolve(H_, g_, 1, lastCost.usefulNum,
                                          Twc2.Size(), lk1s[0]->Size());
         } else {
-            // delta_x = H_.colPivHouseholderQr().solve(g_);
-            // delta_x = H_.inverse() * g_;
             delta_x = H_.ldlt().solve(g_);
             cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
                  << endl;
@@ -992,7 +987,7 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
-            if (p->target_.empty() || !p->initialized_ || p->IsOutOfRange()) {
+            if (!p->initialized_ || p->IsOutOfRange() || p->target_.empty()) {
                 continue;
             }
             p->ResetFEJ();
@@ -1242,9 +1237,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
     H_.setZero();
     g_.resize(variableDim);
     g_.setZero();
-    int noInrangeNum = 0;
-    int depthErrorNum = 0;
-    int targetErrorNum = 0;
+
     ResidualInfo info;
     // clang-format off
     // 计算residual & jacobian
@@ -1331,9 +1324,6 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                     J_px2_Pc2Norm * J_Pc2Norm_Pc2;
                 const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2;
 
-                // FEJ
-                //if (!p->J_Pc2_Twc2.count(target)) {
-                // if(!p->J_Pc2_Twc2.count(target) || 1) {
                 // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
                 Eigen::Matrix<double, 3, 6>
                     J_Pc2_Twc2;  // ------------------------> optimization variable
@@ -1351,18 +1341,6 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 const Eigen::Matrix3d J_Pc2_Pw =
                     target->Tcw_.q_wb_.toRotationMatrix();
 
-                //if (p->J_Pc2_Pw.count(target)) {
-                //    // just for debug
-                //    // 暂时不考虑首次雅可比
-                //    p->J_Pc2_Twc2[target] = J_Pc2_Twc2;
-                //    p->J_Pc2_Pw[target] = J_Pc2_Pw;
-                //} else {
-                //    // p->J_Pc2_Twc2.insert({target, J_Pc2_Twc2});
-                //    // p->J_Pc2_Pw.insert({target, J_Pc2_Pw});
-                //}
-
-                //if (p->J_Pw_z.empty()) {
-                // if(p->J_Pw_z.empty() || 1) {
                 // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
                 Eigen::Matrix<double, 3, 6>
                     J_Pw_Twc1;  // ------------------------> optimization variable
@@ -1387,15 +1365,6 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 const Eigen::Matrix<double, 3, 1> J_Pw_z = J_Pw_Pc1 * J_Pc1_z;
 
                 // 不考虑使用首次雅可比
-                //if (!p->J_Pw_z.empty()) {
-                //    // just for debug
-                //    p->J_Pw_z.clear();
-                //    p->J_Pw_Twc1.clear();
-                //}
-                //p->J_Pw_z.push_back(J_Pw_Pc1 * J_Pc1_z);
-                //p->J_Pw_Twc1.push_back(J_Pw_Twc1);
-                //}
-                //}
 
                 // Residual w.r.t optimization variables Jacobian
                 Eigen::Matrix<double, 2, 6> A1 =
@@ -1747,11 +1716,6 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
 
 bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     cout << "Begin SlidingWindowOptimize!!!" << endl;
-    //if (!SetOptimizeVariables()) {
-    //    cerr << "find landmark for optimization num: " << optLandmark_.size()
-    //         << " too small " << endl;
-    //    // return false;
-    //}
     const int margKFid = SelectOneKF2Marginalization(*curKF);
     cout << "margKFid: " << margKFid << endl;
 
@@ -1851,17 +1815,29 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
 
 bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
 
-    const Pose noise =
-        ConvertRPYandPostion2Pose({0.01, 0.02, 0}, {0.01, 0.02, 0}, kDeg2Rad);
-    Pose Twc2 = kf2->Twc_ * noise;
+    //const Pose noise =
+    //    ConvertRPYandPostion2Pose({0.01, 0.02, 0}, {0.01, 0.02, 0}, kDeg2Rad);
+    //Pose Twc2 = kf2->Twc_ * noise;
+    Pose Twc2 = kf2->Twc_;
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
     onlyPoseUpdate_ = true;
-    OptimizeCurFrame(window_.back()->optFlw_, Twc2, kf2->id_);
+    int totalPointNum = 0;
+    int usefulPointNum = 0;
+    const bool optSuccess = OptimizeCurFrame(
+        window_.back()->optFlw_, Twc2, kf2->id_, totalPointNum, usefulPointNum);
     onlyPoseUpdate_ = false;
+    const double usefulRatio = double(usefulPointNum) / totalPointNum;
+    cout << fmt::format(
+        "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}\n",
+        totalPointNum, usefulPointNum, usefulRatio);
+    needNewKFbySight = usefulRatio < 0.3 || usefulPointNum < 30;
 
     Pose beforeTwc2 = kf2->Twc_;
-    kf2->SetTwc(Twc2);
+    if (optSuccess) {
+        kf2->SetTwc(Twc2);
+    }
+
     cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_ << endl;
     return true;
 }

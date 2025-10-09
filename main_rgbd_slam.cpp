@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
         if (!initFrame) {
             initFrame = new KeyFrame(curF);
             // 首帧设置为单位矩阵
-            initFrame->SetTwc(Pose());
+            initFrame->SetTwc(Pose(), true);
             initFrame->depthImage_ = depthImg;
             lastF = *initFrame;
             optimizer.AddOneKeyFeame(initFrame);
@@ -183,10 +183,14 @@ int main(int argc, char** argv) {
         chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
 
         // step1: 优化当前帧pose
+        //Pose Ttemp = GetPredictPose(lastF, lastLastF);
+        //Ttemp.q_wb_ = curF.Twc_.q_wb_;
+        //curF.SetTwc(Ttemp, true);
         optimizer.SetInitLambda(1.0);
         bool needKFbySight = false;
         optimizer.TrackLocalMap(
             &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+        //needKFbySight = false; // 强制不使用
 
         // TODO 1：利用跟踪结果更新当前帧pose，做当前帧和关键帧之间的BA优化
         // 这里暂时利用真值实现
@@ -229,7 +233,7 @@ int main(int argc, char** argv) {
              << endl;
         chrono::steady_clock::time_point t10, t11;
         //if (((case3 || case4 || case5 || case2) && case6) || needKFbySight) {
-        if (case2 || case3 || case4) {
+        if (needKFbySight || case2 || case3 || case4) {
             {
                 static bool first = true;
                 ofstream f;
