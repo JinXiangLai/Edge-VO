@@ -232,7 +232,9 @@ int main(int argc, char** argv) {
                     Quat2RPY(T12.q_wb_).norm() * kRad2Deg, accDist)
              << endl;
         chrono::steady_clock::time_point t10, t11;
-        //if (((case3 || case4 || case5 || case2) && case6) || needKFbySight) {
+        cout << fmt::format(
+            "add kf case: needKFbySight: {}, case2: {}, case3: {}, case4: {}",
+            needKFbySight, case2, case3, case4);
         if (needKFbySight || case2 || case3 || case4) {
             {
                 static bool first = true;

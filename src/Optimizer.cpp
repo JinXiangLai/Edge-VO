@@ -382,9 +382,9 @@ bool Optimizer::ExecuteWindowOptimize() {
     ResidualInfo lastCost = CalculateResidualWindow(optLandmark_, false, true);
 
     // 丢失追踪，重新进行
-    if (optLandmark_.size() < 10) {
-        cerr << fmt::format("optLandmark_ size: {} too small!!!\n",
-                            optLandmark_.size());
+    if (lastCost.usefulLandmarkNum < 10) {
+        cerr << fmt::format("lastCost.usefulLandmarkNum: {} too small!!!\n",
+                            lastCost.usefulLandmarkNum);
         return false;
     } else {
         //cerr << "before opt local map" << endl;

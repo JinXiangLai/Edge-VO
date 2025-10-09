@@ -1183,7 +1183,12 @@ string GetTriangulatePointName(const Eigen::Vector2d& p) {
 
 Pose GetPredictPose(const KeyFrame& last1, const KeyFrame& last2) {
     const Pose Tc2c1 = last2.Tcw_ * last1.Twc_;
-    return last1.Twc_; // * Tc2c1;  // 匀速模型
+    const Pose predictCurFpose = last1.Twc_ * Tc2c1;  // 匀速模型
+
+    //cout << "lastLast pose: " << last2.Twc_ << "\nlast pose: " << last1.Twc_
+    //     << "\nT21: " << Tc2c1 << "\npredictCurFpose: " << predictCurFpose
+    //     << "\n";
+    return predictCurFpose;
 }
 
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
