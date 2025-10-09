@@ -340,6 +340,8 @@ bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
 
 std::string GetTriangulatePointName(const Eigen::Vector2d& p);
 
+Pose GetPredictPose(const KeyFrame& last, const KeyFrame& lastLast);
+
 enum KeyboardEvent { Reset, StepByStep };
 
 class InteractionParam {
