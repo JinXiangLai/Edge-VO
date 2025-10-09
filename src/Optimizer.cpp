@@ -1762,7 +1762,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
     // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
     // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-    //RemoveOldestKeyFrame(margKFid);
+    RemoveOldestKeyFrame(margKFid);
     return ExecuteWindowOptimize();
 }
 
