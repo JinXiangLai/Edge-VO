@@ -378,8 +378,36 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     return deltaX;
 }
 
+double Optimizer::CalculatePriorCost(const Eigen::VectorXd& deltaX) {
+    // 边缘化与执行优化时的状态量数量要一致，
+    // 因此需要先确定optLandmark的数量，难点在于如何处理转移成功且观测数大于2的优化点？
+    // 可以先转移所有权，再在构建完先验约束后，删除对于被边缘化帧的观测，此时，只在边缘化构建先验信息时，设置Landmark*是否要为noUsed
+    // 公式推导：
+    // H_p * deltaX0 = g_p，==>  H_p * deltaX0 - g_p = 0
+    // J_p.T * J_p * deltaX0 = -J_p.T * r_p
+    // 因此: J_p * deltaX0 = -r_p
+    // 所以，构建先验信息时刻，有 J_p * deltaX0 + r_p = 0
+    // 构建先验残差项： (需要0.5系数才能与重投影残差权重一致)
+    // C_p = 0.5 * (J_p * deltaX + r_p - 0).T * (J_p * deltaX + r_p - 0)
+    // C_p = 0.5 * deltaX.T * J_p.T * J_p * deltaX + deltaX.T * J_p.T * r_p + 0.5 * r_p.T * r_p
+    // C_p = 0.5 * deltaX.T * H_p * deltaX - deltaX.T * g_p + 常数
+    // 注意：当线性化点一直在变时，需要记住构建先验残差时的状态量：
+    // 由于： deltaX1 = X1 - X0
+    // deltaX2 = X2 - X1
+    // ...依次类推，最终：
+    // deltaXn +...+ deltaX2 + deltaX1 = Xn - X0
+    // 所以每次让deltaX0 += deltaX 进行更新即可，需要注意，当最终更新不被接受时，需要重置回上一次的deltaX0
+    const Eigen::VectorXd deltaNew = deltaX0_ + deltaX;
+    return 0.5 * deltaNew.transpose() * (Hp_ * deltaNew - g_p_);
+}
+
+void Optimizer::UpdatePriorDeltaX0(const Eigen::VectorXd& deltaX) {
+    deltaX0_ += deltaX;
+}
+
 bool Optimizer::ExecuteWindowOptimize() {
-    ResidualInfo lastCost = CalculateResidualWindow(optLandmark_, false, true);
+    ResidualInfo lastCost =
+        CalculateResidualWindow(optLandmark_, false, !margKF_);
 
     // 丢失追踪，重新进行
     if (lastCost.usefulLandmarkNum < 10) {
@@ -405,16 +433,14 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
-        if (Hp_.rows() > 1) {
-            if (config->messageLevel == MessageLevel::Debug) {
-                cout << "Hp_: [" << Hp_.rows() << "x" << Hp_.cols() << "]"
-                     << endl;
-                cout << "g_p_: [" << g_p_.rows() << "x1]" << endl;
-                cout << "H_: [" << H_.rows() << "x" << H_.cols() << "]" << endl;
-                cout << "g_: [" << g_.rows() << "x1]" << endl;
-            }
+        if (margKF_) {
             cout << "Hp_[6x6]: " << setprecision(2)
                  << Hp_.diagonal().head(6).transpose() << endl;
+            cout << fmt::format(
+                "H_ size:[{}x{}], Hp_ size: [{}x{}], g_ len: {}, g_p_ len: "
+                "{}\n",
+                H_.rows(), H_.cols(), Hp_.rows(), Hp_.cols(), g_.rows(),
+                g_p_.rows());
             H_ += Hp_;
             g_ += g_p_;
             //cout << setprecision(5) << "Hp_: " << Hp_.diagonal().transpose() << endl;
@@ -474,6 +500,10 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow(optLandmark_);
+        if (margKF_) {
+            // 需要考虑先验残差约束
+            newCost.cost += CalculatePriorCost(delta_x);
+        }
         if (newCost.usefulLandmarkNum != lastCost.usefulLandmarkNum && 0) {
             // TODO：这里需要使用更新前的pose
             cout << "[WARNING]: "
@@ -506,9 +536,8 @@ bool Optimizer::ExecuteWindowOptimize() {
                 lambda_ *= 0.3;
                 lastCost = newCost;
                 // 更新先验残差构成信息项
-                if (g_p_.rows() > 1) {
-                    cout << "delta_x: [" << delta_x.rows() << "x1]" << endl;
-                    UpdatePriorConstraint(delta_x);
+                if (margKF_) {
+                    UpdatePriorDeltaX0(delta_x);
                 }
             }
         }
@@ -895,19 +924,16 @@ void Optimizer::WriteDebugTriangulateCase2Video(const int curFid) {
     triPointMapDebugImage_.clear();
 }
 
-void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
+bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
     if (margKFid < 0) {
-        return;
+        return false;
     }
 
+    // 在选择边缘化帧时已经把需要移除的帧移动到了开头
     KeyFrame* oldest = window_[0];
     cout << fmt::format("window size: {}, begin remove kf id: {}\n",
                         window_.size(), oldest->id_);
-    // 在选择边缘化帧时已经把需要移除的帧移动到了开头
-    window_.erase(window_.begin());
 
-    // 遍历滑窗内的每一个帧，若其有对最老帧的地图点观测，就转移地图点所有权
-    // TODO：应该转移到相邻的下一帧才行，距离过远会删除很多有多个观测的帧
     KeyFrame* nextKF = window_[margKFid + 1];
     int transformLandmarkNum = 0;
     int newAddOptimizeLandmarkNum = 0;
@@ -940,7 +966,18 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     cout << fmt::format(
         "margKF transform landmark num: {}, newAddOptimizeLandmarkNum: {}\n",
         transformLandmarkNum, newAddOptimizeLandmarkNum);
+    return true;
+}
 
+void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
+    if (margKFid < 0) {
+        return;
+    }
+
+    KeyFrame* oldest = window_[0];
+    window_.erase(window_.begin());
+
+    // 注意：此时应该已经完成边缘化时的先验信息构建操作
     // 移除掉边缘化帧对地图点的观测
     for (const KeyFrame* kf : window_) {
         for (Landmark* lk : kf->landmark_) {
@@ -1065,7 +1102,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
                 } else {
                     Eigen::Vector2d r = px2 - kf2obv.second;
                     double chi2 = r.squaredNorm();
-                    if (chi2 > maxChi2) {
+                    if (checkAbnormalLandmark && chi2 > maxChi2) {
                         // 必须移除残差异常的项
                         p->noUsed_ = true;
                         break;
@@ -1086,13 +1123,13 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
         }
     }
 
-    const double meanCost = info.cost / info.totalConstraintNum;
+    info.meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
         "window BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}\n",
-        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
+        info.meanCost);
 
-    info.cost = meanCost;
     if (isnan(info.cost) || isinf(info.cost)) {
         cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
                             info.cost, info.usefulLandmarkNum);
@@ -1102,12 +1139,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
 }
 
 // TODO： 先不考虑边缘化，而是直接丢弃首帧
-void Optimizer::MarginalizeOldestKeyFrame() {
-    // 这里已经添加了新KF，数量超过预设值，因此需要边缘化最老帧
-    if (static_cast<int>(window_.size()) <= config->maxKFnumInWindow) {
-        return;
-    }
-
+bool Optimizer::MarginalizeOldestKeyFrame() {
     /*********************************************************
     * 注意：VINS-MONO论文中的r_p, Hp分别代表先验残差、先验雅可比，
     * 即 先验约束项 |r_p - Hp * X|^2 <==> |r_p - Jp * X|^2
@@ -1143,7 +1175,7 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     *****************************************************************/
     //set<Landmark*> margLandmark;
     // TODO: 选择另一种策略移除一帧，类似Landmark的处理方式，将其移到window_[0]再构建信息矩阵H即可
-    KeyFrame* margKF = window_[0];
+    //KeyFrame* margKF = window_[0];
     // 边缘化地图点会破坏H_矩阵的稀疏性，通过实现地图点控制权转移来避免删除点
     //for (size_t i = 0; i < optLandmark_.size(); ++i) {
     //    Landmark* p = optLandmark_[i];
@@ -1168,19 +1200,8 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     //cout << "total, marg, left landmars: " << optLandmark_.size() << " "
     //     << margLandmark.size() << " "
     //     << (optLandmark_.size() - margLandmark.size()) << endl;
-    // 这里可以实现将线性化点固定在Marginalization时刻
-    // 考虑，有些地图点会被标记为onused
-    vector<Landmark*> lks = optLandmark_;
-    for (Landmark* p : margKF->landmark_) {
-        // 将待边缘化帧的地图点加进来，与其他帧构成约束
-        if (!p->initialized_ || p->IsOutOfRange() || p->target_.size() < 3) {
-            continue;
-        }
-        p->ResetFEJ();
-        lks.emplace_back(p);
-    }
 
-    CalculateResidualWindow(lks, false, true);
+    CalculateResidualWindow(optLandmark_, false, true);
     ConstructJ_H_b_g();
 
     // Step:接下来计算相关先验Hp, g_p
@@ -1196,7 +1217,7 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     Eigen::MatrixXd A = H_.block(0, 0, margDim, margDim);
     if (A.diagonal().squaredNorm() < 1.) {
         // 边缘化信息过小，无效
-        return;
+        return false;
     }
     Eigen::VectorXd eps(margDim);
     // To avoid A is all Zero，对角线的约束照例说也不应该为0
@@ -1219,6 +1240,11 @@ void Optimizer::MarginalizeOldestKeyFrame() {
     // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
     // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
     g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
+    // 构建先验增量
+    deltaX0_ = SchurCompleteSolve(
+        Hp_, g_p_, config->maxKFnumInWindow,
+        Hp_.cols() - config->maxKFnumInWindow * window_[0]->Twc_.Size());
+    return true;
 
     // 易知，先验残差为： |Jp*X - b_p|^2. 其中，Hp_=Jp'*Jp，因此可以得到Jp，g_p_=Jp'*b_p，因此可以得到先验残差b_p(VINS-MONO)
     // 根据G-N方法，展开先验残差项得:
@@ -1462,13 +1488,13 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
 
         ++info.usefulLandmarkNum;
     }
-    const double meanCost = info.cost / info.totalConstraintNum;
+    info.meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
         "window BA: construct H&g residual info.all.cost: {:.1f}, useful "
         "landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}\n",
-        info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
-    info.cost = meanCost;
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
+        info.meanCost);
     return info;
 }
 
@@ -1760,15 +1786,20 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     if (window_.size() < 3) {
         return false;
     }
-    SetInitLambda(1.0);
-    // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
-    // 其信息已经通过深度点的传播转移到后面的KF中
-    //MarginalizeOldestKeyFrame();
 
-    // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
-    // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
-    // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-    RemoveOldestKeyFrame(margKFid);
+    margKF_ = false;
+    if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
+        // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+        // 其信息已经通过深度点的传播转移到后面的KF中
+        margKF_ = MarginalizeOldestKeyFrame();
+
+        // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
+        // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
+        // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
+        RemoveOldestKeyFrame(margKFid);
+    }
+
+    SetInitLambda(1.0);
     return ExecuteWindowOptimize();
 }
 

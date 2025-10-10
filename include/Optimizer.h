@@ -22,10 +22,12 @@ class Optimizer {
         double cost = 0;
         int totalConstraintNum = 0;
         int usefulLandmarkNum = 0;
+        double meanCost = 0;
     };
 
     bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
-                          const int curFid, int& totalPointNum, int& usefulPointNum);
+                          const int curFid, int& totalPointNum,
+                          int& usefulPointNum);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
@@ -43,10 +45,16 @@ class Optimizer {
                                        const int poseDim = 6,
                                        const int pointDim = 1);
 
+    double CalculatePriorCost(const Eigen::VectorXd& deltaX);
+
+    void UpdatePriorDeltaX0(const Eigen::VectorXd& deltaX);
+
     // TODO： 先不考虑边缘化，而是直接丢弃首帧
-    void MarginalizeOldestKeyFrame();
+    bool MarginalizeOldestKeyFrame();
 
     void RemoveOldestKeyFrame(const int margKFid);
+
+    bool TransformLandmarkOwnerFromOldestKF(const int margKFid);
 
     void ShowLocalMap();
 
@@ -76,10 +84,6 @@ class Optimizer {
     int SelectOneKF2Marginalization(const KeyFrame& curKF);
 
     int SampleUsefulLandmark(const int margKFid);
-
-    void UpdatePriorConstraint(Eigen::VectorXd& delta_x) {
-        g_p_.noalias() += Hp_ * delta_x;
-    }
 
     void ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
                                          Eigen::VectorXd& g);
@@ -122,8 +126,10 @@ class Optimizer {
     Pose* margTwc_ = nullptr;
     std::vector<Landmark*>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
-    Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法预知
+    Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
     Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
+    Eigen::VectorXd deltaX0_;  // 边缘化时的状态量增量
+    bool margKF_ = false;
 
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
 };
