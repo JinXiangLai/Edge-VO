@@ -115,8 +115,9 @@ class Optimizer {
 
     bool CalculatePriorCostChi2(const Eigen::VectorXd& deltaX);
 
-    bool UpdateLMlambda(const ResidualInfo& lastCost,
-                                 const ResidualInfo& newCost);
+    void UpdateLMlambda(const ResidualInfo& lastCost,
+                        const ResidualInfo& newCost, bool& accept,
+                        bool& converge);
 
     cv::VideoWriter debugTriangulateWriter_;
 

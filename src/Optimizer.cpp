@@ -25,7 +25,7 @@ Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
       maxIte_(maxIte),
       onlyPoseUpdate_(onlyPoseUpdate),
       cam_(cam) {
-    maxIte_ = config->maxIteration;
+    maxIte_ = config->maxIterationLM;
 }
 
 Optimizer::~Optimizer() {
@@ -509,35 +509,34 @@ bool Optimizer::ExecuteWindowOptimize() {
             "lambda: {}.\n",
             i, lastCost.cost, newCost.cost, lambda_);
 
-        if (lambda_ != 0) {
-            // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
-            if (lastCost.cost <= newCost.cost) {
-                lambda_ *= 1.8;
-                for (size_t i = 0; i < optLandmark_.size(); ++i) {
-                    if (!optLandmark_[i]->noUsed_) {
-                        optLandmark_[i]->BackUpStatus();
-                    }
+        // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
+        bool accept = false;
+        bool converge = false;
+        UpdateLMlambda(lastCost, newCost, accept, converge);
+        if (!accept) {
+            for (size_t i = 0; i < optLandmark_.size(); ++i) {
+                if (!optLandmark_[i]->noUsed_) {
+                    optLandmark_[i]->BackUpStatus();
                 }
-                for (size_t i = 0; i < window_.size(); ++i) {
-                    window_[i]->BackUpStatus();
-                }
-            } else {
-                lambda_ *= 0.3;
-                lastCost = newCost;
-                // 更新先验残差构成信息项
-                if (margKF_) {
-                    UpdatePriorDeltaX0(delta_x);
-                }
+            }
+            for (size_t i = 0; i < window_.size(); ++i) {
+                window_[i]->BackUpStatus();
+            }
+        } else {
+            lastCost = newCost;
+            // 更新先验残差构成信息项
+            if (margKF_) {
+                UpdatePriorDeltaX0(delta_x);
             }
         }
 
-        if (newCost.cost < 1e-9) {
+        if (converge) {
             cout << "Congratulations! LM converge!!!" << endl;
             status = true;
             break;
         }
-        if (lambda_ > 1e10) {
-            cout << fixed << "lambad too large: " << lambda_ << endl;
+        if (lambda_ > config->maxLambdaValueLM) {
+            cout << "lambad too large: " << lambda_ << endl;
             break;
         }
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
@@ -721,35 +720,28 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             "lambda: {}.\n",
             i, lastCost.cost, newCost.cost, lambda_);
 
-        if (lambda_ != 0) {
-            // LM 方法
-            if (lastCost.cost <= newCost.cost) {
-                const double costDiff = newCost.cost - lastCost.cost;
-                if (costDiff < 1.0) {
-                    lambda_ *= 1.1;
-                } else {
-                    lambda_ *= 1.8;
+        bool accept = false;
+        bool converge = false;
+        UpdateLMlambda(lastCost, newCost, accept, converge);
+        // LM 方法
+        if (!accept) {
+            for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
+                if (!lk1s[i]->noUsed_) {
+                    lk1s[i]->BackUpStatus();
                 }
-
-                for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
-                    if (!lk1s[i]->noUsed_) {
-                        lk1s[i]->BackUpStatus();
-                    }
-                }
-                Twc2 = poseBackup;
-            } else if (lastCost.cost > newCost.cost) {
-                // 状态量已在上面更新
-                lambda_ *= 0.3;
-                lastCost = newCost;
             }
+            Twc2 = poseBackup;
+        } else {
+            lastCost = newCost;
         }
-        if (newCost.cost < 1e-9) {
+
+        if (converge) {
             cout << "Congratulations! LM or GN converge!!!" << endl;
             status = true;
             break;
         }
-        if (lambda_ > 1e20) {
-            cout << fixed << "lambad too large: " << lambda_ << endl;
+        if (lambda_ > config->maxLambdaValueLM) {
+            cout << "lambad too large: " << lambda_ << endl;
             break;
         }
     }
@@ -766,8 +758,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         "spend: {:.1f}s.\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
-        double(lastCost.usefulLandmarkNum) / lk1s.size() * 100,
-        spendTime);
+        double(lastCost.usefulLandmarkNum) / lk1s.size() * 100, spendTime);
 
     return status;
 }
@@ -1333,16 +1324,22 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
     return true;
 }
 
-bool Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
-                               const Optimizer::ResidualInfo& newCost) {
+void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
+                               const Optimizer::ResidualInfo& newCost,
+                               bool& accept, bool& converge) {
     // TODO: 使用更好的LM更新方式
-    if (lastCost.cost <= newCost.cost) {
+    const double costDiff = lastCost.cost - newCost.cost;
+    if (costDiff <= 0) {
         lambda_ *= 1.8;
-        return false;
+        accept = false;
+    } else {
+        lambda_ *= 0.3;
+        accept = true;
+        if (costDiff < config->convergeCostDiffLM) {
+            cout << fmt::format("LM cost diff: {} converge!\n", costDiff);
+            converge = true;
+        }
     }
-
-    lambda_ *= 0.3;
-    return true;
 }
 
 Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {

@@ -40,7 +40,12 @@ needNewKFrot: 5.0 # deg
 needNewKFMaxMatchEdgeRatio: 0.1 # 匹配边缘点数量小于该阈值时，需要选定新KF
 # TODO: 这个误差模型将极大的影响深度估计，这里直接是将其当作误差角度使用，值为1时不行
 filterPixelError: 10 # 按1个像素误差推导深度三角化不确定度
-maxIteration: 130 # LM算法迭代次数
+
+maxIterationLM: 130 # LM算法迭代次数
+convergeCostDiffLM: 1e-6
+maxLambdaValueLM: 1e12
+maxSteppingCountLM: 5 # 没有下降的最大次数
+
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500

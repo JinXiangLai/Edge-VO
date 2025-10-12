@@ -63,7 +63,9 @@ class Config {
     double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio;
     double filterPixelError;
     int messageLevel;
-    int maxIteration;
+    int maxIterationLM;
+    double convergeCostDiffLM;
+    double maxLambdaValueLM;
     int maxActiveLandmarkEachKF;
     int fastTh;
     double relativePoseConstraintWeight;

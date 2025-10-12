@@ -50,7 +50,9 @@ Config::Config(const std::string& yamlFilePath) {
     filterPixelError = f["filterPixelError"].as<double>();
 
     messageLevel = f["messageLevel"].as<int>();
-    maxIteration = f["maxIteration"].as<int>();
+    maxIterationLM = f["maxIterationLM"].as<int>();
+    convergeCostDiffLM = f["convergeCostDiffLM"].as<double>();
+    maxLambdaValueLM = f["maxLambdaValueLM"].as<double>();
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
     relativePoseConstraintWeight =
