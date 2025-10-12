@@ -115,6 +115,9 @@ class Optimizer {
 
     bool CalculatePriorCostChi2(const Eigen::VectorXd& deltaX);
 
+    bool UpdateLMlambda(const ResidualInfo& lastCost,
+                                 const ResidualInfo& newCost);
+
     cv::VideoWriter debugTriangulateWriter_;
 
    private:
@@ -135,7 +138,8 @@ class Optimizer {
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
     Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
     Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
-    double rpChi2_ = 0; // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负
+    double rpChi2_ =
+        0;  // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负(事实上，先验残差为负是可接受的，意味着系统往更好的方向优化，因此该常数项不需要考虑)
     Eigen::VectorXd margDeltaX_;  // 边缘化时的状态量增量
     bool margKF_ = false;
 

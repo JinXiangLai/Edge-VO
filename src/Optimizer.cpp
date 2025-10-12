@@ -359,7 +359,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
 
     cout << setprecision(5) << "deltaPose: "
-         << deltaPose.head(window_.size() * window_[0]->Tcw_.Size()).transpose()
+         << deltaPose.head(poseNum * window_[0]->Tcw_.Size()).transpose()
          << "\n";
     cout << setprecision(5) << "deltaPoint: " << deltaPoint.head(10).transpose()
          << "\n";
@@ -394,7 +394,9 @@ double Optimizer::CalculatePriorCost(const Eigen::VectorXd& deltaX) {
     // deltaXn +...+ deltaX2 + deltaX1 = Xn - X0
     // 所以每次让deltaX0 += deltaX 进行更新即可，需要注意，当最终更新不被接受时，需要重置回上一次的deltaX0
     const Eigen::VectorXd deltaNew = margDeltaX_ + deltaX;
-    return 0.5 * deltaNew.transpose() * (Hp_ * deltaNew - g_p_) + 0.5 * rpChi2_;
+    //return 0.5 * deltaNew.transpose() * (Hp_ * deltaNew - g_p_) + 0.5 * rpChi2_;
+    // 先验残差为负是可允许的，常数项0.5*rp.T*rp不影响整体优化方向，不需要考虑
+    return 0.5 * deltaNew.transpose() * (Hp_ * deltaNew - g_p_);
 }
 
 void Optimizer::UpdatePriorDeltaX0(const Eigen::VectorXd& deltaX) {
@@ -1229,7 +1231,8 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
     // | I          0 |   | A  B |   | A  B |
     // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
     Eigen::MatrixXd A = H_.block(0, 0, margDim, margDim);
-    if (A.diagonal().squaredNorm() < 1.) {
+    const double kMinAmatrixDet = 1e-16;
+    if (abs(A.determinant()) < kMinAmatrixDet) {
         // 边缘化信息过小，无效
         return false;
     }
@@ -1259,13 +1262,13 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
         Hp_, g_p_, config->maxKFnumInWindow,
         Hp_.cols() - config->maxKFnumInWindow * window_[0]->Twc_.Size());
     cout << "marg KF delta x: " << deltaX.transpose() << endl;
-    if (!CalculatePriorCostChi2(deltaX)) {
-        cout << fmt::format(
-            "calculate prior chi2 failed, marg kf id: {}, new kf id: {}, will "
-            "keep first kf in window fixed!\n",
-            window_[0]->id_, window_.back()->id_);
-        return false;
-    }
+    //if (!CalculatePriorCostChi2(deltaX)) {
+    //    cout << fmt::format(
+    //        "calculate prior chi2 failed, marg kf id: {}, new kf id: {}, will "
+    //        "keep first kf in window fixed!\n",
+    //        window_[0]->id_, window_.back()->id_);
+    //    return false;
+    //}
     UpdateStatusVariables(deltaX, 1);
 
     // 重置记录增量的变量
@@ -1323,9 +1326,22 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
 
     // 根据先验方程等式，有：
     const Eigen::VectorXd priorResidual = -J_p * deltaX;
+    // 该项是常数项，不需要考虑
     rpChi2_ = priorResidual.squaredNorm();
     cout << fmt::format("prior residual chi2: {}!\n", rpChi2_);
 
+    return true;
+}
+
+bool Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
+                               const Optimizer::ResidualInfo& newCost) {
+    // TODO: 使用更好的LM更新方式
+    if (lastCost.cost <= newCost.cost) {
+        lambda_ *= 1.8;
+        return false;
+    }
+
+    lambda_ *= 0.3;
     return true;
 }
 
