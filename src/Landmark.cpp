@@ -117,9 +117,10 @@ bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
         invZ_ = 1.0 / pc2.z();
     }
 
-    if (target_.count(host_)) {
-        target_.erase(host_);
-    }
+    // 不在这里删除，因为构建边缘化信息需要
+    //if (target_.count(host_)) {
+    //    target_.erase(host_);
+    //}
     host_ = kf2;
     uv_ = target_.at(kf2);
     // TODO：暂不使用首次雅可比

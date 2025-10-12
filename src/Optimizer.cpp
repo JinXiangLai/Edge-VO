@@ -766,7 +766,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         "spend: {:.1f}s.\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
-        double(lastCost.usefulLandmarkNum) / optLandmark_.size() * 100,
+        double(lastCost.usefulLandmarkNum) / lk1s.size() * 100,
         spendTime);
 
     return status;
