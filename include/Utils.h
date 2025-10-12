@@ -2,6 +2,7 @@
 #define UTILS
 
 #include <fmt/core.h>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -341,6 +342,12 @@ bool CheckEpipolarLineDirection(const Eigen::Vector2d& ep2,
 std::string GetTriangulatePointName(const Eigen::Vector2d& p);
 
 Pose GetPredictPose(const KeyFrame& last1, const KeyFrame& last2);
+
+inline double ChronoTimeDurationCal(
+    const std::chrono::steady_clock::time_point& t1,
+    const std::chrono::steady_clock::time_point& t2) {
+    return std::chrono::duration<double>(t2 - t1).count();
+}
 
 enum KeyboardEvent { Reset, StepByStep };
 

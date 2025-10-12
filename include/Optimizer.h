@@ -23,6 +23,7 @@ class Optimizer {
         int totalConstraintNum = 0;
         int usefulLandmarkNum = 0;
         double meanCost = 0;
+        double priorConstraintChi2 = 0.;
     };
 
     bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
@@ -108,6 +109,12 @@ class Optimizer {
                          const cv::Mat& debugImg2, const Pose& Twc2);
 
     void WriteDebugTriangulateCase2Video(const int curFid);
+
+    void UpdateStatusVariables(const Eigen::VectorXd& deltaX,
+                               const size_t startPoseId = 0);
+
+    bool CalculatePriorCostChi2(const Eigen::VectorXd& deltaX);
+
     cv::VideoWriter debugTriangulateWriter_;
 
    private:
@@ -128,7 +135,8 @@ class Optimizer {
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
     Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
     Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
-    Eigen::VectorXd deltaX0_;  // 边缘化时的状态量增量
+    double rpChi2_ = 0; // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负
+    Eigen::VectorXd margDeltaX_;  // 边缘化时的状态量增量
     bool margKF_ = false;
 
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
