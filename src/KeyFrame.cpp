@@ -648,13 +648,13 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
                 lastKFoptFlw.trackLandmark_[i]);
         }
 
-        for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
-            // 添加历史关键帧跟踪上的关键点
-            optFlw.prevHistoryPts_.emplace_back(
-                lastKFoptFlw.prevHistoryPts_[i]);
-            optFlw.trackHistoryLandmark_.emplace_back(
-                lastKFoptFlw.trackHistoryLandmark_[i]);
-        }
+        //for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
+        //    // 添加历史关键帧跟踪上的关键点
+        //    optFlw.prevHistoryPts_.emplace_back(
+        //        lastKFoptFlw.prevHistoryPts_[i]);
+        //    optFlw.trackHistoryLandmark_.emplace_back(
+        //        lastKFoptFlw.trackHistoryLandmark_[i]);
+        //}
     }
 
     optFlw.SetTotalFeatureCreated();
