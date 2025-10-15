@@ -6,42 +6,47 @@ using namespace std;
 Pose::Pose(const Pose& T) {
     q_wb_ = T.q_wb_;
     t_wb_ = T.t_wb_;
+    scale_ = T.scale_;
 }
 
-Pose::Pose(const Eigen::Quaterniond& q_wb, const Eigen::Vector3d& t_wb)
-    : q_wb_(q_wb), t_wb_(t_wb) {}
+Pose::Pose(const Eigen::Quaterniond& q_wb, const Eigen::Vector3d& t_wb,
+           const double scale)
+    : q_wb_(q_wb), t_wb_(t_wb), scale_(scale) {}
 
 Pose Pose::Inverse() const {
     Eigen::Quaterniond q_bw = q_wb_.inverse();
     q_bw.normalize();
-    const Eigen::Vector3d t_bw = -(q_bw * t_wb_);
-    return Pose(q_bw, t_bw);
+    const double invS = 1.0 / scale_;
+    const Eigen::Vector3d t_bw = -invS * (q_bw * t_wb_);
+    return Pose(q_bw, t_bw, invS);
 }
 
 Pose Pose::operator*(const Pose& T) const {
-    return Pose(q_wb_ * T.q_wb_, q_wb_ * T.t_wb_ + t_wb_);
+    return Pose(q_wb_ * T.q_wb_, scale_ * (q_wb_ * T.t_wb_) + t_wb_,
+                scale_ * T.scale_);
 }
 
 Eigen::Vector3d Pose::operator*(const Eigen::Vector3d& p) const {
-    return q_wb_ * p + t_wb_;
+    return scale_ * (q_wb_ * p) + t_wb_;
 }
 
 int Pose::Size() const {
-    return 6;
+    return 7;
 }
 
 void Pose::Update(const Eigen::Vector3d& delta_q,
-                  const Eigen::Vector3d& delta_t) {
+                  const Eigen::Vector3d& delta_t, const double scale) {
     // const Eigen::Matrix3d deltaR = Eigen::AngleAxisd(delta_q.norm(), delta_q.normalized()).toRotationMatrix();
     // q_wb_ *= Eigen::Quaterniond(deltaR);
     q_wb_ = q_wb_ * Exp<double>(delta_q);  // Sophus库标准更新法
     q_wb_.normalize();
     t_wb_ += delta_t;
+    scale_ += scale;
 }
 
 Eigen::Matrix4d Pose::ToMatrix4d() const {
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block(0, 0, 3, 3) = q_wb_.toRotationMatrix();
+    T.block(0, 0, 3, 3) = scale_ * q_wb_.toRotationMatrix();
     T.block(0, 3, 3, 1) = t_wb_;
     return T;
 }

@@ -44,7 +44,7 @@ class KeyFrame {
     size_t InitializeLandmark(const KeyFrame* lastKf);
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
-    void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
+    void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t, const double scale);
     void SetTwc(const Pose& Twc, const bool printDiff = false);
 
     void ReleaseMat();

@@ -664,8 +664,8 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
 }
 
 void KeyFrame::Update(const Eigen::Vector3d& delta_q,
-                      const Eigen::Vector3d& delta_t) {
-    Twc_.Update(delta_q, delta_t);
+                      const Eigen::Vector3d& delta_t, const double scale) {
+    Twc_.Update(delta_q, delta_t, scale);
     Tcw_ = Twc_.Inverse();
 }
 

@@ -446,11 +446,11 @@ Pose ConvertRPYandPostion2Pose(const Eigen::Vector3d& rpy,
         Eigen::AngleAxisd(rpy[2] * deg2rad, Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(rpy[1] * deg2rad, Eigen::Vector3d::UnitX()) *
         Eigen::AngleAxisd(rpy[0] * deg2rad, Eigen::Vector3d::UnitZ());
-    return Pose(q_c1c2, t);
+    return Pose(q_c1c2, t, 1.0);
 }
 
 void varifyTriangulate() {
-    Pose Twc1(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero());
+    Pose Twc1(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero(), 1.0);
     Pose Tc1c2 =
         ConvertRPYandPostion2Pose({0, 0, 20}, {0.5, 1., -0.5}, kDeg2Rad);
     shared_ptr<Camera> cam = make_shared<Camera>(config);
@@ -577,7 +577,7 @@ void FindImageAndPose(const int idx, const vector<string>& vstrImages,
         const Eigen::Quaterniond q1(Twv1[7], Twv1[4], Twv1[5], Twv1[6]);
         const Eigen::Quaterniond q2(Twv2[7], Twv2[4], Twv2[5], Twv2[6]);
         const Eigen::Quaterniond q = q1.slerp(ratio, q2);
-        Pose Twv(q, p);
+        Pose Twv(q, p, 1.0);
         return calib.Tcv_ * Twv * calib.Tvc_;
     };
 
@@ -635,7 +635,7 @@ void GetImageAndPose(const int idx, const vector<string>& vstrImages,
         const Eigen::Quaterniond q1(Twv1[7], Twv1[4], Twv1[5], Twv1[6]);
         const Eigen::Quaterniond q2(Twv2[7], Twv2[4], Twv2[5], Twv2[6]);
         const Eigen::Quaterniond q = q1.slerp(ratio, q2);
-        Pose Twv(q, p);
+        Pose Twv(q, p, 1.0);
         return calib.Tcv_ * Twv * calib.Tvc_;
     };
 

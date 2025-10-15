@@ -131,7 +131,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
     * res w.r.t (u2, v2) [2x2] 单位矩阵
     * (u2, v2) w.r.t Pc2_norm [2x3]
     * Pc2_norm w.r.t Pc2 [3x3]
-    * Pc2 w.r.t Twc2 [3x6] ------> optimization variable
+    * Pc2 w.r.t Twc2 [3x7] ------> optimization variable，含scale
     * Pc2 w.r.t Pw1 [3x3]
     * Pw1 w.r.t Pc1 [3x3]
     * Pc1 w.r.t z1 [3x1] -------> optimization variable
@@ -171,14 +171,16 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         Eigen::Matrix<double, 2, 3> J_px2_Pc2 = J_px2_Pc2Norm * J_Pc2Norm_Pc2;
 
         // Pc2 w.r.t T12 [3x6]
-        Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
-            Eigen::Matrix<double, 3, 6>::Zero();
-
+        Eigen::Matrix<double, 3, 7> J_Pc2_Twc2 =
+            Eigen::Matrix<double, 3, 7>::Zero();
+        const double invS = 1.0 / Twc2.scale_;
         const Eigen::Vector3d dt = Pw1 - Twc2.t_wb_;
         // * Pc2 w.r.t R12
-        J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(Tc2w.q_wb_ * dt);
+        J_Pc2_Twc2.block(0, 0, 3, 3) = invS * SkewSymmetric(Tc2w.q_wb_ * dt);
         // * Pc2 w.r.t t12
-        J_Pc2_Twc2.block(0, 3, 3, 3) = -Tc2w.q_wb_.toRotationMatrix();
+        J_Pc2_Twc2.block(0, 3, 3, 3) = -invS * Tc2w.q_wb_.toRotationMatrix();
+        // * Pc2 w.r.t scale
+        J_Pc2_Twc2.block(0, 6, 3, 1) = Tc2w.q_wb_.toRotationMatrix() * dt;
 
         Eigen::Matrix<double, 3, 3> J_Pc2_Pw1;
         Eigen::Matrix<double, 3, 3> J_Pw1_Pc1;
@@ -186,10 +188,11 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         // TODO: 实现FEJ
         if (!onlyPoseUpdate_) {
             // Pc2 w.r.t Pc1 [3x3]
-            J_Pc2_Pw1 = Tc2w.q_wb_.toRotationMatrix();
+            J_Pc2_Pw1 = invS * Tc2w.q_wb_.toRotationMatrix();
 
             // Pw1 w.r.t Pc1 [3x3]
-            J_Pw1_Pc1 = p.host_->Twc_.q_wb_.toRotationMatrix();
+            const double& s1 = p.host_->Twc_.scale_;
+            J_Pw1_Pc1 = s1 * p.host_->Twc_.q_wb_.toRotationMatrix();
 
             // Pc1 w.r.t z1 [3x1]
             const Eigen::Vector3d pc1Norm(p.GetPcNorm());
@@ -207,7 +210,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         // cout << "J_res_px2:\n" << J_res_px2 << endl;
         // cout << "J_px2_Pc2:\n" << J_px2_Pc2 << endl;
         // cout << "J_Pc2_T12:\n" << J_Pc2_T12 << endl;
-        Eigen::Matrix<double, 2, 6> A =
+        Eigen::Matrix<double, 2, 7> A =
             J_px2_Pc2 * J_Pc2_Twc2 * noUpdatePoseNum;
         double w = 1.0;  // 1.0 / lk1s[i]->invDepthCov_;
         H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w * rho[1];
@@ -483,7 +486,23 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
 
         // 状态更新
-        UpdateStatusVariables(delta_x);
+        int updateId = 0;
+        for (size_t i = 0; i < window_.size(); ++i) {
+            const int startRow = i * window_[0]->Twc_.Size();
+            window_[i]->Update(delta_x.middleRows(startRow, 3),
+                               delta_x.middleRows(startRow + 3, 3),
+                               delta_x.middleRows(startRow + 6, 1)[0]);
+        }
+        if (!onlyPoseUpdate_) {
+            updateId += window_.size() * window_[0]->Twc_.Size();
+            for (size_t i = 0; i < optLandmark_.size(); ++i) {
+                if (!optLandmark_[i]->noUsed_) {
+                    optLandmark_[i]->Update(delta_x.middleRows(
+                        updateId, optLandmark_[0]->Size())[0]);
+                    ++updateId;
+                }
+            }
+        }
 
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow(optLandmark_);
@@ -678,7 +697,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         int updateId = 0;
         const int startRow = 0;
         Twc2.Update(delta_x.middleRows(startRow, 3),
-                    delta_x.middleRows(startRow + 3, 3));
+                    delta_x.middleRows(startRow + 3, 3),
+                    delta_x.middleRows(startRow + 6, 1)[0]);
 
         if (!onlyPoseUpdate_) {
             updateId += Twc2.Size();
@@ -849,15 +869,14 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         //        interaction->allMapPoints.push_back(lk->GetPw());
         //    }
         //}
-        // RemoveOneKeyframe(*kf); 在局部BA优化过程中移除
         // 同时需要把所有由该关键帧首次观测到的地图点转移所有权
         // 并且删除其余地图点在该帧上的观测
 
         // 滑窗优化时，会将当前帧添加到滑窗中去
-        if (SlidingWindowOptimize(kf)) {
-            //exit(0);
-        }
-        //window_.push_back(kf);
+        //if (SlidingWindowOptimize(kf)) {
+        //    //exit(0);
+        //}
+        window_.push_back(kf);
     } else {
         // 创建的是首帧关键帧，是否需要赋值prevHistoryPts_？
         // 应该是不需要的
@@ -881,7 +900,7 @@ void Optimizer::UpdateStatusVariables(const Eigen::VectorXd& deltaX,
     for (size_t i = startPoseId; i < window_.size(); ++i) {
         const int startRow = (i - startPoseId) * window_[0]->Twc_.Size();
         window_[i]->Update(deltaX.middleRows(startRow, 3),
-                           deltaX.middleRows(startRow + 3, 3));
+                           deltaX.middleRows(startRow + 3, 3), deltaX.middleRows(startRow + 6, 1)[0]);
     }
     if (!onlyPoseUpdate_) {
         updateId += (window_.size() - startPoseId) * window_[0]->Twc_.Size();
