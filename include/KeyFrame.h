@@ -32,7 +32,7 @@ constexpr float nanValueNOstereoVisionIssue = -4;
 
 class KeyFrame {
    public:
-    // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     KeyFrame(const cv::Mat& img, const Pose& Twc, std::shared_ptr<Camera> cam,
              const int id, const int level = 1);
     ~KeyFrame();
@@ -79,7 +79,7 @@ class KeyFrame {
     void AddReportElement(const std::string& key);
     void ResetDebugMessage();
 
-    void OpticalFlowTrackExcute(const cv::Mat& prevImg, const cv::Mat& curImg,
+    void OpticalFlowTrackExecute(const cv::Mat& prevImg, const cv::Mat& curImg,
                                 std::vector<cv::Point2f>& prevPts,
                                 std::vector<Landmark*>& prevTrackLandmark);
 

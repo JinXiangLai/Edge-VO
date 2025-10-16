@@ -109,9 +109,11 @@ void KeyFrame::operator=(const KeyFrame& f) {
 
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
+    int deleteLKnum = 0;
     for (Landmark* lk : landmark_) {
         if (lk != nullptr && lk->canBedelete_) {
             delete lk;
+            ++deleteLKnum;
             lk = nullptr;
         }
     }
@@ -120,7 +122,11 @@ KeyFrame::~KeyFrame() {
         invDepthUncertaintyFile_.close();
     }
 
-    std::cout << this << " Releasw KF id: " << id_ << std::endl;
+    cout << fmt::format(
+        "{} Release KF id: {}, landmark size: {}, delete size: {}, transform "
+        "size: {}\n",
+        reinterpret_cast<size_t>(this), id_, landmark_.size(), deleteLKnum,
+        (landmark_.size() - deleteLKnum));
 }
 
 void KeyFrame::SetOpticalFlowStructCurFrame() {
@@ -231,10 +237,10 @@ void KeyFrame::ResetDebugMessage() {
     matchResultStatiscs_.clear();
 }
 
-void KeyFrame::OpticalFlowTrackExcute(const cv::Mat& prevImg,
-                                      const cv::Mat& curImg,
-                                      vector<cv::Point2f>& prevPts,
-                                      vector<Landmark*>& prevTrackLandmark) {
+void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
+                                       const cv::Mat& curImg,
+                                       vector<cv::Point2f>& prevPts,
+                                       vector<Landmark*>& prevTrackLandmark) {
     vector<cv::Point2f> nextPts;
     vector<uchar> status;
     vector<float> error;
@@ -244,7 +250,7 @@ void KeyFrame::OpticalFlowTrackExcute(const cv::Mat& prevImg,
     const auto debugPts1 = prevPts;
     prevPts.clear();
     for (size_t i = 0; i < status.size(); ++i) {
-        if (status[i] == 1 && error[i] < 10) {
+        if (status[i] == 1 && error[i] < config->maxFlowTrackError) {
             // 重新赋值landmark在当前帧上的观测
             prevPts.emplace_back(nextPts[i]);
             trackLandmark.emplace_back(prevTrackLandmark[i]);
@@ -259,19 +265,19 @@ void KeyFrame::OpticalFlowTrackExcute(const cv::Mat& prevImg,
 void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
 
     if (optFlw.prevPts_.empty()) {
-        cout << "here optFlw_.prevPts_ should not be empty!!!";
+        cout << "here optFlw_.prevPts_ should not be empty!!!\n";
         exit(-1);
     }
 
     // 上一关键帧对当前帧的跟踪结果
-    OpticalFlowTrackExcute(optFlw.prevImg_, f2.grayImg_, optFlw.prevPts_,
-                           optFlw.trackLandmark_);
+    OpticalFlowTrackExecute(optFlw.prevImg_, f2.grayImg_, optFlw.prevPts_,
+                            optFlw.trackLandmark_);
     WriteDebugImage2VideoEachFrame(f2.id_, "lastKF_track_result.avi");
 
     if (!optFlw.prevHistoryPts_.empty()) {
-        OpticalFlowTrackExcute(optFlw.prevImg_, f2.grayImg_,
-                               optFlw.prevHistoryPts_,
-                               optFlw.trackHistoryLandmark_);
+        OpticalFlowTrackExecute(optFlw.prevImg_, f2.grayImg_,
+                                optFlw.prevHistoryPts_,
+                                optFlw.trackHistoryLandmark_);
         WriteDebugImage2VideoEachFrame(f2.id_, "historyKF_track_result.avi");
     }
 
@@ -648,13 +654,14 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
                 lastKFoptFlw.trackLandmark_[i]);
         }
 
-        for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
-            // 添加历史关键帧跟踪上的关键点
-            optFlw.prevHistoryPts_.emplace_back(
-                lastKFoptFlw.prevHistoryPts_[i]);
-            optFlw.trackHistoryLandmark_.emplace_back(
-                lastKFoptFlw.trackHistoryLandmark_[i]);
-        }
+        // 历史没有删除，这里不需重复添加
+        // for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
+        //     // 添加历史关键帧跟踪上的关键点
+        //     optFlw.prevHistoryPts_.emplace_back(
+        //         lastKFoptFlw.prevHistoryPts_[i]);
+        //     optFlw.trackHistoryLandmark_.emplace_back(
+        //         lastKFoptFlw.trackHistoryLandmark_[i]);
+        // }
     }
 
     optFlw.SetTotalFeatureCreated();

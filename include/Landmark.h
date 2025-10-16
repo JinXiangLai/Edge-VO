@@ -15,7 +15,7 @@ constexpr double kInitCov = 5.0 * 5.0;
 
 class Landmark {
    public:
-    // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     Landmark(const Eigen::Vector2d& px, KeyFrame* host,
              const std::shared_ptr<Camera> cam, const uint64_t desc,

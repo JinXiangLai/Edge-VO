@@ -66,8 +66,10 @@ class Config {
     int maxIterationLM;
     double convergeCostDiffLM;
     double maxLambdaValueLM;
+    int maxNoImprovementCountLM;
     int maxActiveLandmarkEachKF;
     int fastTh;
+    double maxFlowTrackError;
     double relativePoseConstraintWeight;
     std::string model;
     int maxKeepEpilorMatchPointNum = 3;

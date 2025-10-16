@@ -18,6 +18,8 @@ using namespace std;
 using namespace cv;
 
 constexpr double kPriorDepthWeight = 1e8;
+constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
+constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
@@ -254,7 +256,8 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
 
 Eigen::VectorXd Optimizer::SchurCompleteSolve(
     const Eigen::MatrixXd& H, const Eigen::VectorXd& b, const int poseNum,
-    const int pointNum, const int poseDim, const int pointDim) {
+    const int pointNum, const int poseDim, const int pointDim,
+    const bool& logOut) {
     /***
     *     T   p...
     * T   A   B
@@ -285,7 +288,9 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     for (int i = 0; i < pointSize; i += pointDim) {
         //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
-        Dinv(i, i) = 1.0 / D(i, i);
+        if (abs(D(i, i)) > 1e-9) {
+            Dinv(i, i) = 1.0 / D(i, i);
+        }
     }
     Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
     if (A.isApproxToConstant(0)) {
@@ -325,15 +330,6 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     // 求pose增量
-    //cout << "A:\n"
-    //     << A << endl
-    //     << "B:\n"
-    //     << B << endl
-    //     << "C:\n"
-    //     << C << endl
-    //     << "D:\n"
-    //     << D << endl;
-    //cout << "Dinv:\n" << Dinv << endl << "E:\n" << E << endl;
     Eigen::MatrixXd newA = A + E * C;
     //cout << "newA:\n" << newA << endl;
     // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
@@ -344,6 +340,20 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     new_b.head(poseSize) = b.head(poseSize) + E * b.tail(pointSize);
     Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+    if (logOut) {
+        cout << "A:\n"
+             << A << endl
+             << "B:\n"
+             << B << endl
+             << "C:" << C.diagonal().transpose() << endl
+             << "D:" << D.diagonal().transpose() << endl
+             << "Dinv:" << Dinv.diagonal().transpose() << endl
+             << "E:\n"
+             << E << endl
+             << "newA:\n"
+             << newA << endl
+             << "newb: " << new_b.transpose() << endl;
+    }
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
     // 求point增量
@@ -404,8 +414,7 @@ void Optimizer::UpdatePriorDeltaX0(const Eigen::VectorXd& deltaX) {
 }
 
 bool Optimizer::ExecuteWindowOptimize() {
-    ResidualInfo lastCost =
-        CalculateResidualWindow(optLandmark_, false, !margKF_);
+    ResidualInfo lastCost = CalculateResidualWindow(false, !margKFstatus_);
 
     // 丢失追踪，重新进行
     if (lastCost.usefulLandmarkNum < 10) {
@@ -418,8 +427,8 @@ bool Optimizer::ExecuteWindowOptimize() {
     }
 
     ResidualInfo firstCost = lastCost;
-    bool status = false;
     chrono::steady_clock::time_point T1 = chrono::steady_clock::now();
+    int continousNoImprovementNum = 0;
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
@@ -435,7 +444,7 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
-        if (margKF_) {
+        if (margKFstatus_) {
             cout << "Hp_[6x6]: " << setprecision(2)
                  << Hp_.diagonal().head(6).transpose() << endl;
             cout << fmt::format(
@@ -473,7 +482,7 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 保留状态备份
         for (size_t i = 0; i < optLandmark_.size(); ++i) {
-            if (!optLandmark_[i]->noUsed_) {
+            if (!optLandmark_[i]->noUsed_ && optLandmark_[i]->initialized_) {
                 optLandmark_[i]->CopyStatus();
             }
         }
@@ -484,10 +493,11 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 状态更新
         UpdateStatusVariables(delta_x);
-
+        cout << "UpdateStatusVariables end" << endl;
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
-        ResidualInfo newCost = CalculateResidualWindow(optLandmark_);
-        if (margKF_) {
+        ResidualInfo newCost = CalculateResidualWindow();
+        cout << "CalculateResidualWindow end" << endl;
+        if (margKFstatus_) {
             // 需要考虑先验残差约束
             newCost.priorConstraintChi2 = CalculatePriorCost(delta_x);
         }
@@ -500,7 +510,7 @@ bool Optimizer::ExecuteWindowOptimize() {
                  << lastCost.cost << ", " << lastCost.usefulLandmarkNum << ", "
                  << newCost.usefulLandmarkNum << endl;
             // TODO: 重新计算时，需要使用旧的poses，旧的landmarks位置，以及新的landmarks的noUsed标志，比较麻烦
-            lastCost = CalculateResidualWindow(optLandmark_, true);
+            lastCost = CalculateResidualWindow(true);
             cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
         }
 
@@ -511,8 +521,9 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         bool accept = false;
-        bool converge = false;
-        UpdateLMlambda(lastCost, newCost, accept, converge);
+        double costRelativeAbsDiff = 100;
+        UpdateLMlambda(lastCost, newCost, accept, continousNoImprovementNum,
+                       costRelativeAbsDiff);
         if (!accept) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
                 if (!optLandmark_[i]->noUsed_) {
@@ -525,18 +536,13 @@ bool Optimizer::ExecuteWindowOptimize() {
         } else {
             lastCost = newCost;
             // 更新先验残差构成信息项
-            if (margKF_) {
+            if (margKFstatus_) {
                 UpdatePriorDeltaX0(delta_x);
             }
         }
 
-        if (converge) {
-            cout << "Congratulations! LM converge!!!" << endl;
-            status = true;
-            break;
-        }
-        if (lambda_ > config->maxLambdaValueLM) {
-            cout << "lambad too large: " << lambda_ << endl;
+        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
+                        delta_x)) {
             break;
         }
         chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
@@ -546,10 +552,6 @@ bool Optimizer::ExecuteWindowOptimize() {
     }
     chrono::steady_clock::time_point T2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(T2 - T1).count();
-    if (!status) {
-        cerr << "window BA Reach max iteration time or lambda too large"
-             << endl;
-    }
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
         "last mean proj cost: {:.1f}, priorConstraintChi2: {:.1f}, "
@@ -562,7 +564,7 @@ bool Optimizer::ExecuteWindowOptimize() {
         double(lastCost.usefulLandmarkNum) / optLandmark_.size() * 100,
         spendTime);
 
-    return status;
+    return lastCost.cost < firstCost.cost;
 }
 
 bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
@@ -623,7 +625,6 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     //WriteDebugTriangulateCase2Video(curFid);
 #endif
-    bool status = true;
     double initLambda = lambda_;
     lambda_ = initLambda;
     ResidualInfo lastCost =
@@ -637,6 +638,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     usefulPointNum = firstCost.usefulLandmarkNum;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    int continousNoImprovementNum = 0;
     for (int i = 0; i < maxIte_; ++i) {
         //lastCost = CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
         CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
@@ -721,8 +723,9 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             i, lastCost.cost, newCost.cost, lambda_);
 
         bool accept = false;
-        bool converge = false;
-        UpdateLMlambda(lastCost, newCost, accept, converge);
+        double costRelativeAbsDiff = 100;
+        UpdateLMlambda(lastCost, newCost, accept, continousNoImprovementNum,
+                       costRelativeAbsDiff);
         // LM 方法
         if (!accept) {
             for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
@@ -735,21 +738,13 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             lastCost = newCost;
         }
 
-        if (converge) {
-            cout << "Congratulations! LM or GN converge!!!" << endl;
-            status = true;
-            break;
-        }
-        if (lambda_ > config->maxLambdaValueLM) {
-            cout << "lambad too large: " << lambda_ << endl;
+        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
+                        delta_x)) {
             break;
         }
     }
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(t2 - t1).count();
-    if (!status) {
-        cerr << "frame BA Reach max iteration time or lambda too large" << endl;
-    }
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
         "last mean proj cost: {:.1f}, "
@@ -760,7 +755,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / lk1s.size() * 100, spendTime);
 
-    return status;
+    return lastCost.cost < firstCost.cost;
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
@@ -959,7 +954,9 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
                 transformSucceed = true;
                 // 由于先前没有添加待删除关键帧的地图点至优化变量，
                 // 这里将被保留下来的地图点添加进来以进行滑窗BA
-                if (lk->initialized_ && lk->target_.size() > 2) {
+                // 后续会删除关于oldest KF的观测
+                if (lk->initialized_ &&
+                    lk->target_.size() > kMinUsefulObvNumWithHost) {
                     optLandmark_.emplace_back(lk);
                     ++newAddOptimizeLandmarkNum;
                 }
@@ -1057,7 +1054,7 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
-            if (!p->initialized_ || p->IsOutOfRange() ||
+            if (!p->initialized_ || p->IsOutOfRange() || p->canBedelete_ ||
                 p->target_.size() < 3) {
                 continue;
             }
@@ -1070,13 +1067,13 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
 }
 
 Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
-    const std::vector<Landmark*>& optLandmark, const bool useBackUpStatus,
-    const bool checkAbnormalLandmark) {
+    const bool useBackUpStatus, const bool checkAbnormalLandmark,
+    KeyFrame* const margKF) {
     ResidualInfo info;
 
     const double maxChi2 = config->maxProjectError * config->maxProjectError;
-    for (size_t i = 0; i < optLandmark.size(); ++i) {
-        Landmark* p = optLandmark[i];
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        Landmark* p = optLandmark_[i];
         if (p->noUsed_ || !p->initialized_) {
             continue;
         }
@@ -1122,7 +1119,10 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
             }
 
             // 只有未被其余观测标记异常的地图点才可参与残差构建
-            if (!p->noUsed_ && tempInfo.totalConstraintNum > 1) {
+            const int excludeNum =
+                (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
+            if (!p->noUsed_ && tempInfo.totalConstraintNum >=
+                                   (kMinUsefulObvNum + excludeNum)) {
                 info.cost += tempInfo.cost;
                 info.totalConstraintNum += tempInfo.totalConstraintNum;
                 ++info.usefulLandmarkNum;
@@ -1208,8 +1208,8 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
     //     << margLandmark.size() << " "
     //     << (optLandmark_.size() - margLandmark.size()) << endl;
 
-    CalculateResidualWindow(optLandmark_, false, true);
-    ConstructJ_H_b_g();
+    CalculateResidualWindow(false, true, window_[0]);
+    ConstructJ_H_b_g(window_[0]);
 
     // Step:接下来计算相关先验Hp, g_p
     const int poseDim = window_[0]->Twc_.Size();
@@ -1238,20 +1238,24 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
     const Eigen::MatrixXd invA = A.inverse();
     const Eigen::MatrixXd temp = -C * invA;
     Hp_ = -temp * B + D;
+    // | A  B  |   |x1|   | I          0 |   |g1|
+    // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
+    // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
+    g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
     cout << "Marginalization info:\nA: " << setprecision(2)
          << A.diagonal().transpose() << "\n"
          << "invA: " << invA.diagonal().transpose() << "\n"
          << "temp: " << temp.diagonal().transpose() << "\n"
          << "B: " << B.diagonal().transpose() << "\n"
-         << "D: " << D.diagonal().head(12).transpose() << "\n";
-    // | A  B  |   |x1|   | I          0 |   |g1|
-    // | 0  ΔA | * |x2| = | -C*A.inv   I | * |g2| ==>
-    // TODO: 留下来的状态量X2如果更新，右边的先验残差怎么变呢?
-    g_p_ = temp * g_.head(margDim) + g_.tail(leftDim);
+         << "D: " << D.diagonal().head(12).transpose() << "\n"
+         << "Hp_[6x6]:\n"
+         << Hp_.block(0, 0, 6, 6) << "\n"
+         << "gp_: " << g_p_.transpose() << "\n";
     // 构建先验增量，边缘化帧改变了原有的概率分布，需要将该增量用于更新状态量
     const Eigen::VectorXd deltaX = SchurCompleteSolve(
         Hp_, g_p_, config->maxKFnumInWindow,
-        Hp_.cols() - config->maxKFnumInWindow * window_[0]->Twc_.Size());
+        Hp_.cols() - config->maxKFnumInWindow * config->maxKFnumInWindow,
+        window_[0]->Tcw_.Size(), optLandmark_[0]->Size(), false);
     cout << "marg KF delta x: " << deltaX.transpose() << endl;
     //if (!CalculatePriorCostChi2(deltaX)) {
     //    cout << fmt::format(
@@ -1326,23 +1330,49 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
 
 void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
                                const Optimizer::ResidualInfo& newCost,
-                               bool& accept, bool& converge) {
+                               bool& accept, int& continousNoImprovementNum,
+                               double& costRelativeAbsDiff) {
     // TODO: 使用更好的LM更新方式
-    const double costDiff = lastCost.cost - newCost.cost;
-    if (costDiff <= 0) {
+    costRelativeAbsDiff = lastCost.cost - newCost.cost;
+    if (costRelativeAbsDiff <= 0) {
         lambda_ *= 1.8;
         accept = false;
+        ++continousNoImprovementNum;
     } else {
         lambda_ *= 0.3;
         accept = true;
-        if (costDiff < config->convergeCostDiffLM) {
-            cout << fmt::format("LM cost diff: {} converge!\n", costDiff);
-            converge = true;
-        }
+        continousNoImprovementNum = 0;
     }
+    costRelativeAbsDiff = abs(costRelativeAbsDiff);
 }
 
-Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
+bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
+                            const double& costRelativeAbsDiff,
+                            const Eigen::VectorXd& delta) {
+    const bool lambdaTestEnough = lambda_ > 1e9 || lambda_ < 1e-9;
+    if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
+        cout << fmt::format("LM cost diff: {} converge!\n",
+                            costRelativeAbsDiff);
+        return true;
+    }
+    if (lambda_ > config->maxLambdaValueLM) {
+        cout << fmt::format("lambad too large: {}\n", lambda_);
+        return true;
+    }
+    if (continousNoImprovementNum > config->maxNoImprovementCountLM &&
+        lambdaTestEnough) {
+        cout << fmt::format("continousNoImprovementNum: {}, lambda_: {}\n",
+                            continousNoImprovementNum, lambda_);
+        return true;
+    }
+    if (delta.norm() < 1e-5 && lambdaTestEnough) {
+        return true;
+    }
+
+    return false;
+}
+
+Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
     // 构建H, g
     // 给出每个KF对应的在H矩阵中的位置
     map<const KeyFrame*, int> kfMapCol;
@@ -1360,7 +1390,13 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
     //    window_.size() * poseDim + optLandmark_.size() * depthDim;
     int variableDim = window_.size() * poseDim;
     for (const Landmark* lk : optLandmark_) {
-        variableDim += lk->noUsed_ ? 0 : lk->Size();
+        const int excludeNum =
+            (margKF != nullptr && lk->target_.count(margKF)) ? 1 : 0;
+        variableDim +=
+            (lk->noUsed_ || !lk->initialized_ ||
+             lk->target_.size() < (kMinUsefulObvNumWithHost + excludeNum))
+                ? 0
+                : lk->Size();
     }
     cout << "opt variable dim: " << variableDim << endl;
     H_.resize(variableDim, variableDim);
@@ -1384,7 +1420,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
     // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
-        if (p->noUsed_) {
+        if (p->noUsed_ || !p->initialized_) {
             //cout << fmt::format(
             //    "no cal res jac num: {}, addr: {}, idepth: {}\n",
             //    info.usefulLandmarkNum, reinterpret_cast<size_t>(p), p->invZ_);
@@ -1404,7 +1440,11 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
         J_px2_Pc2Norm(1, 2) = 0.;
 
         // 最新关键帧没有反向追踪能力
-        if (host->id_ != window_.back()->id_) {
+        bool addConstraint = false;
+        const int excludeNum =
+            (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
+        if (host->id_ != window_.back()->id_ &&
+            p->target_.size() > (kMinUsefulObvNum + excludeNum)) {
             // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
 
             for (const auto& kf2obv : p->target_) {
@@ -1558,10 +1598,14 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g() {
                 g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w * rho[1];
                 g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w * rho[1];
                 g_.middleRows(bj, depthDim) -= B.transpose() * r * w * rho[1];
+
+                addConstraint = true;
             }
         }
 
-        ++info.usefulLandmarkNum;
+        if (addConstraint) {
+            ++info.usefulLandmarkNum;
+        }
     }
     info.meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
@@ -1862,11 +1906,14 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         return false;
     }
 
-    margKF_ = false;
+    margKFstatus_ = false;
     if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
         // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
         // 其信息已经通过深度点的传播转移到后面的KF中
-        margKF_ = MarginalizeOldestKeyFrame();
+        if (margKFid < 2) {
+            margKFstatus_ = MarginalizeOldestKeyFrame();
+            cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
+        }
 
         // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
         // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
@@ -1956,7 +2003,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
                             horDist);
         if (horDist < config->needNewKFtrans * 1.5) {
             smallId = window_.size() - 1;  // 移除掉最新的，因为重复观测可能大
-            cout << "Will remove the last keyframe from window!";
+            cout << "Will remove the last keyframe from window!\n";
         }
     }
 
@@ -1988,9 +2035,8 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
     if (optSuccess) {
         kf2->SetTwc(Twc2);  // 关闭这个出现错乱，证明优化有效
     }
-
     cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_ << endl;
-    return true;
+    return optSuccess;
 }
 
 void Optimizer::CullingErrorLandmark(KeyFrame* curF) {

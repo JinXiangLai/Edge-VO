@@ -44,7 +44,8 @@ class Optimizer {
                                        const Eigen::VectorXd& b,
                                        const int poseNum, const int pointNum,
                                        const int poseDim = 6,
-                                       const int pointDim = 1);
+                                       const int pointDim = 1,
+                                       const bool& logOut = false);
 
     double CalculatePriorCost(const Eigen::VectorXd& deltaX);
 
@@ -61,7 +62,7 @@ class Optimizer {
 
     void AddOneKeyFeame(KeyFrame* kf);
 
-    ResidualInfo ConstructJ_H_b_g();
+    ResidualInfo ConstructJ_H_b_g(KeyFrame* const margKF = nullptr);
 
     double ConstructJ_H_b_g_byMatch();
 
@@ -70,9 +71,9 @@ class Optimizer {
     bool ExecuteWindowOptimize();
 
     ResidualInfo CalculateResidualWindow(
-        const std::vector<Landmark*>& optLandmark,
         const bool useBackUpStatus = false,
-        const bool checkAbnormalLandmark = false);
+        const bool checkAbnormalLandmark = false,
+        KeyFrame* const margKF = nullptr);
 
     bool SlidingWindowOptimize(KeyFrame* curKF);
 
@@ -117,7 +118,12 @@ class Optimizer {
 
     void UpdateLMlambda(const ResidualInfo& lastCost,
                         const ResidualInfo& newCost, bool& accept,
-                        bool& converge);
+                        int& continousNoImprovementNum,
+                        double& costRelativeAbsDiff);
+
+    bool LMstopJudge(const int& continousNoImprovementNum,
+                     const double& costRelativeAbsDiff,
+                     const Eigen::VectorXd& delta);
 
     cv::VideoWriter debugTriangulateWriter_;
 
@@ -142,7 +148,7 @@ class Optimizer {
     double rpChi2_ =
         0;  // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负(事实上，先验残差为负是可接受的，意味着系统往更好的方向优化，因此该常数项不需要考虑)
     Eigen::VectorXd margDeltaX_;  // 边缘化时的状态量增量
-    bool margKF_ = false;
+    bool margKFstatus_ = false;
 
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
 };

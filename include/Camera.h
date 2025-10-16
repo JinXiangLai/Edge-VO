@@ -19,6 +19,9 @@ class Camera {
     Eigen::Vector3d InverseProject(const Eigen::Matrix<T, 2, 1>& uv,
                                    const double& z = 1.0,
                                    const int level = 0) const {
+        if(Kinv_.empty()) {
+            std::cout << "cam Kinv_ is empty!" << std::endl;
+        }
         Eigen::Vector3d p(static_cast<double>(uv[0]),
                           static_cast<double>(uv[1]), 1.0);
         // {(x-cx)/fx, (y-cy)/fy}

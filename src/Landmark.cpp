@@ -19,6 +19,9 @@ Eigen::Vector3d Landmark::GetPcNorm() const {
 }
 
 Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
+    if(cam_==nullptr) {
+        cout << this << " cam_ is nullptr!" << endl;
+    }
     if (!useBackUpStatus)
         return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
 

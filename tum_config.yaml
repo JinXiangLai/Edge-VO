@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -42,9 +42,9 @@ needNewKFMaxMatchEdgeRatio: 0.1 # 匹配边缘点数量小于该阈值时，需�
 filterPixelError: 10 # 按1个像素误差推导深度三角化不确定度
 
 maxIterationLM: 130 # LM算法迭代次数
-convergeCostDiffLM: 1e-6
+convergeCostDiffLM: 1e-14
 maxLambdaValueLM: 1e12
-maxSteppingCountLM: 5 # 没有下降的最大次数
+maxNoImprovementCountLM: 5 # 没有下降的最大次数
 
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
@@ -52,6 +52,7 @@ maxActiveLandmarkEachKF: 500
 
 fastTh: 30 # 角点，暂不启用，目标是仅利用边缘点
 fastNum: 0 # 大于周边16个像素多少个
+maxFlowTrackError: 20 # 光流跟踪最大的误差
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
 
