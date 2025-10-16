@@ -1910,7 +1910,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
         // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
         // 其信息已经通过深度点的传播转移到后面的KF中
-        if (margKFid < 2) {
+        if (margKFid < 2 && 0) {
             margKFstatus_ = MarginalizeOldestKeyFrame();
             cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
         }
