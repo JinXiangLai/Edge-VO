@@ -1126,6 +1126,8 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
                 info.cost += tempInfo.cost;
                 info.totalConstraintNum += tempInfo.totalConstraintNum;
                 ++info.usefulLandmarkNum;
+            } else if(checkAbnormalLandmark) {
+                p->noUsed_ = true;
             }
         }
     }

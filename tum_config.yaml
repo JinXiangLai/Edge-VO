@@ -1,4 +1,4 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
+dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
