@@ -43,12 +43,21 @@ Optimizer::~Optimizer() {
 Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img, const bool checkAbnormalLandmark) {
-    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
+    std::vector<Eigen::Vector2d>& stableObvs,
+    const bool checkAbnormalLandmark) {
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
     constexpr int kStepInfoOut = 300000;
+
+    // 根据观测数分，>1, >2, >3
+    vector<vector<pair<int, double>>> resampleStableLkIndex2Chi2(3);
+    if (checkAbnormalLandmark) {
+        for (auto& vec : resampleStableLkIndex2Chi2) {
+            vec.reserve(lk1s.size());
+        }
+    }
 
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
@@ -58,6 +67,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
         if (lk1->noUsed_ || !lk1->initialized_) {
             continue;
         }
+
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
         const bool inRange = InRange(img, px.cast<int>());
@@ -71,25 +81,65 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
                 lk1->noUsed_ = true;
                 continue;
             }
+
             Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
             HuberLoss(chi2, rho);
-            info.cost += rho[0];
-            ++info.totalConstraintNum;
-            ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
-            if (j % kStepInfoOut == 0) {
-                debugInfo.append(fmt::format(
-                    "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
-                    "{:.0f}); ",
-                    chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+            if (!checkAbnormalLandmark) {
+                info.cost += rho[0];
+                ++info.totalConstraintNum;
+                ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
+                if (j % kStepInfoOut == 0) {
+                    debugInfo.append(fmt::format(
+                        "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
+                        "{:.0f}); ",
+                        chi2, rho[0], lk1->host_->id_, lk1->uv_.x(),
+                        lk1->uv_.y()));
+                }
+            } else {
+                const int id = lk1->target_.size();
+                switch (id) {
+                    case 2:
+                        resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
+                        break;
+                    case 3:
+                        resampleStableLkIndex2Chi2[1].emplace_back(j, rho[0]);
+                        break;
+                    default:
+                        resampleStableLkIndex2Chi2[2].emplace_back(j, rho[0]);
+                        break;
+                }
             }
-        } else if (checkAbnormalLandmark) {
-            // 优化后，使得有些点投影到了图像外，这个时候，我们需要将其设置为 noUsed，
-            // 并且，需要使用优化前的pose重新计算残差，
-            // 优化后的pose产生的离群点总是存在滞后
 
-            // 这一步，理论上只会被优化后的{poses, landmarks}执行
+        } else if (checkAbnormalLandmark) {
             lk1->noUsed_ = true;
             continue;
+        }
+    }
+
+    if (checkAbnormalLandmark) {
+        // 由观测数量由高到低进行采样
+        constexpr int kMaxSampleLandmarkNum = 2000;
+        canUseNum = 0;
+        for (const auto& vec : resampleStableLkIndex2Chi2) {
+            canUseNum += vec.size();
+        }
+        for (int i = 2; i >= 0; --i) {
+            for (const pair<int, double>& idx2Chi2 :
+                 resampleStableLkIndex2Chi2[i]) {
+
+                stableLks.emplace_back(lk1s[idx2Chi2.first]);
+                stableObvs.emplace_back(obvs[idx2Chi2.first]);
+                info.cost += idx2Chi2.second;
+                ++info.totalConstraintNum;
+                ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
+                if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+                    break;
+                }
+            }
+
+            if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+                break;
+            }
         }
     }
 
@@ -432,15 +482,9 @@ bool Optimizer::ExecuteWindowOptimize() {
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
-        //const double priorConstraintChi2 = lastCost.priorConstraintChi2;
-        //lastCost = ConstructJ_H_b_g();
-        //lastCost.priorConstraintChi2 = priorConstraintChi2;
-        //lastCost.cost += lastCost.priorConstraintChi2;
         ConstructJ_H_b_g();
 
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-        cout << "ConstructJ_H_b_g spend: "
-             << chrono::duration<double>(t2 - t1).count() << " sec." << endl;
 
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
@@ -472,9 +516,9 @@ bool Optimizer::ExecuteWindowOptimize() {
                 H_, g_, window_.size(), lastCost.usefulLandmarkNum,
                 window_[0]->Twc_.Size(), optLandmark_[0]->Size());
             chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-            cout << "SchurCompleteSolve spend: "
-                 << chrono::duration<double>(t4 - t3).count() << " sec."
-                 << endl;
+            // cout << "SchurCompleteSolve spend: "
+            //      << chrono::duration<double>(t4 - t3).count() << " sec."
+            //      << endl;
         } else {
             delta_x = H_.colPivHouseholderQr().solve(g_);
         }
@@ -514,10 +558,22 @@ bool Optimizer::ExecuteWindowOptimize() {
             cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
         }
 
-        cout << fmt::format(
-            "Window BA iterate {} times, lastCost: {:.1f}, newCost: {:.1f}, "
-            "lambda: {}.\n",
-            i, lastCost.cost, newCost.cost, lambda_);
+        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
+            cout << fmt::format(
+                "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
+                "{:.1f}, "
+                "lambda: {}.\n",
+                i, lastCost.cost, newCost.cost, lambda_);
+
+            cout << "ConstructJ_H_b_g spend: "
+                 << chrono::duration<double>(t2 - t1).count() << " sec."
+                 << endl;
+
+            chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+            cout << "LM one iteration spend: "
+                 << chrono::duration<double>(t5 - t1).count() << " sec.\n"
+                 << endl;
+        }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         bool accept = false;
@@ -545,10 +601,6 @@ bool Optimizer::ExecuteWindowOptimize() {
                         delta_x)) {
             break;
         }
-        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
-        cout << "LM one iteration spend: "
-             << chrono::duration<double>(t5 - t1).count() << " sec.\n"
-             << endl;
     }
     chrono::steady_clock::time_point T2 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(T2 - T1).count();
@@ -567,13 +619,9 @@ bool Optimizer::ExecuteWindowOptimize() {
     return lastCost.cost < firstCost.cost;
 }
 
-bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
-                                 Pose& Twc2, const int curFid,
-                                 int& totalPointNum, int& usefulPointNum) {
-
-    // 构建优化问题所需观测
-    vector<Landmark*> lk1s;
-    vector<Eigen::Vector2d> obvs;
+void Optimizer::PreSelectLandmarkForTracking(
+    KeyFrame::OpticalFlowStruct& optFlw, std::vector<Landmark*>& lk1s,
+    std::vector<Eigen::Vector2d>& obvs) {
     lk1s.reserve(optFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
     constexpr int kDebugNum = 20000;
@@ -611,37 +659,54 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             break;
         }
     }
+}
 
-    totalPointNum = lk1s.size();
+bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
+                                 Pose& Twc2, const int curFid,
+                                 int& totalPointNum, int& usefulPointNum) {
 
-    if (lk1s.empty()) {
-        cout << "useful landmark num for opt is: " << lk1s.size()
+    // 构建优化问题所需观测
+    vector<Landmark*> preLks;
+    vector<Eigen::Vector2d> preObvs;
+    PreSelectLandmarkForTracking(optFlw, preLks, preObvs);
+    totalPointNum = preLks.size();
+
+    if (preLks.empty()) {
+        cout << "useful landmark num for opt is: " << preLks.size()
              << " Error! may be no initialized???\n";
         //exit(-1);
         return false;
     }
 
-    cout << "use " << lk1s.size() << " landmarks to optimize!\n";
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     //WriteDebugTriangulateCase2Video(curFid);
 #endif
     double initLambda = lambda_;
     lambda_ = initLambda;
+    vector<Landmark*> stableLks;
+    vector<Eigen::Vector2d> stableObvs;
     ResidualInfo lastCost =
-        CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_, true);
+        CalculateResidualCurFrame(preLks, preObvs, Twc2, optFlw.prevImg_,
+                                  usefulPointNum, stableLks, stableObvs, true);
+
+    if (stableLks.size() < 100) {
+        cout << "use " << stableLks.size() << " landmarks to optimize!\n";
+    }
+
     ResidualInfo firstCost = lastCost;
     if (firstCost.usefulLandmarkNum < 20) {
         cout << fmt::format("Error first useful constrint num: {}\n",
                             firstCost.usefulLandmarkNum);
         return false;
     }
-    usefulPointNum = firstCost.usefulLandmarkNum;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
+    vector<Landmark*> tempLks;
+    vector<Eigen::Vector2d> tempObvs;
+    int tempCanUseNum = 0;
     for (int i = 0; i < maxIte_; ++i) {
-        //lastCost = CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
-        CalculateJacobianAndCostCurFrame(lk1s, obvs, Twc2, H_, g_);
+        CalculateJacobianAndCostCurFrame(stableLks, stableObvs, Twc2, H_, g_);
         if (lastCost.usefulLandmarkNum < 20) {
             cout << fmt::format("Error useful constrint num: {}\n",
                                 lastCost.usefulLandmarkNum);
@@ -658,69 +723,28 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose()
         //     << endl;
         //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl;
-        Eigen::VectorXd delta_x;
-        if (!onlyPoseUpdate_) {
-            delta_x = SchurCompleteSolve(H_, g_, 1, lastCost.usefulLandmarkNum,
-                                         Twc2.Size(), lk1s[0]->Size());
-        } else {
-            delta_x = H_.ldlt().solve(g_);
-            cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
-                 << endl;
-        }
-        // cout << setprecision(5) << "delta_x: " << delta_x.transpose() << endl;
+        Eigen::VectorXd delta_x = H_.ldlt().solve(g_);
 
-        for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
-            if (!lk1s[i]->noUsed_) {
-                lk1s[i]->CopyStatus();
-            }
-        }
         const Pose poseBackup = Twc2;
 
-        // 状态更新
-        int updateId = 0;
+        // 当前帧pose状态更新
         const int startRow = 0;
         Twc2.Update(delta_x.middleRows(startRow, 3),
                     delta_x.middleRows(startRow + 3, 3));
 
-        if (!onlyPoseUpdate_) {
-            updateId += Twc2.Size();
-            for (size_t i = 0; i < lk1s.size(); ++i) {
-                // TODO：需要考虑lk1s[i]被设置为不使用的情况，
-                // 由于有匹配特征点，因此这里暂不设置为不使用
-                if (!lk1s[i]->noUsed_) {
-                    lk1s[i]->Update(
-                        delta_x.middleRows(updateId, lk1s[0]->Size())[0]);
-                    ++updateId;
-                }
-            }
-        }
-
         // 判断当前更新是否有效
-        ResidualInfo newCost =
-            CalculateResidualCurFrame(lk1s, obvs, Twc2, optFlw.prevImg_);
-        //constexpr int maxCullPointEachTime = 10;
-        //if (abs(lastCost.usefulLandmarkNum - newCost.usefulLandmarkNum) >
-        //    maxCullPointEachTime) {
-        //    // TODO: 这里暂时不考虑深度值也更新的情况
-        //    // 需要使用旧的poses，旧的landmarks位置，以及新的landmarks的noUsed标志，比较麻烦
-        //    // 但由于这里只更新pose，所以影响应该不大吧！！！
-        //    cout << "[WARNING-0]: "
-        //         << "recalculate last cost, last usefulNUm, new usefulNum: "
-        //         << lastCost.cost << ", " << lastCost.usefulLandmarkNum << ", "
-        //         << newCost.usefulLandmarkNum << endl;
-        //    lastCost = CalculateResidualCurFrame(lk1s, obvs, poseBackup,
-        //                                         optFlw.prevImg_);
-        //    cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
-        //}
-        // else if(lastCost.usefulNum - newCost.usefulNum >= maxCullPointEachTime) {
-        //     // 避免一次删除过多point
-        //     newCost = lastCost;
-        //     lambda_ = 1e21;
-        // }
-        cout << fmt::format(
-            "CurF BA iterate {} times, lastCost: {:.1f}, newCost: {:.1f}, "
-            "lambda: {}.\n",
-            i, lastCost.cost, newCost.cost, lambda_);
+        ResidualInfo newCost = CalculateResidualCurFrame(
+            stableLks, stableObvs, Twc2, optFlw.prevImg_, tempCanUseNum,
+            tempLks, tempObvs);
+
+        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
+            cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
+                 << "\n";
+            cout << fmt::format(
+                "CurF BA iterate {} times, lastCost: {:.1f}, newCost: {:.1f}, "
+                "lambda: {}.\n",
+                i, lastCost.cost, newCost.cost, lambda_);
+        }
 
         bool accept = false;
         double costRelativeAbsDiff = 100;
@@ -728,11 +752,6 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                        costRelativeAbsDiff);
         // LM 方法
         if (!accept) {
-            for (size_t i = 0; i < lk1s.size() && !onlyPoseUpdate_; ++i) {
-                if (!lk1s[i]->noUsed_) {
-                    lk1s[i]->BackUpStatus();
-                }
-            }
             Twc2 = poseBackup;
         } else {
             lastCost = newCost;
@@ -753,7 +772,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         "spend: {:.1f}s.\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
-        double(lastCost.usefulLandmarkNum) / lk1s.size() * 100, spendTime);
+        double(lastCost.usefulLandmarkNum) / stableLks.size() * 100, spendTime);
 
     return lastCost.cost < firstCost.cost;
 }

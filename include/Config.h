@@ -68,6 +68,7 @@ class Config {
     double convergeCostDiffLM;
     double maxLambdaValueLM;
     int maxNoImprovementCountLM;
+    int iterateLogFreqLM;
     int maxActiveLandmarkEachKF;
     int fastTh;
     double maxFlowTrackError;

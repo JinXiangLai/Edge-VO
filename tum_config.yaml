@@ -46,6 +46,7 @@ maxIterationLM: 130 # LM算法迭代次数
 convergeCostDiffLM: 1e-14
 maxLambdaValueLM: 1e12
 maxNoImprovementCountLM: 5 # 没有下降的最大次数
+iterateLogFreqLM: 30 # 迭代输出频率
 
 
 messageLevel: 1 # 0-debug, 1-info, 2-error

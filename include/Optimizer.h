@@ -33,7 +33,9 @@ class Optimizer {
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        const cv::Mat& img, const bool checkAbnormalLandmark = false);
+        const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
+        std::vector<Eigen::Vector2d>& stableObvs,
+        const bool checkAbnormalLandmark = false);
 
     ResidualInfo CalculateJacobianAndCostCurFrame(
         const std::vector<Landmark*>& lk1s,
@@ -124,6 +126,10 @@ class Optimizer {
     bool LMstopJudge(const int& continousNoImprovementNum,
                      const double& costRelativeAbsDiff,
                      const Eigen::VectorXd& delta);
+
+    void PreSelectLandmarkForTracking(KeyFrame::OpticalFlowStruct& optFlw,
+                                      std::vector<Landmark*>& lk1s,
+                                      std::vector<Eigen::Vector2d>& obvs);
 
     cv::VideoWriter debugTriangulateWriter_;
 
