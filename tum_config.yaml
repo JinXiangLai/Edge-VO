@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -34,6 +34,7 @@ huberDelta: 6 # 胡伯核函数参数，sqrt(chi2)
 maxProjectError: 9 # 超过这个残差，意味着地图点错误，地图点需要被删除了
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 5
+useMarginalization: false # 是否使用边缘化最老帧
 imgTimeOffset: 0.0 # sec,时间同步误差
 needNewKFtrans: 0.1 # 选取新KF的条件
 needNewKFrot: 5.0 # deg

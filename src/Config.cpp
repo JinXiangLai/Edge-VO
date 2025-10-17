@@ -42,6 +42,7 @@ Config::Config(const std::string& yamlFilePath) {
     huberDelta2 = huberDelta * huberDelta;
     keepLastKFnumInWindow = f["keepLastKFnumInWindow"].as<int>();
     maxKFnumInWindow = f["maxKFnumInWindow"].as<int>();
+    useMarginalization = f["useMarginalization"].as<bool>();
     imgTimeOffset = f["imgTimeOffset"].as<double>();
 
     needNewKFtrans = f["needNewKFtrans"].as<double>();

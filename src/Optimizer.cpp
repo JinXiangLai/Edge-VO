@@ -1126,7 +1126,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
                 info.cost += tempInfo.cost;
                 info.totalConstraintNum += tempInfo.totalConstraintNum;
                 ++info.usefulLandmarkNum;
-            } else if(checkAbnormalLandmark) {
+            } else if (checkAbnormalLandmark) {
                 p->noUsed_ = true;
             }
         }
@@ -1392,13 +1392,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
     //    window_.size() * poseDim + optLandmark_.size() * depthDim;
     int variableDim = window_.size() * poseDim;
     for (const Landmark* lk : optLandmark_) {
-        const int excludeNum =
-            (margKF != nullptr && lk->target_.count(margKF)) ? 1 : 0;
-        variableDim +=
-            (lk->noUsed_ || !lk->initialized_ ||
-             lk->target_.size() < (kMinUsefulObvNumWithHost + excludeNum))
-                ? 0
-                : lk->Size();
+        variableDim += lk->noUsed_ ? 0 : lk->Size();
     }
     cout << "opt variable dim: " << variableDim << endl;
     H_.resize(variableDim, variableDim);
@@ -1443,10 +1437,7 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
 
         // 最新关键帧没有反向追踪能力
         bool addConstraint = false;
-        const int excludeNum =
-            (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
-        if (host->id_ != window_.back()->id_ &&
-            p->target_.size() > (kMinUsefulObvNum + excludeNum)) {
+        if (host->id_ != window_.back()->id_) {
             // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
 
             for (const auto& kf2obv : p->target_) {
@@ -1912,7 +1903,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
         // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
         // 其信息已经通过深度点的传播转移到后面的KF中
-        if (margKFid < 2 && 0) {
+        if (margKFid < 2 && config->useMarginalization) {
             margKFstatus_ = MarginalizeOldestKeyFrame();
             cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
         }

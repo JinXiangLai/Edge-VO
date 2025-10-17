@@ -59,6 +59,7 @@ class Config {
     double abnormalProjectResidual;
     double huberDelta, huberDelta2;
     int keepLastKFnumInWindow, maxKFnumInWindow;
+    bool useMarginalization;
     double imgTimeOffset;
     double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio;
     double filterPixelError;
