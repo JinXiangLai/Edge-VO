@@ -32,12 +32,15 @@ class Optimizer {
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
+        const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2);
+
+    ResidualInfo SetOptimizeLandmarkForTracking(
+        const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
         const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
-        std::vector<Eigen::Vector2d>& stableObvs,
-        const bool checkAbnormalLandmark = false);
+        std::vector<Eigen::Vector2d>& stableObvs);
 
-    ResidualInfo CalculateJacobianAndCostCurFrame(
+    void CalculateHandGradiantCurFrame(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
         Eigen::MatrixXd& H, Eigen::VectorXd& g);
@@ -64,26 +67,24 @@ class Optimizer {
 
     void AddOneKeyFeame(KeyFrame* kf);
 
-    ResidualInfo ConstructJ_H_b_g(KeyFrame* const margKF = nullptr);
-
-    double ConstructJ_H_b_g_byMatch();
+    void ConstructJ_H_b_g(const bool logOut = false);
 
     KeyFrame* GetLastKF() { return window_.back(); }
 
     bool ExecuteWindowOptimize();
 
-    ResidualInfo CalculateResidualWindow(
-        const bool useBackUpStatus = false,
-        const bool checkAbnormalLandmark = false,
+    ResidualInfo CalculateResidualWindow(const bool useBackUpStatus = false);
+
+    ResidualInfo SetOptimizeStatusVariableForWindowBA(
         KeyFrame* const margKF = nullptr);
+
+    void DebugOptlandmarkStatus(const size_t num = 20, const std::string& name="debug");
 
     bool SlidingWindowOptimize(KeyFrame* curKF);
 
-    bool SetOptimizeVariables();
-
     // rho[0]经胡伯核的损失函数值，rho[1]胡伯核关于chi2的一阶导数
     // 注意：胡伯核函数只能处理标量
-    void HuberLoss(const double chi2, Eigen::Vector2d& rho, const int lvl = 0);
+    void HuberLoss(const double chi2, Eigen::Vector2d& rho);
 
     int SelectOneKF2Marginalization(const KeyFrame& curKF);
 

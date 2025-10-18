@@ -17,7 +17,6 @@
 using namespace std;
 using namespace cv;
 
-constexpr double kPriorDepthWeight = 1e8;
 constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
 constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
 
@@ -42,104 +41,37 @@ Optimizer::~Optimizer() {
 
 Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const std::vector<Landmark*>& lk1s,
-    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
-    std::vector<Eigen::Vector2d>& stableObvs,
-    const bool checkAbnormalLandmark) {
+    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2) {
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
     constexpr int kStepInfoOut = 300000;
 
-    // 根据观测数分，>1, >2, >3
-    vector<vector<pair<int, double>>> resampleStableLkIndex2Chi2(3);
-    if (checkAbnormalLandmark) {
-        for (auto& vec : resampleStableLkIndex2Chi2) {
-            vec.reserve(lk1s.size());
-        }
-    }
-
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
-    const double maxChi2 = config->maxProjectError * config->maxProjectError;
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark* lk1 = lk1s[j];
-        if (lk1->noUsed_ || !lk1->initialized_) {
+        if (lk1->NoUsed()) {
             continue;
         }
 
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
-        const bool inRange = InRange(img, px.cast<int>());
-        if (!checkAbnormalLandmark ||
-            (inRange && pc.z() > kMinSceneDepthInCamera)) {
-            // 必须与计算Jacobian的残差计算方式一致
-            // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
-            // 而胡伯核函数的自变量是r^2
-            double chi2 = (px - obvs[j]).squaredNorm();
-            if (checkAbnormalLandmark && chi2 > maxChi2) {
-                lk1->noUsed_ = true;
-                continue;
-            }
 
-            Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
-            HuberLoss(chi2, rho);
-            if (!checkAbnormalLandmark) {
-                info.cost += rho[0];
-                ++info.totalConstraintNum;
-                ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
-                if (j % kStepInfoOut == 0) {
-                    debugInfo.append(fmt::format(
-                        "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
-                        "{:.0f}); ",
-                        chi2, rho[0], lk1->host_->id_, lk1->uv_.x(),
-                        lk1->uv_.y()));
-                }
-            } else {
-                const int id = lk1->target_.size();
-                switch (id) {
-                    case 2:
-                        resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
-                        break;
-                    case 3:
-                        resampleStableLkIndex2Chi2[1].emplace_back(j, rho[0]);
-                        break;
-                    default:
-                        resampleStableLkIndex2Chi2[2].emplace_back(j, rho[0]);
-                        break;
-                }
-            }
-
-        } else if (checkAbnormalLandmark) {
-            lk1->noUsed_ = true;
-            continue;
-        }
-    }
-
-    if (checkAbnormalLandmark) {
-        // 由观测数量由高到低进行采样
-        constexpr int kMaxSampleLandmarkNum = 2000;
-        canUseNum = 0;
-        for (const auto& vec : resampleStableLkIndex2Chi2) {
-            canUseNum += vec.size();
-        }
-        for (int i = 2; i >= 0; --i) {
-            for (const pair<int, double>& idx2Chi2 :
-                 resampleStableLkIndex2Chi2[i]) {
-
-                stableLks.emplace_back(lk1s[idx2Chi2.first]);
-                stableObvs.emplace_back(obvs[idx2Chi2.first]);
-                info.cost += idx2Chi2.second;
-                ++info.totalConstraintNum;
-                ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
-                if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
-                    break;
-                }
-            }
-
-            if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
-                break;
-            }
+        // 必须与计算Jacobian的残差计算方式一致
+        // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
+        // 而胡伯核函数的自变量是r^2
+        double chi2 = (px - obvs[j]).squaredNorm();
+        Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
+        HuberLoss(chi2, rho);
+        info.cost += rho[0];
+        ++info.totalConstraintNum;
+        ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
+        if (j % kStepInfoOut == 0) {
+            debugInfo.append(fmt::format(
+                "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
+                "{:.0f}); ",
+                chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
         }
     }
 
@@ -159,7 +91,122 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     return info;
 }
 
-Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
+Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
+    const std::vector<Landmark*>& lk1s,
+    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
+    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
+    std::vector<Eigen::Vector2d>& stableObvs) {
+
+    ResidualInfo info;
+    string debugInfo("chi2 residuals: ");
+    constexpr int kStepInfoOut = 300000;
+
+    // 根据观测数分，>1, >2, >3
+    vector<vector<pair<int, double>>> resampleStableLkIndex2Chi2(3);
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+
+    for (auto& vec : resampleStableLkIndex2Chi2) {
+        vec.reserve(lk1s.size());
+    }
+
+    const Camera& cam = *cam_;
+    const Pose Tc2w = Twc2.Inverse();
+    const double maxChi2 = config->maxProjectError * config->maxProjectError;
+    for (size_t j = 0; j < lk1s.size(); ++j) {
+        Landmark* lk1 = lk1s[j];
+        if (lk1->NoUsed()) {
+            continue;
+        }
+
+        if (!lk1->initialized_) {
+            lk1->SetNoUsed();
+            continue;
+        }
+
+        const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
+        const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
+        const bool inRange = InRange(img, px.cast<int>());
+        if (inRange && pc.z() > kMinSceneDepthInCamera) {
+            // 必须与计算Jacobian的残差计算方式一致
+            // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
+            // 而胡伯核函数的自变量是r^2
+            double chi2 = (px - obvs[j]).squaredNorm();
+            if (chi2 > maxChi2) {
+                lk1->SetNoUsed();
+                continue;
+            }
+
+            Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
+            HuberLoss(chi2, rho);
+            if (j % kStepInfoOut == 0) {
+                debugInfo.append(fmt::format(
+                    "curF set opt landmark chi2: {:.1f}-rho[0]: {:.1f}-kf id: "
+                    "{}-kp1:({:.0f}, "
+                    "{:.0f}); ",
+                    chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+            }
+
+            const int id = lk1->target_.size();
+            switch (id) {
+                case 2:
+                    resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
+                    break;
+                case 3:
+                    resampleStableLkIndex2Chi2[1].emplace_back(j, rho[0]);
+                    break;
+                default:
+                    resampleStableLkIndex2Chi2[2].emplace_back(j, rho[0]);
+                    break;
+            }
+
+        } else {
+            lk1->SetNoUsed();
+        }
+    }
+
+    // 由观测数量由高到低进行采样
+    constexpr int kMaxSampleLandmarkNum = 2000;
+    canUseNum = 0;
+    for (const auto& vec : resampleStableLkIndex2Chi2) {
+        canUseNum += vec.size();
+    }
+    for (int i = 2; i >= 0; --i) {
+        for (const pair<int, double>& idx2Chi2 :
+             resampleStableLkIndex2Chi2[i]) {
+
+            stableLks.emplace_back(lk1s[idx2Chi2.first]);
+            stableObvs.emplace_back(obvs[idx2Chi2.first]);
+            info.cost += idx2Chi2.second;
+            ++info.totalConstraintNum;
+            ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
+            if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+                break;
+            }
+        }
+
+        if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+            break;
+        }
+    }
+
+    info.meanCost = info.cost / info.totalConstraintNum;
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    const double spendTime = chrono::duration<double>(t1 - t0).count();
+
+    cout << fmt::format(
+        "curF BA: set opt tracking variable residual info.all.cost: {:.1f}, "
+        "useful landmark num: {}, "
+        "total constraint num: {}, mean cost: {:.1f}, spend time: {}\ndebug "
+        "residual info: {}\n",
+        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
+        info.meanCost, spendTime, debugInfo);
+    if (isnan(info.cost) || isinf(info.cost)) {
+        info.cost = DBL_MAX;
+    }
+    return info;
+}
+
+void Optimizer::CalculateHandGradiantCurFrame(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
     Eigen::MatrixXd& H, Eigen::VectorXd& g) {
@@ -171,7 +218,6 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         optVariableDim = Twc2.Size();
     }
 
-    ResidualInfo info;
     H.resize(optVariableDim, optVariableDim);
     H.setZero();
     g.resize(optVariableDim);
@@ -201,7 +247,7 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
 
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark& p = *lk1s[j];
-        if (p.noUsed_ || !p.initialized_) {
+        if (p.NoUsed()) {
             continue;
         }
         const Eigen::Vector3d Pw1 = p.GetPw();
@@ -212,9 +258,6 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
         double chi2 = r.squaredNorm();
         Eigen::Vector2d rho;
         HuberLoss(chi2, rho);
-        info.cost += rho[0];
-        ++info.usefulLandmarkNum;
-        ++info.totalConstraintNum;
 
         Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
         const double d = 1 / Pc2.z();
@@ -294,14 +337,6 @@ Optimizer::ResidualInfo Optimizer::CalculateJacobianAndCostCurFrame(
             g.middleRows(bj, B.cols()) -= B.transpose() * r * w * rho[1];
         }
     }
-
-    info.meanCost = info.cost / info.totalConstraintNum;
-    //cout << fmt::format(
-    //    "curF BA construct H&g: residual info.all.cost: {:.1f}, useful "
-    //    "landmark num: {}, "
-    //    "total constraint num: {}, mean cost: {:.1f}\n",
-    //    info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost);
-    return info;
 }
 
 Eigen::VectorXd Optimizer::SchurCompleteSolve(
@@ -418,19 +453,19 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     deltaX.tail(pointSize) = deltaPoint;
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
 
-    cout << setprecision(5) << "deltaPose: "
-         << deltaPose.head(poseNum * window_[0]->Tcw_.Size()).transpose()
-         << "\n";
-    cout << setprecision(5) << "deltaPoint: " << deltaPoint.head(10).transpose()
-         << "\n";
+    // cout << setprecision(5) << "deltaPose: "
+    //      << deltaPose.head(poseNum * window_[0]->Tcw_.Size()).transpose()
+    //      << "\n";
+    // cout << setprecision(5) << "deltaPoint: " << deltaPoint.head(10).transpose()
+    //      << "\n";
 
-    fmt::format(
-        "calculate D.inv spend: {:.1f}, calculate E mat spend: {:.1f}, "
-        "calculate left mat spend:{:.1f}, calculate dPose spend: {:.1f}, "
-        "calculate dPoint spend: {:.1f}, construct dX spend: {:.1f}\n",
-        ChronoTimeDurationCal(t0, t1), ChronoTimeDurationCal(t1, t1_1),
-        ChronoTimeDurationCal(t1_1, t2), ChronoTimeDurationCal(t2, t3),
-        ChronoTimeDurationCal(t3, t4), ChronoTimeDurationCal(t4, t5));
+    // fmt::format(
+    //     "calculate D.inv spend: {:.1f}, calculate E mat spend: {:.1f}, "
+    //     "calculate left mat spend:{:.1f}, calculate dPose spend: {:.1f}, "
+    //     "calculate dPoint spend: {:.1f}, construct dX spend: {:.1f}\n",
+    //     ChronoTimeDurationCal(t0, t1), ChronoTimeDurationCal(t1, t1_1),
+    //     ChronoTimeDurationCal(t1_1, t2), ChronoTimeDurationCal(t2, t3),
+    //     ChronoTimeDurationCal(t3, t4), ChronoTimeDurationCal(t4, t5));
     return deltaX;
 }
 
@@ -464,16 +499,19 @@ void Optimizer::UpdatePriorDeltaX0(const Eigen::VectorXd& deltaX) {
 }
 
 bool Optimizer::ExecuteWindowOptimize() {
-    ResidualInfo lastCost = CalculateResidualWindow(false, !margKFstatus_);
+    ResidualInfo lastCost;
+    if (margKFstatus_) {
+        // 边缘化结束时，已设置好滑窗优化变量
+        lastCost = CalculateResidualWindow(false);
+    } else {
+        lastCost = SetOptimizeStatusVariableForWindowBA();
+    }
 
     // 丢失追踪，重新进行
     if (lastCost.usefulLandmarkNum < 10) {
         cerr << fmt::format("lastCost.usefulLandmarkNum: {} too small!!!\n",
                             lastCost.usefulLandmarkNum);
         return false;
-    } else {
-        //cerr << "before opt local map" << endl;
-        //ShowLocalMap(window_.back());
     }
 
     ResidualInfo firstCost = lastCost;
@@ -482,30 +520,33 @@ bool Optimizer::ExecuteWindowOptimize() {
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
-        ConstructJ_H_b_g();
+        ConstructJ_H_b_g(i == 0);
 
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
         if (margKFstatus_) {
-            cout << "Hp_[6x6]: " << setprecision(2)
-                 << Hp_.diagonal().head(6).transpose() << endl;
-            cout << fmt::format(
-                "H_ size:[{}x{}], Hp_ size: [{}x{}], g_ len: {}, g_p_ len: "
-                "{}\n",
-                H_.rows(), H_.cols(), Hp_.rows(), Hp_.cols(), g_.rows(),
-                g_p_.rows());
+            if (i == 0) {
+                cout << "Hp_[6x6]: " << setprecision(2)
+                     << Hp_.diagonal().head(6).transpose() << endl;
+                cout << fmt::format(
+                    "H_ size:[{}x{}], Hp_ size: [{}x{}], g_ len: {}, g_p_ len: "
+                    "{}\n",
+                    H_.rows(), H_.cols(), Hp_.rows(), Hp_.cols(), g_.rows(),
+                    g_p_.rows());
+                cout << "Prior Message Added!!!" << endl;
+            }
+
             H_ += Hp_;
             g_ += g_p_;
-            //cout << setprecision(5) << "Hp_: " << Hp_.diagonal().transpose() << endl;
-            //cout << setprecision(5) << "g_p_: " << g_p_.transpose() << endl;
-            cout << "Prior Message Added!!!" << endl;
         } else {
             _lambda.head(6).setConstant(1e10);  // 首帧的约束足够大
             //_lambda.head(window_.size() * window_[0]->Tcw_.Size())
             //    .setConstant(DBL_MAX);  // 不优化位姿
-            cout << "Fixed First Frame!!!" << endl;
+            if (i == 0) {
+                cout << "Fixed First Frame!!!" << endl;
+            }
         }
         H_.diagonal() += _lambda;
 
@@ -516,17 +557,18 @@ bool Optimizer::ExecuteWindowOptimize() {
                 H_, g_, window_.size(), lastCost.usefulLandmarkNum,
                 window_[0]->Twc_.Size(), optLandmark_[0]->Size());
             chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-            // cout << "SchurCompleteSolve spend: "
-            //      << chrono::duration<double>(t4 - t3).count() << " sec."
-            //      << endl;
+            if (i == 0) {
+                cout << "SchurCompleteSolve spend: "
+                     << chrono::duration<double>(t4 - t3).count() << " sec."
+                     << endl;
+            }
         } else {
-            delta_x = H_.colPivHouseholderQr().solve(g_);
+            delta_x = H_.ldlt().solve(g_);
         }
-        // cout << setprecision(5) << "delta_x: " << delta_x.transpose() << endl;
 
         // 保留状态备份
         for (size_t i = 0; i < optLandmark_.size(); ++i) {
-            if (!optLandmark_[i]->noUsed_ && optLandmark_[i]->initialized_) {
+            if (!optLandmark_[i]->NoUsed() && optLandmark_[i]->initialized_) {
                 optLandmark_[i]->CopyStatus();
             }
         }
@@ -537,10 +579,8 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         // 状态更新
         UpdateStatusVariables(delta_x);
-        cout << "UpdateStatusVariables end" << endl;
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow();
-        cout << "CalculateResidualWindow end" << endl;
         if (margKFstatus_) {
             // 需要考虑先验残差约束
             newCost.priorConstraintChi2 = CalculatePriorCost(delta_x);
@@ -561,9 +601,10 @@ bool Optimizer::ExecuteWindowOptimize() {
         if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
             cout << fmt::format(
                 "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
-                "{:.1f}, "
+                "{:.1f}, useful lk num: {}, "
                 "lambda: {}.\n",
-                i, lastCost.cost, newCost.cost, lambda_);
+                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
+                lambda_);
 
             cout << "ConstructJ_H_b_g spend: "
                  << chrono::duration<double>(t2 - t1).count() << " sec."
@@ -582,7 +623,7 @@ bool Optimizer::ExecuteWindowOptimize() {
                        costRelativeAbsDiff);
         if (!accept) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
-                if (!optLandmark_[i]->noUsed_) {
+                if (!optLandmark_[i]->NoUsed()) {
                     optLandmark_[i]->BackUpStatus();
                 }
             }
@@ -686,8 +727,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     vector<Landmark*> stableLks;
     vector<Eigen::Vector2d> stableObvs;
     ResidualInfo lastCost =
-        CalculateResidualCurFrame(preLks, preObvs, Twc2, optFlw.prevImg_,
-                                  usefulPointNum, stableLks, stableObvs, true);
+        SetOptimizeLandmarkForTracking(preLks, preObvs, Twc2, optFlw.prevImg_,
+                                       usefulPointNum, stableLks, stableObvs);
 
     if (stableLks.size() < 100) {
         cout << "use " << stableLks.size() << " landmarks to optimize!\n";
@@ -702,11 +743,8 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
-    vector<Landmark*> tempLks;
-    vector<Eigen::Vector2d> tempObvs;
-    int tempCanUseNum = 0;
     for (int i = 0; i < maxIte_; ++i) {
-        CalculateJacobianAndCostCurFrame(stableLks, stableObvs, Twc2, H_, g_);
+        CalculateHandGradiantCurFrame(stableLks, stableObvs, Twc2, H_, g_);
         if (lastCost.usefulLandmarkNum < 20) {
             cout << fmt::format("Error useful constrint num: {}\n",
                                 lastCost.usefulLandmarkNum);
@@ -733,17 +771,18 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                     delta_x.middleRows(startRow + 3, 3));
 
         // 判断当前更新是否有效
-        ResidualInfo newCost = CalculateResidualCurFrame(
-            stableLks, stableObvs, Twc2, optFlw.prevImg_, tempCanUseNum,
-            tempLks, tempObvs);
+        ResidualInfo newCost =
+            CalculateResidualCurFrame(stableLks, stableObvs, Twc2);
 
         if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
             cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
                  << "\n";
             cout << fmt::format(
                 "CurF BA iterate {} times, lastCost: {:.1f}, newCost: {:.1f}, "
+                "useful landmark: {}, "
                 "lambda: {}.\n",
-                i, lastCost.cost, newCost.cost, lambda_);
+                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
+                lambda_);
         }
 
         bool accept = false;
@@ -769,7 +808,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         "last mean proj cost: {:.1f}, "
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
-        "spend: {:.1f}s.\n",
+        "spend: {:.3f}s.\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / stableLks.size() * 100, spendTime);
@@ -853,6 +892,9 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             }
         }
 
+        cout << fmt::format("prevTriSucceedNum: {}, historyTriSucceedNum: {}\n",
+                            prevTriSucceedNum, historyTriSucceedNum);
+
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         WriteDebugTriangulateCase2Video(kf->id_);
 #endif
@@ -900,7 +942,7 @@ void Optimizer::UpdateStatusVariables(const Eigen::VectorXd& deltaX,
     if (!onlyPoseUpdate_) {
         updateId += (window_.size() - startPoseId) * window_[0]->Twc_.Size();
         for (size_t i = 0; i < optLandmark_.size(); ++i) {
-            if (!optLandmark_[i]->noUsed_) {
+            if (!optLandmark_[i]->NoUsed()) {
                 optLandmark_[i]->Update(
                     deltaX.middleRows(updateId, optLandmark_[0]->Size())[0]);
                 ++updateId;
@@ -1015,7 +1057,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
         vector<Landmark*>::iterator it1 = lks.begin();
         vector<cv::Point2f>::iterator it2 = obvs.begin();
         while (it1 != lks.end()) {
-            if ((*it1)->canBedelete_) {
+            if ((*it1)->CanBeDelete()) {
                 it1 = lks.erase(it1);
                 it2 = obvs.erase(it2);
                 continue;
@@ -1034,38 +1076,6 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     return;
 }
 
-bool Optimizer::SetOptimizeVariables() {
-    if (window_.size() < 2) {
-        cerr << "Window size: " << window_.size() << " < 2" << endl;
-        return false;
-    }
-
-    // 添加有效地图点进行优化
-    set<Landmark*> ps;
-    // 最新帧作为量测帧来更新已有KF的深度
-    for (size_t i = 0; i < window_.size() - 1; ++i) {
-        KeyFrame* kf = window_[i];
-        vector<Landmark*>& ld = kf->landmark_;
-        for (Landmark* p : ld) {
-            // 重置FEJ保存的雅可比
-            p->ResetFEJ();
-            if (p != nullptr && !ps.count(p) && !p->IsOutOfRange() &&
-                p->initialized_) {
-                ps.insert(p);
-            }
-        }
-    }
-    cout << fmt::format(
-        "{} Landmarks and {} KFs will participate optimization!!!\n", ps.size(),
-        window_.size());
-
-    optLandmark_.clear();
-    optLandmark_ = vector<Landmark*>(ps.begin(), ps.end());
-    // 按地址从小到大排序
-    //sort(optLandmark_.begin(), optLandmark_.end(), [](Landmark *p1, Landmark*p2){return p1 < p2;});
-    return optLandmark_.size() > 100;
-}
-
 int Optimizer::SampleUsefulLandmark(const int margKFid) {
     // 此时还未添加最新关键帧，并且最老关键帧已经选出来，且移到第0位
     const int startKFid = margKFid < 0 ? 0 : 1;
@@ -1073,7 +1083,7 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
-            if (!p->initialized_ || p->IsOutOfRange() || p->canBedelete_ ||
+            if (!p->initialized_ || p->IsOutOfRange() || p->CanBeDelete() ||
                 p->target_.size() < 3) {
                 continue;
             }
@@ -1086,74 +1096,147 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
 }
 
 Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
-    const bool useBackUpStatus, const bool checkAbnormalLandmark,
-    KeyFrame* const margKF) {
+    const bool useBackUpStatus) {
     ResidualInfo info;
 
-    const double maxChi2 = config->maxProjectError * config->maxProjectError;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark* p = optLandmark_[i];
-        if (p->noUsed_ || !p->initialized_) {
+        Landmark*& p = optLandmark_[i];
+        if (p->NoUsed()) {
             continue;
+        } else {
+            ++info.usefulLandmarkNum;
         }
+
         KeyFrame* host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc(useBackUpStatus);
         const Eigen::Vector3d pw =
             useBackUpStatus ? host->TwcBack_ * pc1 : host->Twc_ * pc1;
 
-        if (host->id_ != window_.back()->id_) {
-            ResidualInfo tempInfo;
-            for (const auto& kf2obv : p->target_) {
-                KeyFrame* target = kf2obv.first;
-                // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
-                // 但是影响不大，可能会出现
-                if (target == host) {
-                    continue;
-                }
+        for (const auto& kf2obv : p->target_) {
+            KeyFrame* target = kf2obv.first;
+            // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
+            // 但是影响不大，可能会出现
+            if (target == host) {
+                continue;
+            }
 
-                const Eigen::Vector3d pc2 =
-                    useBackUpStatus ? target->TcwBack_ * pw : target->Tcw_ * pw;
-                const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+            const Eigen::Vector3d pc2 =
+                useBackUpStatus ? target->TcwBack_ * pw : target->Tcw_ * pw;
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
-                const bool inRange = InRange(target->grayImg_, px2.cast<int>());
-                if (checkAbnormalLandmark &&
-                    (!inRange || pc2.z() < kMinSceneDepthInCamera)) {
-                    // 需要认识到的是，未更新前的{poses, landmarks}一定是可以投影成功的！！！
-                    // 所以理论上，这一步只会被更新后的{poses, landmarks}执行
-                    p->noUsed_ = true;
+            Eigen::Vector2d r = px2 - kf2obv.second;
+            double chi2 = r.squaredNorm();
+            Eigen::Vector2d rho;
+            HuberLoss(chi2, rho);
+            info.cost += rho[0];
+            ++info.totalConstraintNum;
+        }
+    }
+
+    info.meanCost = info.cost / info.totalConstraintNum;
+    // cout << fmt::format(
+    //     "window BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
+    //     "total constraint num: {}, mean cost: {:.1f}\n",
+    //     info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
+    //     info.meanCost);
+
+    if (isnan(info.cost) || isinf(info.cost)) {
+        cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
+                            info.cost, info.usefulLandmarkNum);
+        info.cost = DBL_MAX;
+    }
+    return info;
+}
+
+void Optimizer::DebugOptlandmarkStatus(const size_t num,
+                                       const std::string& name) {
+    string debugUsefulLkIndex(name + " useful lk status:[ ");
+    for (size_t i = 0; i < min(optLandmark_.size(), num); ++i) {
+        Landmark* p = optLandmark_[i];
+        debugUsefulLkIndex.append(fmt::format(
+            " {}-{}-{}", i, reinterpret_cast<size_t>(p), p->NoUsed()));
+    }
+    debugUsefulLkIndex.append(" ]");
+    cout << debugUsefulLkIndex << endl;
+}
+
+Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
+    KeyFrame* const margKF) {
+    ResidualInfo info;
+
+    const double maxChi2 = config->maxProjectError * config->maxProjectError;
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        Landmark*& p = optLandmark_[i];
+        if (p->NoUsed()) {
+            continue;
+        }
+
+        if (!p->initialized_) {
+            p->SetNoUsed();
+            continue;
+        }
+
+        KeyFrame* host = p->host_;
+        if (host->id_ == window_.back()->id_) {
+            p->SetNoUsed();
+            continue;
+        }
+
+        ResidualInfo tempInfo;
+        const Eigen::Vector3d pc1 = p->GetPc();
+        const Eigen::Vector3d pw = host->Twc_ * pc1;
+
+        for (const auto& kf2obv : p->target_) {
+            KeyFrame* target = kf2obv.first;
+            // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
+            // 但是影响不大，可能会出现
+            if (target == host) {
+                continue;
+            }
+
+            const Eigen::Vector3d pc2 = target->Tcw_ * pw;
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+
+            const bool inRange = InRange(target->grayImg_, px2.cast<int>());
+            if (!inRange || pc2.z() < kMinSceneDepthInCamera) {
+                // 需要认识到的是，未更新前的{poses, landmarks}一定是可以投影成功的！！！
+                // 所以理论上，这一步只会被更新后的{poses, landmarks}执行
+                p->SetNoUsed();
+                break;
+            } else {
+                Eigen::Vector2d r = px2 - kf2obv.second;
+                double chi2 = r.squaredNorm();
+                if (chi2 > maxChi2) {
+                    // 必须移除残差异常的项
+                    p->SetNoUsed();
                     break;
-                } else {
-                    Eigen::Vector2d r = px2 - kf2obv.second;
-                    double chi2 = r.squaredNorm();
-                    if (checkAbnormalLandmark && chi2 > maxChi2) {
-                        // 必须移除残差异常的项
-                        p->noUsed_ = true;
-                        break;
-                    }
-                    Eigen::Vector2d rho;
-                    HuberLoss(chi2, rho);
-                    tempInfo.cost += rho[0];
-                    ++tempInfo.totalConstraintNum;
                 }
-            }
 
-            // 只有未被其余观测标记异常的地图点才可参与残差构建
-            const int excludeNum =
-                (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
-            if (!p->noUsed_ && tempInfo.totalConstraintNum >=
-                                   (kMinUsefulObvNum + excludeNum)) {
-                info.cost += tempInfo.cost;
-                info.totalConstraintNum += tempInfo.totalConstraintNum;
-                ++info.usefulLandmarkNum;
-            } else if (checkAbnormalLandmark) {
-                p->noUsed_ = true;
+                Eigen::Vector2d rho;
+                HuberLoss(chi2, rho);
+                tempInfo.cost += rho[0];
+                ++tempInfo.totalConstraintNum;
             }
+        }
+
+        // 只有未被其余观测标记异常的地图点才可参与残差构建
+        // 边缘化时，由于会移除边缘化帧，因此其观测不可计入
+        const int excludeNum =
+            (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
+        if (!p->NoUsed() &&
+            tempInfo.totalConstraintNum >= (kMinUsefulObvNum + excludeNum)) {
+            info.cost += tempInfo.cost;
+            info.totalConstraintNum += tempInfo.totalConstraintNum;
+            ++info.usefulLandmarkNum;
+        } else {
+            p->SetNoUsed();
         }
     }
 
     info.meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
-        "window BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
+        "window BA: set opt variable residual info.all.cost: {:.1f}, useful "
+        "landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}\n",
         info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
         info.meanCost);
@@ -1229,8 +1312,8 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
     //     << margLandmark.size() << " "
     //     << (optLandmark_.size() - margLandmark.size()) << endl;
 
-    CalculateResidualWindow(false, true, window_[0]);
-    ConstructJ_H_b_g(window_[0]);
+    SetOptimizeStatusVariableForWindowBA(window_[0]);
+    ConstructJ_H_b_g(true);
 
     // Step:接下来计算相关先验Hp, g_p
     const int poseDim = window_[0]->Twc_.Size();
@@ -1393,7 +1476,7 @@ bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
     return false;
 }
 
-Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
+void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     // 构建H, g
     // 给出每个KF对应的在H矩阵中的位置
     map<const KeyFrame*, int> kfMapCol;
@@ -1411,15 +1494,17 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
     //    window_.size() * poseDim + optLandmark_.size() * depthDim;
     int variableDim = window_.size() * poseDim;
     for (const Landmark* lk : optLandmark_) {
-        variableDim += lk->noUsed_ ? 0 : lk->Size();
+        variableDim += lk->NoUsed() ? 0 : lk->Size();
     }
-    cout << "opt variable dim: " << variableDim << endl;
+    if (logOut) {
+        cout << "opt variable dim: " << variableDim << endl;
+    }
+
     H_.resize(variableDim, variableDim);
     H_.setZero();
     g_.resize(variableDim);
     g_.setZero();
 
-    ResidualInfo info;
     // clang-format off
     // 计算residual & jacobian
     /*********
@@ -1430,19 +1515,14 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
     const int depthStartCol = window_.size() * poseDim;
     const int resDim = 2;
     int resNum = 0;  // 显示当前计算到雅可比的第几行
-    // TODO: 有很多landmark不能参与计算，需要将其排除在H及g信息之外，典型的如：
-    // opt variable dim: 22902
-    // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
+    int usefulLandmarkNum = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
-        if (p->noUsed_ || !p->initialized_) {
-            //cout << fmt::format(
-            //    "no cal res jac num: {}, addr: {}, idepth: {}\n",
-            //    info.usefulLandmarkNum, reinterpret_cast<size_t>(p), p->invZ_);
+        if (p->NoUsed()) {
             continue;
         }
 
-        // TODO：注意，必须确保每个landmark都能构建残差以成为状态变量，否则优化变量位置会有问题，导致最终更新出错
+        // 注意，必须确保每个landmark都能构建残差以成为状态变量，否则优化变量位置会有问题，导致最终更新出错
         KeyFrame* host = p->host_;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
@@ -1456,33 +1536,29 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
 
         // 最新关键帧没有反向追踪能力
         bool addConstraint = false;
-        if (host->id_ != window_.back()->id_) {
-            // 我们把所有帧上的深度图投影到最新帧，并优化滑窗内的所有pose
 
-            for (const auto& kf2obv : p->target_) {
-                // TODO：需要注意每个关键帧、每个landmark在H矩阵中的位置
-                KeyFrame* target = kf2obv.first;
-                if (target == host) {
-                    continue;
-                }
+        for (const auto& kf2obv : p->target_) {
+            // 需要注意每个关键帧、每个landmark在H矩阵中的位置
+            KeyFrame* target = kf2obv.first;
+            if (target == host) {
+                continue;
+            }
 
-                const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-                const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+            const Eigen::Vector3d pc2 = target->Tcw_ * pw;
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
-                // 经过校验，可以构建residual和jacobian
-                const Eigen::Vector2d r = px2 - kf2obv.second;
+            // 经过校验，可以构建residual和jacobian
+            const Eigen::Vector2d r = px2 - kf2obv.second;
 
-                // 使用胡伯核函数剔除异常残差值
-                double chi2 = r.squaredNorm();
-                Eigen::Vector2d rho;
-                HuberLoss(chi2, rho);
-                info.cost += rho[0];
-                ++info.totalConstraintNum;
+            // 使用胡伯核函数剔除异常残差值
+            double chi2 = r.squaredNorm();
+            Eigen::Vector2d rho;
+            HuberLoss(chi2, rho);
 
-                debugKFMapResidualNum[target] += 1;
-                resNum += resDim;
+            debugKFMapResidualNum[target] += 1;
+            resNum += resDim;
 
-                // clang-format off
+            // clang-format off
             /******** 投影过程 ********
             * K.inv * (u1, v1, 1) --> Pc1_norm * z1 --> Twc1 * Pc1 --> Twc2.inv * Pw -->  
             *  Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
@@ -1496,80 +1572,79 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
             * Pw w.r.t Pc1
             * Pc1 w.r.t z1 [3x1] --------> optimization variable
             ************************/
-                // clang-format on
+            // clang-format on
 
-                Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
-                const double d = 1 / pc2.z();
-                const double d2 = 1. / pow(pc2.z(), 2);
-                J_Pc2Norm_Pc2 << d, 0, -pc2.x() * d2, 0, d, -pc2.y() * d2, 0, 0,
-                    0;
-                const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
-                    J_px2_Pc2Norm * J_Pc2Norm_Pc2;
-                const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2;
+            Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
+            const double d = 1 / pc2.z();
+            const double d2 = 1. / pow(pc2.z(), 2);
+            J_Pc2Norm_Pc2 << d, 0, -pc2.x() * d2, 0, d, -pc2.y() * d2, 0, 0, 0;
+            const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
+                J_px2_Pc2Norm * J_Pc2Norm_Pc2;
+            const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2;
 
-                // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
-                Eigen::Matrix<double, 3, 6>
-                    J_Pc2_Twc2;  // ------------------------> optimization variable
-                const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
-                // Pc2 w.r.t Rwc2
-                J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(
-                    target->Tcw_.q_wb_ * dt);  // Twc_.q_wb_.inverse()
-                // Pc2 w.r.t Pwc2
-                J_Pc2_Twc2.block(0, 3, 3, 3) =
-                    -target->Tcw_.q_wb_
-                         .toRotationMatrix();  // Twc.q_wb.R.transpose()
+            // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
+            Eigen::Matrix<double, 3, 6>
+                J_Pc2_Twc2;  // ------------------------> optimization variable
+            const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
+            // Pc2 w.r.t Rwc2
+            J_Pc2_Twc2.block(0, 0, 3, 3) =
+                SkewSymmetric(target->Tcw_.q_wb_ * dt);  // Twc_.q_wb_.inverse()
+            // Pc2 w.r.t Pwc2
+            J_Pc2_Twc2.block(0, 3, 3, 3) =
+                -target->Tcw_.q_wb_
+                     .toRotationMatrix();  // Twc.q_wb.R.transpose()
 
-                // Pc2 w.r.t Pw
-                // TODO: 这里也应该要使用首次的Tcw值吧！！！由于target有多帧，所以要保留多个
-                const Eigen::Matrix3d J_Pc2_Pw =
-                    target->Tcw_.q_wb_.toRotationMatrix();
+            // Pc2 w.r.t Pw
+            // TODO: 这里也应该要使用首次的Tcw值吧！！！由于target有多帧，所以要保留多个
+            const Eigen::Matrix3d J_Pc2_Pw =
+                target->Tcw_.q_wb_.toRotationMatrix();
 
-                // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
-                Eigen::Matrix<double, 3, 6>
-                    J_Pw_Twc1;  // ------------------------> optimization variable
-                // Pw w.r.t Rwc1
-                J_Pw_Twc1.block(0, 0, 3, 3) =
-                    -host->Twc_.q_wb_.toRotationMatrix() * SkewSymmetric(pc1);
-                // Pw w.r.t Pwc1
-                J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
+            // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
+            Eigen::Matrix<double, 3, 6>
+                J_Pw_Twc1;  // ------------------------> optimization variable
+            // Pw w.r.t Rwc1
+            J_Pw_Twc1.block(0, 0, 3, 3) =
+                -host->Twc_.q_wb_.toRotationMatrix() * SkewSymmetric(pc1);
+            // Pw w.r.t Pwc1
+            J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
 
-                // Pw w.r.t Pc1
-                const Eigen::Matrix3d J_Pw_Pc1 =
-                    host->Twc_.q_wb_.toRotationMatrix();
+            // Pw w.r.t Pc1
+            const Eigen::Matrix3d J_Pw_Pc1 =
+                host->Twc_.q_wb_.toRotationMatrix();
 
-                // Pc1 w.r.t z
-                const Eigen::Vector3d pc1Norm(p->GetPcNorm());
-                Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(),
-                                        1};  // --------> optimization variable
-                                             // 使用逆深度表示
-                const double d1 = pow(p->invZ_, 2);
-                J_Pc1_z << -pc1Norm.x() / d1, -pc1Norm.y() / d1, -1 / d1;
+            // Pc1 w.r.t z
+            const Eigen::Vector3d pc1Norm(p->GetPcNorm());
+            Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(),
+                                    1};  // --------> optimization variable
+                                         // 使用逆深度表示
+            const double d1 = pow(p->invZ_, 2);
+            J_Pc1_z << -pc1Norm.x() / d1, -pc1Norm.y() / d1, -1 / d1;
 
-                const Eigen::Matrix<double, 3, 1> J_Pw_z = J_Pw_Pc1 * J_Pc1_z;
+            const Eigen::Matrix<double, 3, 1> J_Pw_z = J_Pw_Pc1 * J_Pc1_z;
 
-                // 不考虑使用首次雅可比
+            // 不考虑使用首次雅可比
 
-                // Residual w.r.t optimization variables Jacobian
-                Eigen::Matrix<double, 2, 6> A1 =
-                    J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;  // J_res_Pw * J_Pw_Twc1;
-                if (host == window_[0]) {
-                    // fixed滑动窗口第一帧，不在这里执行，而是添加大的lambda或使用先验约束其变化量
-                    //A1.setZero();
-                }
-                Eigen::Matrix<double, 2, 6> A2 =
-                    J_res_Pc2 * J_Pc2_Twc2;  // J_res_Pc2 * J_Pc2_Twc2;
-                if (target == window_[0]) {
-                    //A2.setZero();
-                }
-                const Eigen::Matrix<double, 2, 1> B =
-                    J_res_Pc2 * J_Pc2_Pw *
-                    J_Pw_z;  // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
+            // Residual w.r.t optimization variables Jacobian
+            Eigen::Matrix<double, 2, 6> A1 =
+                J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;  // J_res_Pw * J_Pw_Twc1;
+            if (host == window_[0]) {
+                // fixed滑动窗口第一帧，不在这里执行，而是添加大的lambda或使用先验约束其变化量
+                //A1.setZero();
+            }
+            Eigen::Matrix<double, 2, 6> A2 =
+                J_res_Pc2 * J_Pc2_Twc2;  // J_res_Pc2 * J_Pc2_Twc2;
+            if (target == window_[0]) {
+                //A2.setZero();
+            }
+            const Eigen::Matrix<double, 2, 1> B =
+                J_res_Pc2 * J_Pc2_Pw *
+                J_Pw_z;  // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
 
-                const double w = 1.0;  // /p->depthCov_;
-                const int a1i = resNum, a1j = kfMapCol[host], a2i = resNum,
-                          a2j = kfMapCol[target], bi = resNum,
-                          bj = depthStartCol + info.usefulLandmarkNum;
-                // clang-format off
+            const double w = 1.0;  // /p->depthCov_;
+            const int a1i = resNum, a1j = kfMapCol[host], a2i = resNum,
+                      a2j = kfMapCol[target], bi = resNum,
+                      bj = depthStartCol + usefulLandmarkNum;
+            // clang-format off
             /********************* 利用稀疏性计算H=J'*J ****************************
             * | A1'|
             * | A2'| * | A1 A2 B |
@@ -1579,262 +1654,45 @@ Optimizer::ResidualInfo Optimizer::ConstructJ_H_b_g(KeyFrame* const margKF) {
             * | A2'*A1, A2'*A2, A2'*B |
             * | B'*A1,  B'*A2,   B'*B |
             *******************************************************************/
-                // clang-format on
-                H_.block(a1j, a1j, poseDim, poseDim) +=
-                    A1.transpose() * A1 * w * rho[1];
-                H_.block(a1j, a2j, poseDim, poseDim) +=
-                    A1.transpose() * A2 * w * rho[1];
-                H_.block(a1j, bj, poseDim, depthDim) +=
-                    A1.transpose() * B * w * rho[1];
+            // clang-format on
+            H_.block(a1j, a1j, poseDim, poseDim) +=
+                A1.transpose() * A1 * w * rho[1];
+            H_.block(a1j, a2j, poseDim, poseDim) +=
+                A1.transpose() * A2 * w * rho[1];
+            H_.block(a1j, bj, poseDim, depthDim) +=
+                A1.transpose() * B * w * rho[1];
 
-                H_.block(a2j, a1j, poseDim, poseDim) +=
-                    A2.transpose() * A1 * w * rho[1];
-                H_.block(a2j, a2j, poseDim, poseDim) +=
-                    A2.transpose() * A2 * w * rho[1];
-                H_.block(a2j, bj, poseDim, depthDim) +=
-                    A2.transpose() * B * w * rho[1];
+            H_.block(a2j, a1j, poseDim, poseDim) +=
+                A2.transpose() * A1 * w * rho[1];
+            H_.block(a2j, a2j, poseDim, poseDim) +=
+                A2.transpose() * A2 * w * rho[1];
+            H_.block(a2j, bj, poseDim, depthDim) +=
+                A2.transpose() * B * w * rho[1];
 
-                H_.block(bj, a1j, depthDim, poseDim) +=
-                    B.transpose() * A1 * w * rho[1];
-                H_.block(bj, a2j, depthDim, poseDim) +=
-                    B.transpose() * A2 * w * rho[1];
-                H_.block(bj, bj, depthDim, depthDim) +=
-                    B.transpose() * B * w * rho[1];
-                // clang-format off
+            H_.block(bj, a1j, depthDim, poseDim) +=
+                B.transpose() * A1 * w * rho[1];
+            H_.block(bj, a2j, depthDim, poseDim) +=
+                B.transpose() * A2 * w * rho[1];
+            H_.block(bj, bj, depthDim, depthDim) +=
+                B.transpose() * B * w * rho[1];
+            // clang-format off
             /********************* 利用稀疏性计算g=-J'*b ****************************
             * | A1'|       | A1' * b |
             * | A2'| * b = | A2' * b |
             * | B' |       | B'  * b |
             **********************************************************************/
-                // clang-format on
-                g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w * rho[1];
-                g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w * rho[1];
-                g_.middleRows(bj, depthDim) -= B.transpose() * r * w * rho[1];
+            // clang-format on
+            g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w * rho[1];
+            g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w * rho[1];
+            g_.middleRows(bj, depthDim) -= B.transpose() * r * w * rho[1];
 
-                addConstraint = true;
-            }
+            addConstraint = true;
         }
 
         if (addConstraint) {
-            ++info.usefulLandmarkNum;
+            ++usefulLandmarkNum;
         }
     }
-    info.meanCost = info.cost / info.totalConstraintNum;
-    cout << fmt::format(
-        "window BA: construct H&g residual info.all.cost: {:.1f}, useful "
-        "landmark num: {}, "
-        "total constraint num: {}, mean cost: {:.1f}\n",
-        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
-        info.meanCost);
-    return info;
-}
-
-double Optimizer::ConstructJ_H_b_g_byMatch() {
-    // 构建H, g
-    // 给出每个KF对应的在H矩阵中的位置
-    // map<const KeyFrame*, int> kfMapCol;
-    // map<const KeyFrame*, int> debugKFMapResidualNum;
-    // for(int i = 0; i < window_.size(); ++i) {
-    //     kfMapCol.insert({window_[i], i * 6});
-    //     debugKFMapResidualNum.insert({window_[i], 0}); // 统计每个图像对应的residual数量
-    // }
-    // const int poseDim = window_[0]->Twc_.Size();
-    // const int depthDim = 1;
-
-    // // 或许我们不知道residual，Jacobian的行数，但是H矩阵以及g向量的维度是可知的
-    // const int variableDim = window_.size() * poseDim + optLandmark_.size() * depthDim;
-    // cout << "opt variable dim: " << variableDim << endl;
-    // H_.resize(variableDim, variableDim);
-    // H_.setZero();
-    // g_.resize(variableDim);
-    // g_.setZero();
-    // double cost = 0;
-    // int noInrangeNum = 0;
-    // int depthErrorNum = 0;
-    // int targetErrorNum = 0;
-    // int usefulNum = 0;
-    // // 计算residual & jacobian
-    // /*********
-    // *    T0 T1 ... d0 d1 ...
-    // * r0
-    // *********/
-    // const int depthStartCol = window_.size() * poseDim;
-    // constexpr int resDim = 1; // 添加了huberLoss
-    // int resNum = 0; // 显示当前计算到雅可比的第几行
-    // // TODO: 有很多landmark不能参与计算，需要将其排除在H及g信息之外，典型的如：
-    // // opt variable dim: 22902
-    // // usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: 804 0 23938 1 23939
-    // for(int i = 0; i < optLandmark_.size(); ++i) {
-    //     Landmark *p = optLandmark_[i];
-    //     KeyFrame *host = p->host_;
-    //     const Eigen::Vector3d pc1 = p->GetPc();
-    //     const Eigen::Vector3d pw = host->Twc_ * pc1;
-
-    //     for(const auto &tar : p->target_) {
-    //         // 不能向host投影，TODO: 删除host在target中的观测
-    //         // if(tar.first == host || tar.first!=window_.back()) {
-    //         if(tar.first == host) {
-    //             ++targetErrorNum;
-    //             continue;
-    //         }
-    //         KeyFrame *target = tar.first;
-
-    //         const Eigen::Vector3d pc2 = target->Tcw_ * pw;
-    //         if(pc2.z() < config->minDepth || pc2.z() > config->maxDepth) {
-    //             ++depthErrorNum;
-    //             continue;
-    //         }
-    //         const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-    //         if(!InRange(target->dist_[0], px2.cast<int>()) ) {
-    //             ++noInrangeNum;
-    //             continue;
-    //         }
-
-    //         const Eigen::Vector2d r = px2 - p->target_[target];
-    //         Eigen::Matrix<double, 1, 2> J_huber_r(0, 0);
-    //         const double loss = HuberLoss(r, J_huber_r);
-
-    //         ++usefulNum;
-    //         cost += loss;
-    //         debugKFMapResidualNum[target] += 1;
-    //         resNum += resDim;
-
-    //         /******** 投影过程 ********
-    //         * K.inv * (u1, v1, 1) --> Pc1_norm * z1 --> Twc1 * Pc1 --> Twc2.inv * Pw -->
-    //         * Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
-    //         *
-    //         * res w.r.t (u2, v2) [1x2]
-    //         * (u2, v2) w.r.t Pc2_norm [2x3]
-    //         * Pc2_norm w.r.t Pc2 [3x3]
-    //         * Pc2 w.r.t Twc2 [3x6] ------> optimization variable
-    //         * Pc2 w.r.t Pw [3x3]
-    //         * Pw w.r.t Twc1 [3x6] -------> optimization variable
-    //         * Pw w.r.t Pc1
-    //         * Pc1 w.r.t z1 [3x1] --------> optimization variable
-    //         ************************/
-
-    //         // res w.r.t (u2, v2) [1x2]
-    //         const Eigen::Matrix<double, 1, 2> J_res_px2 = J_huber_r;
-
-    //         // px2 w.r.t Pc2 [2x3]
-    //         const Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm = p->cam_->K_.block(0, 0, 2, 3);
-    //         Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
-    //         const double d = 1/pc2.z();
-    //         const double d2 = 1./pow(pc2.z(), 2);
-    //         J_Pc2Norm_Pc2 << d, 0, -pc2.x()*d2,
-    //                         0, d, -pc2.y()*d2,
-    //                         0, 0, 0;
-    //         const Eigen::Matrix<double, 2, 3> J_px2_Pc2 = J_px2_Pc2Norm * J_Pc2Norm_Pc2;
-
-    //         // FEJ
-    //         if(!p->J_Pc2_Twc2.count(target)) {
-    //         // if(!p->J_Pc2_Twc2.count(target) || 1) {
-    //             // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
-    //             Eigen::Matrix<double, 3, 6> J_Pc2_Twc2; // ------------------------> optimization variable
-    //             const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
-    //             // Pc2 w.r.t Rwc2
-    //             J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(target->Tcw_.q_wb_ * dt); // Twc_.q_wb_.inverse()
-    //             // Pc2 w.r.t Pwc2
-    //             J_Pc2_Twc2.block(0, 3, 3, 3) = -target->Tcw_.q_wb_.toRotationMatrix(); // Twc.q_wb.R.transpose()
-
-    //             // Pc2 w.r.t Pw
-    //             // TODO: 这里也应该要使用首次的Tcw值吧！！！由于target有多帧，所以要保留多个
-    //             const Eigen::Matrix3d J_Pc2_Pw = target->Tcw_.q_wb_.toRotationMatrix();
-
-    //             if(p->J_Pc2_Pw.count(target)) {
-    //                 // just for debug
-    //                 p->J_Pc2_Twc2[target] = J_Pc2_Twc2;
-    //                 p->J_Pc2_Pw[target] = J_Pc2_Pw;
-    //             } else {
-    //                 p->J_Pc2_Twc2.insert({target, J_Pc2_Twc2});
-    //                 p->J_Pc2_Pw.insert({target, J_Pc2_Pw});
-    //             }
-
-    //             if(p->J_Pw_z.empty()) {
-    //             // if(p->J_Pw_z.empty() || 1) {
-    //                 // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
-    //                 Eigen::Matrix<double, 3, 6> J_Pw_Twc1; // ------------------------> optimization variable
-    //                 // Pw w.r.t Rwc1
-    //                 J_Pw_Twc1.block(0, 0, 3, 3) = -host->Twc_.q_wb_.toRotationMatrix() * SkewSymmetric(pc1);
-    //                 // Pw w.r.t Pwc1
-    //                 J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
-
-    //                 // Pw w.r.t Pc1
-    //                 const Eigen::Matrix3d J_Pw_Pc1 = host->Twc_.q_wb_.toRotationMatrix();
-
-    //                 // Pc1 w.r.t z
-    //                 const Eigen::Vector3d pc1Norm(p->GetPcNorm());
-    //                 Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(), 1}; // --------> optimization variable
-
-    //                 if(!p->J_Pw_z.empty()) {
-    //                     // just for debug
-    //                     p->J_Pw_z.clear();
-    //                     p->J_Pw_Twc1.clear();
-    //                 }
-    //                 p->J_Pw_z.push_back(J_Pw_Pc1 * J_Pc1_z);
-    //                 p->J_Pw_Twc1.push_back(J_Pw_Twc1);
-    //             }
-    //         }
-
-    //         // Residual w.r.t optimization variables Jacobian
-    //         Eigen::Matrix<double, resDim, 6> A1 = J_res_px2 * J_px2_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_Twc1[0]; // J_res_Pw * J_Pw_Twc1;
-    //         if(host == window_[0]) {
-    //             // fixed滑动窗口第一帧
-    //             //A1.setZero();
-    //         }
-    //         Eigen::Matrix<double, resDim, 6> A2 = J_res_px2 * J_px2_Pc2 * p->J_Pc2_Twc2.at(target); // J_res_Pc2 * J_Pc2_Twc2;
-    //         if(target == window_[0]) {
-    //             //A2.setZero();
-    //         }
-    //         const Eigen::Matrix<double, resDim, 1> B = J_res_px2 * J_px2_Pc2 * p->J_Pc2_Pw.at(target) * p->J_Pw_z[0]; // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
-    //         const double w = 1.0; // /p->depthCov_;
-    //         const int a1i = resNum, a1j = kfMapCol[host],
-    //                   a2i = resNum, a2j = kfMapCol[target],
-    //                   bi = resNum, bj = depthStartCol + i;
-    //         /********************* 利用稀疏性计算H=J'*J ****************************
-    //         * | A1'|
-    //         * | A2'| * | A1 A2 B |
-    //         * | B' |
-    //         * =
-    //         * | A1'*A1, A1'*A2, A1'*B |
-    //         * | A2'*A1, A2'*A2, A2'*B |
-    //         * | B'*A1,  B'*A2,   B'*B |
-    //         *******************************************************************/
-    //         H_.block(a1j, a1j, poseDim, poseDim) += A1.transpose() * A1 * w;
-    //         H_.block(a1j, a2j, poseDim, poseDim) += A1.transpose() * A2 * w;
-    //         H_.block(a1j, bj, poseDim, depthDim) += A1.transpose() * B * w;
-
-    //         H_.block(a2j, a1j, poseDim, poseDim) += A2.transpose() * A1 * w;
-    //         H_.block(a2j, a2j, poseDim, poseDim) += A2.transpose() * A2 * w;
-    //         H_.block(a2j, bj, poseDim, depthDim) += A2.transpose() * B * w;
-
-    //         H_.block(bj, a1j, depthDim, poseDim) += B.transpose() * A1 * w;
-    //         H_.block(bj, a2j, depthDim, poseDim) += B.transpose() * A2 * w;
-    //         H_.block(bj, bj, depthDim, depthDim) += B.transpose() * B * w;
-    //         /********************* 利用稀疏性计算g=-J'*b ****************************
-    //         * | A1'|       | A1' * b |
-    //         * | A2'| * b = | A2' * b |
-    //         * | B' |       | B'  * b |
-    //         **********************************************************************/
-    //         g_.middleRows(a1j, poseDim) -= A1.transpose() * loss * w;
-    //         g_.middleRows(a2j, poseDim) -= A2.transpose() * loss * w;
-    //         g_.middleRows(bj, depthDim) -= B.transpose() * loss * w;
-
-    //     }
-    // }
-
-    // if(config->relativePoseConstraintWeight > 0.) {
-    //     Eigen::MatrixXd H;
-    //     Eigen::VectorXd g;
-    //     ConstructRelativePoseConstraint(H, g);
-    //     H_.block(0, 0, H.rows(), H.cols()) += H;
-    //     g_.middleRows(0, g.rows()) += g;
-    // }
-    // cout << "usefulNum, depthErrorNum, targetErrorNum, noInrangeNum, allBadNum: " << usefulNum << " "
-    //      << depthErrorNum << " " << targetErrorNum << " " << noInrangeNum << " "
-    //      << (depthErrorNum + targetErrorNum + noInrangeNum) << endl;
-    double cost = 0;
-    return cost;
 }
 
 void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
@@ -1943,8 +1801,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     return winOptSuccess;
 }
 
-void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho,
-                          const int lvl) {
+void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho) {
 
     //const double scale = 1.0 / pow(2, lvl);
     const double huberDelta = config->huberDelta;  //  * scale;

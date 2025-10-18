@@ -66,8 +66,6 @@ class Landmark {
     // 跟踪一帧的FEJ
     std::vector<Eigen::Matrix<double, 3, 6>> J_Pc2_T12_;
 
-    bool noUsed_ = false;
-
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 
     bool IsDebugPoint() {
@@ -91,7 +89,10 @@ class Landmark {
 
     void CopyStatus();
 
-    void SetCanDelete() {canBedelete_ = true;}
+    void SetCanDelete() { canBedelete_ = true; }
+    void SetNoUsed() { noUsed_ = true; }
+    bool NoUsed() const { return noUsed_; }
+    bool CanBeDelete() const { return canBedelete_; }
 
     //void AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv);
     //std::mutex mute_;
@@ -104,7 +105,9 @@ class Landmark {
     int continousPassCheckNum_ = 0;
     void AddContinousCheckPassNum() { ++continousPassCheckNum_; }
 
+   private:
     bool canBedelete_ = false;
+    bool noUsed_ = false;
 };
 
 #endif

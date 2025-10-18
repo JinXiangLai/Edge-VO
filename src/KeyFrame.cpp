@@ -111,7 +111,7 @@ KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
     int deleteLKnum = 0;
     for (Landmark* lk : landmark_) {
-        if (lk != nullptr && lk->canBedelete_) {
+        if (lk != nullptr && lk->CanBeDelete()) {
             delete lk;
             ++deleteLKnum;
             lk = nullptr;

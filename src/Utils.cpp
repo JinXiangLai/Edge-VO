@@ -1004,7 +1004,7 @@ bool GetHostFrameObservationInvDepth(const Eigen::Vector2d& kp1,
     constexpr double kMinCrossAng = 1.0;
     constexpr double kMaxCrossAng = 120.0;
     if (ang < kMinCrossAng || ang > kMaxCrossAng) {
-        cout << "triangulate ang: " << ang << "deg! Error!" << endl;
+        // cout << "triangulate ang: " << ang << "deg! Error!" << endl;
         return false;
     }
 
