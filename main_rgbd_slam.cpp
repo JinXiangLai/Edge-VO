@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
             initFrame->depthImage_ = depthImg;
             lastF = *initFrame;
             optimizer.AddOneKeyFeame(initFrame);
-            interaction->visualLastKF = win.back();
+            interaction->visualLastKF = *win.back();
 
             if (config->debugShowOnlineResult3D) {
                 viewerThread = new thread(Run, &optimizer);
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
         accDist += trans;
 
         // 显示线程使用
-        interaction->visualCurF = curF;
+        //interaction->visualCurF = curF;
         interaction->visualCurFinit = curF;
         int findMatchNum = 0;
         if (!isInitialized) {
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
             // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
             cout << "Add new keyframe id: " << curF.id_ << "\n";
             t11 = chrono::steady_clock::now();
-            interaction->visualLastKF = win.back();
+            interaction->visualLastKF = *win.back();
 
         } else {
             // delete curF; // 释放非KF内存

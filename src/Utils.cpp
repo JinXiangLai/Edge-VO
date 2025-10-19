@@ -1389,7 +1389,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     if (interaction->drawEpipolarMatch ||
         interaction->visualCurF.grayImg_.empty() ||
         interaction->visualCurFinit.grayImg_.empty() ||
-        interaction->visualLastKF->grayImg_.empty()) {
+        interaction->visualLastKF.grayImg_.empty()) {
         sleep(1);
         return;
     }
@@ -1399,7 +1399,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     //window.setViewerPose(viewPose); // 使用默认的才是正确的
     KeyFrame* curf = &interaction->visualCurF;
     KeyFrame* curfInit = &interaction->visualCurFinit;
-    KeyFrame* curkf = interaction->visualLastKF;
+    KeyFrame* curkf = &interaction->visualLastKF;
     if (curf->grayImg_.empty()) {
         curf = nullptr;
     }
@@ -1421,7 +1421,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
         points.reserve(10000);
 
         for (Landmark* p : ps) {
-            if (p == nullptr || !p->Converge()) {
+            if (p == nullptr || !p->initialized_ || p->CanBeDelete()) {
                 continue;
             }
             const Eigen::Vector3d pw = p->GetPw();
@@ -1465,35 +1465,44 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     };
     constexpr double pointSize = 1.0;
 
-    vector<Point3d> localPoints;
-    vector<cv::Vec3b> localColors;
-    cv::Vec3b color1{0, 255, 0};
-    GenerateCloud(interaction->localPoints, color1, localPoints, localColors);
-    if (!localPoints.empty()) {
-        viz::WCloud localCloud(localPoints, localColors);
-        if (localColors.empty()) {
-            localCloud.setColor({color1});
+    {
+        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncLandmarkStatus);
+        vector<Point3d> localPoints;
+        vector<cv::Vec3b> localColors;
+        localPoints.reserve(interaction->localPoints.size());
+        localColors.reserve(localPoints.size());
+        cv::Vec3b color1{0, 255, 0};
+        GenerateCloud(interaction->localPoints, color1, localPoints,
+                      localColors);
+        if (!localPoints.empty()) {
+            viz::WCloud localCloud(localPoints, localColors);
+            if (localColors.empty()) {
+                localCloud.setColor({color1});
+            }
+            localCloud.setRenderingProperty(viz::POINT_SIZE, pointSize);
+            window.showWidget("localPointCloud", localCloud);
         }
-        localCloud.setRenderingProperty(viz::POINT_SIZE, pointSize);
-        window.showWidget("localPointCloud", localCloud);
-    }
 
-    vector<Point3d> activePoints;
-    vector<cv::Vec3b> activeColors;
-    vector<cv::Vec3b> colors1;
-    cv::Vec3b color2{0, 0, 255};
-    GenerateCloud(interaction->activePoints, color2, activePoints,
-                  activeColors);
-    if (!activePoints.empty()) {
-        viz::WCloud activeCloud(activePoints, activeColors);
-        if (activeColors.empty()) {
-            activeCloud.setColor({color2});
+        vector<Point3d> activePoints;
+        vector<cv::Vec3b> activeColors;
+        activePoints.reserve(localPoints.size());
+        activeColors.reserve(localPoints.size());
+        vector<cv::Vec3b> colors1;
+        cv::Vec3b color2{0, 0, 255};
+        GenerateCloud(interaction->activePoints, color2, activePoints,
+                      activeColors);
+        if (!activePoints.empty()) {
+            viz::WCloud activeCloud(activePoints, activeColors);
+            if (activeColors.empty()) {
+                activeCloud.setColor({color2});
+            }
+            activeCloud.setRenderingProperty(viz::POINT_SIZE, pointSize * 2);
+            window.showWidget("activePointCloud", activeCloud);
         }
-        activeCloud.setRenderingProperty(viz::POINT_SIZE, pointSize * 2);
-        window.showWidget("activePointCloud", activeCloud);
+
+        cout << "local cloud size & active cloud size: " << localPoints.size()
+             << " & " << activePoints.size() << endl;
     }
-    cout << "local cloud size & active cloud size: " << localPoints.size()
-         << " & " << activePoints.size() << endl;
 
     // 可视化相机pose
     vector<Point3d> startEndCameraPos(2);

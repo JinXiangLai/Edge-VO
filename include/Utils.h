@@ -356,7 +356,7 @@ class InteractionParam {
     bool stepBystep = false;
     KeyFrame visualCurF;      // 进行pose优化后的当前帧
     KeyFrame visualCurFinit;  // 未进行pose优化前的当前帧
-    KeyFrame* visualLastKF = nullptr;
+    KeyFrame visualLastKF;
     bool resetWindow = false;
     cv::viz::Viz3d* window;  // ("Local Map Viewer");
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场

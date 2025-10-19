@@ -45,12 +45,14 @@ class Landmark {
     bool initFromPropagate_ = false;
     bool initialized_ = false;
 
+    int failInitializeNum_ = 0;
+
     //std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
     KeyFrame* host_;      // cnchor frame
     Eigen::Vector2d uv_;  // host帧下的像素坐标z
 
     std::unordered_map<KeyFrame*, Eigen::Vector2d> target_;
-    std::shared_ptr<Camera> cam_;
+    static std::shared_ptr<Camera> cam_;
 
     // keep FEJ
     std::map<KeyFrame*, Eigen::Matrix<double, 3, 6>>

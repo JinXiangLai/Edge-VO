@@ -53,7 +53,6 @@ class KeyFrame {
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
 
-    std::shared_ptr<Camera> cam_;
     Pose Twc_, TwcBack_;
     // TODO： 增加该字段，减小Inverse()次数
     Pose Tcw_, TcwBack_;
@@ -80,8 +79,8 @@ class KeyFrame {
     void ResetDebugMessage();
 
     void OpticalFlowTrackExecute(const cv::Mat& prevImg, const cv::Mat& curImg,
-                                std::vector<cv::Point2f>& prevPts,
-                                std::vector<Landmark*>& prevTrackLandmark);
+                                 std::vector<cv::Point2f>& prevPts,
+                                 std::vector<Landmark*>& prevTrackLandmark);
 
     std::ofstream invDepthUncertaintyFile_;
     bool firstWriteUncertainty_ = true;
@@ -111,6 +110,7 @@ class KeyFrame {
     void ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw);
     void DrawOpticalMatchImg();
     void GenerateUndistordMap();
+    int RemoveNoInitializeLongFeature();
 
     static OpticalFlowStruct optFlw;
 
@@ -128,7 +128,8 @@ class KeyFrame {
                                         const Eigen::Vector2i& lp2Start,
                                         const Eigen::Vector2i& lp2End,
                                         const cv::Mat& debugImg2);
-    void WriteDebugImage2VideoEachFrame(const int kf2Id, const std::string& debugVideoName);
+    void WriteDebugImage2VideoEachFrame(const int kf2Id,
+                                        const std::string& debugVideoName);
     void DrawTriangulateCase(
         const double estD1, const double estD2, const Landmark& lk1,
         const Eigen::Vector2i& epipolarP1, const Eigen::Vector2i& matchKp2,
@@ -145,7 +146,10 @@ class KeyFrame {
 #endif
 
     static cv::Mat map1, map2;
-    static Pose Tc0w; // 运行时世界系c0，到数据集真值轨迹w的变换
+    static Pose Tc0w;  // 运行时世界系c0，到数据集真值轨迹w的变换
+    static std::mutex
+        mutexForSyncLandmarkStatus;  // 由于地图点在关键帧失效时会被删除，因此需要同步
+    static std::shared_ptr<Camera> cam_;
 };
 
 #endif

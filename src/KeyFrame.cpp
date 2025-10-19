@@ -23,6 +23,8 @@ cv::Mat KeyFrame::map1;
 cv::Mat KeyFrame::map2;
 Pose KeyFrame::Tc0w;
 KeyFrame::OpticalFlowStruct KeyFrame::optFlw;
+std::mutex KeyFrame::mutexForSyncLandmarkStatus;
+std::shared_ptr<Camera> KeyFrame::cam_;
 
 class Landmark;
 
@@ -30,11 +32,13 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
                    std::shared_ptr<Camera> cam, const int id, const int level)
     : id_(id),
       grayImg_(img),
-      cam_(cam),
       Twc_{Twc},
       Tcw_(Twc.Inverse()),
       priorTwc_(Twc),
       level_(level) {
+    if (cam_ == nullptr) {
+        cam_ = cam;
+    }
     GenerateUndistordMap();
     cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
     debugGrayImg_ = grayImg_.clone();
@@ -43,7 +47,6 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
 KeyFrame::KeyFrame(const KeyFrame& f)
     : id_(f.id_),
       grayImg_(f.grayImg_),
-      cam_(f.cam_),
       Twc_(f.Twc_),
       Tcw_(f.Tcw_),
       priorTwc_(f.priorTwc_),
@@ -54,22 +57,10 @@ KeyFrame::KeyFrame(const KeyFrame& f)
     // vector内的堆内存需要先释放
     // 不能这样子，这是构造函数，默认的内存应该是干净的，
     // 否则你应该调用赋值构造
-
-    // 照理说这里不应该执行
-    for (Landmark* lk : landmark_) {
-        if (lk != nullptr) {
-            delete lk;
-        }
+    if (cam_ == nullptr) {
+        cam_ = f.cam_;
     }
-    landmark_.clear();
-    landmark_.reserve(f.landmark_.size());
-    for (Landmark* lk : f.landmark_) {
-        landmark_.push_back(new Landmark(*lk));
-        // !!!Attention: 指针成员变量需要小心处理，因为如果其指向栈内存，由于栈内存会被系统回收，
-        // 因此可能产生意外情况
-        landmark_.back()->host_ = this;
-    }
-
+    
     debugGrayImg_ = f.debugGrayImg_;
     depthImage_ = f.depthImage_;
 }
@@ -78,26 +69,12 @@ void KeyFrame::operator=(const KeyFrame& f) {
 #if 1
     id_ = f.id_;
     grayImg_ = f.grayImg_;
-    cam_ = f.cam_;
     Twc_ = f.Twc_;
     Tcw_ = f.Tcw_;
     priorTwc_ = f.priorTwc_;
     level_ = f.level_;
     unKeypoints_ = f.unKeypoints_;
     convergeEdgeNum_ = f.convergeEdgeNum_;
-    for (Landmark* lk : landmark_) {
-        if (lk != nullptr) {
-            delete lk;
-        }
-    }
-    landmark_.clear();
-    landmark_.reserve(f.landmark_.size());
-    for (Landmark* lk : f.landmark_) {
-        landmark_.push_back(new Landmark(*lk));
-        // !!!Attention: 指针成员变量需要小心处理，因为如果其指向栈内存，由于栈内存会被系统回收，
-        // 因此可能产生意外情况
-        landmark_.back()->host_ = this;
-    }
 #else
     ReleaseMat();
     // 这样会导致cv::Mat等堆内存无法释放
@@ -110,6 +87,7 @@ void KeyFrame::operator=(const KeyFrame& f) {
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
     int deleteLKnum = 0;
+    std::lock_guard<mutex> lock(mutexForSyncLandmarkStatus);
     for (Landmark* lk : landmark_) {
         if (lk != nullptr && lk->CanBeDelete()) {
             delete lk;
@@ -171,42 +149,66 @@ void KeyFrame::GenerateUndistordMap() {
     }
 }
 
+int KeyFrame::RemoveNoInitializeLongFeature() {
+    vector<Landmark*>::iterator it1 = optFlw.trackHistoryLandmark_.begin();
+    vector<cv::Point2f>::iterator it2 = optFlw.prevHistoryPts_.begin();
+    int removeFeatNum = 0;
+    while (it1 != optFlw.trackHistoryLandmark_.end()) {
+        if ((*it1)->failInitializeNum_ > 1) {
+            (*it1)->SetCanDelete();
+            it1 = optFlw.trackHistoryLandmark_.erase(it1);
+            it2 = optFlw.prevHistoryPts_.erase(it2);
+            ++removeFeatNum;
+            continue;
+        }
+        ++it1;
+        ++it2;
+    }
+    return removeFeatNum;
+}
+
 void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
     cv::Mat search;
     if (!lastKFoptFlw.prevImg_.empty()) {
         search = cv::Mat::zeros(lastKFoptFlw.prevImg_.size(), CV_8UC1);
         // 当前关键帧追踪到当前帧的特征点，不要重复创建
         // 遍历当前帧被跟踪到的特征点
+
+        auto SetNoGenerateKeypointArea = [&search](const cv::Point2f& p) {
+            constexpr int windowLen = 10;
+            constexpr int halfLen = windowLen / 2;
+            constexpr int edgeLen = 2;
+            const int tempTopY = static_cast<int>(p.y - halfLen);
+            const int tempTopX = static_cast<int>(p.x - halfLen);
+            const int topX = tempTopX < 0 ? edgeLen : tempTopX;
+            const int topY = tempTopY < 0 ? edgeLen : tempTopY;
+            const int downX = topX + windowLen > search.cols - 1
+                                  ? search.cols - edgeLen
+                                  : topX + windowLen;
+            const int downY = topY + windowLen > search.rows - 1
+                                  ? search.rows - edgeLen
+                                  : topY + windowLen;
+            if (downX <= topX || downY <= topY) {
+                return;
+            }
+            search(cv::Rect(cv::Point(topX, topY), cv::Point(downX, downY)))
+                .setTo(255);
+        };
         for (const cv::Point2f& p : lastKFoptFlw.prevPts_) {
-            search.ptr<uchar>(int(p.y + 0.5))[int(p.x + 0.5)] = 255;
+            SetNoGenerateKeypointArea(p);
         }
 
         for (const cv::Point2f& p : lastKFoptFlw.prevHistoryPts_) {
-            search.ptr<uchar>(int(p.y + 0.5))[int(p.x + 0.5)] = 255;
+            SetNoGenerateKeypointArea(p);
         }
 
         //cv::imshow("search", search);
         //cv::waitKey();
     }
 
-    auto CanGenerateKeyPoint = [&search](const cv::Point2f& p) -> bool {
-        int x = int(p.x + 0.5);
-        int y = int(p.y + 0.5);
-        for (int i = -1; i < 2; ++i) {
-            for (int j = -1; j < 2; ++j) {
-                int xi = x + i;
-                int yi = y + j;
-                if (xi < 1 || yi < 1 || xi >= search.cols ||
-                    yi >= search.rows) {
-                    return false;
-                }
-                if (search.ptr<uchar>(yi)[xi] != 0) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
+    auto CanGenerateKeypoint = [&search](const cv::Point2f& p) -> bool {
+        return search.empty() || search.ptr<uchar>(static_cast<int>(
+                                     p.y))[static_cast<int>(p.x)] == 0;
     };
 
     // 创建FAST检测器
@@ -218,7 +220,7 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
     unKeypoints_.reserve(pts.size());
     for (const cv::KeyPoint& p : pts) {
         // 注意：需要把上一KF的optFlw一直保留而不能重置
-        if (search.empty() || CanGenerateKeyPoint(p.pt)) {
+        if (search.empty() || CanGenerateKeypoint(p.pt)) {
             cv::circle(debugGrayImg_, p.pt, 2, kColor.at("white"));
             unKeypoints_.emplace_back(p.pt.x, p.pt.y);
         }

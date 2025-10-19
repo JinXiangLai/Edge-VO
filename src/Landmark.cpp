@@ -7,19 +7,25 @@
 using namespace std;
 using namespace cv;
 
+std::shared_ptr<Camera> Landmark::cam_;
+
 class KeyFrame;
 
 Landmark::Landmark(const Eigen::Vector2d& px, KeyFrame* host,
                    const shared_ptr<Camera> cam, const uint64_t desc,
                    const double invZ)
-    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px), cam_(cam) {}
+    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px) {
+    if (cam_ == nullptr) {
+        cam_ = cam;
+    }
+}
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
     return cam_->InverseProject(uv_, 1.0);
 }
 
 Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
-    if(cam_==nullptr) {
+    if (cam_ == nullptr) {
         cout << this << " cam_ is nullptr!" << endl;
     }
     if (!useBackUpStatus)
@@ -52,6 +58,7 @@ void Landmark::SetTriangulateResult(const double invZ) {
     invZ_ = invZ;
 #endif
     obvTime_ = 1;
+    failInitializeNum_ = 0;
     initialized_ = true;
 }
 

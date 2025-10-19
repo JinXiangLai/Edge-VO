@@ -700,6 +700,13 @@ void Optimizer::PreSelectLandmarkForTracking(
             break;
         }
     }
+
+    cout << fmt::format(
+        "curF pose opt preselect landmark num: {}, last kf track feature num: "
+        "{}, "
+        "history kf track feature num: {}\n",
+        lk1s.size(), optFlw.trackLandmark_.size(),
+        optFlw.trackHistoryLandmark_.size());
 }
 
 bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
@@ -847,6 +854,7 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 if (config->useDepthImage ||
                     !GetHostFrameObservationInvDepth(
                         lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
+                    ++lk->failInitializeNum_;
                     continue;
                 }
                 lk->SetTriangulateResult(idepth1);
@@ -892,8 +900,11 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             }
         }
 
-        cout << fmt::format("prevTriSucceedNum: {}, historyTriSucceedNum: {}\n",
-                            prevTriSucceedNum, historyTriSucceedNum);
+        int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
+        cout << fmt::format(
+            "prevTriSucceedNum: {}, historyTriSucceedNum: {}, remove long time "
+            "fail initialize feature num: {}\n",
+            prevTriSucceedNum, historyTriSucceedNum, removeFeatNum);
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         WriteDebugTriangulateCase2Video(kf->id_);
@@ -1072,7 +1083,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
                                         optFlw.prevHistoryPts_);
 
     // 删除老帧看看是否会有影响
-    delete oldest;
+    //delete oldest;
     return;
 }
 
@@ -1764,17 +1775,17 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
 }
 
 bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
-    cout << "Begin SlidingWindowOptimize!!!" << endl;
     const int margKFid = SelectOneKF2Marginalization(*curKF);
-    cout << "margKFid: " << margKFid << endl;
-
     const int sampleNum = SampleUsefulLandmark(margKFid);
-    cout << "Sample landmark num: " << sampleNum << endl;
     // 在滑窗优化前就把最新KF添加到滑窗之中
     window_.emplace_back(curKF);
     if (window_.size() < 3) {
         return false;
     }
+    cout << fmt::format(
+        "Begin SlidingWindowOptimize! margKFid: {}, Sample landmark num for "
+        "window BA: {}.\n",
+        margKFid, sampleNum);
 
     margKFstatus_ = false;
     if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
@@ -2097,20 +2108,23 @@ void Optimizer::ShowLocalMap() {
     set<Landmark*>& lPoints = interaction->localPoints;
     aPoints.clear();
     lPoints.clear();
-    for (Landmark* p : optLandmark_) {
-        if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
-            p->ManySupport() && p->Converge()) {
-            aPoints.insert(p);
+    {
+        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncLandmarkStatus);
+        for (Landmark* p : optLandmark_) {
+            if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
+                p->ManySupport() && p->Converge()) {
+                aPoints.insert(p);
+            }
         }
-    }
 
-    for (int i = 0; i < window_.size(); ++i) {
-        // for(int i = window_.size()-1; i < window_.size(); ++i) {
-        KeyFrame* kf = window_[i];
-        for (Landmark* p : kf->landmark_) {
-            if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
-                !p->IsOutOfRange() && p->ManySupport() && p->Converge()) {
-                lPoints.insert(p);
+        for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
+            // for(int i = window_.size()-1; i < window_.size(); ++i) {
+            KeyFrame* kf = window_[i];
+            for (Landmark* p : kf->landmark_) {
+                if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
+                    !p->CanBeDelete() && p->initialized_) {
+                    lPoints.insert(p);
+                }
             }
         }
     }
