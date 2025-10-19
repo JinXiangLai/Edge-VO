@@ -158,6 +158,8 @@ class Optimizer {
     bool margKFstatus_ = false;
 
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
+
+    std::vector<KeyFrame*> delayEraseKeyframe_;
 };
 
 #endif

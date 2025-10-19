@@ -148,7 +148,8 @@ class KeyFrame {
     static cv::Mat map1, map2;
     static Pose Tc0w;  // 运行时世界系c0，到数据集真值轨迹w的变换
     static std::mutex
-        mutexForSyncLandmarkStatus;  // 由于地图点在关键帧失效时会被删除，因此需要同步
+        mutexForSyncView3Dstatus;  // 由于地图点在关键帧失效时会被删除，因此需要同步
+    static std::unordered_set<KeyFrame*> kfOn3Dshow;
     static std::shared_ptr<Camera> cam_;
 };
 

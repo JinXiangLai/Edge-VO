@@ -23,7 +23,8 @@ cv::Mat KeyFrame::map1;
 cv::Mat KeyFrame::map2;
 Pose KeyFrame::Tc0w;
 KeyFrame::OpticalFlowStruct KeyFrame::optFlw;
-std::mutex KeyFrame::mutexForSyncLandmarkStatus;
+std::mutex KeyFrame::mutexForSyncView3Dstatus;
+std::unordered_set<KeyFrame*> KeyFrame::kfOn3Dshow;
 std::shared_ptr<Camera> KeyFrame::cam_;
 
 class Landmark;
@@ -87,7 +88,6 @@ void KeyFrame::operator=(const KeyFrame& f) {
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
     int deleteLKnum = 0;
-    std::lock_guard<mutex> lock(mutexForSyncLandmarkStatus);
     for (Landmark* lk : landmark_) {
         if (lk != nullptr && lk->CanBeDelete()) {
             delete lk;

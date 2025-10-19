@@ -114,4 +114,4 @@ debugKFpointSet: [97_167]
 # 显示相关flag
 debugShowGlobalMap: false # 默认显示局部地图
 debugRunOnDesktop: false # 是否运行在台式机上，台式机无法显示过多的元素
-debugShowOnlineResult3D: true # 是否显示viz3d窗口
+debugShowOnlineResult3D: false # 是否显示viz3d窗口

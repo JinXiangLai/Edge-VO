@@ -1083,7 +1083,17 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
                                         optFlw.prevHistoryPts_);
 
     // 删除老帧看看是否会有影响
-    //delete oldest;
+    delete oldest;
+    //delayEraseKeyframe_.push_back(oldest);
+    //if (delayEraseKeyframe_.size() > 1) {
+    //    lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+    //    if(!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
+    //        KeyFrame* outKf = delayEraseKeyframe_[0];
+    //        delete outKf;
+    //        outKf = nullptr;
+    //        delayEraseKeyframe_.erase(delayEraseKeyframe_.begin());
+    //    }
+    //}
     return;
 }
 
@@ -2109,7 +2119,8 @@ void Optimizer::ShowLocalMap() {
     aPoints.clear();
     lPoints.clear();
     {
-        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncLandmarkStatus);
+        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+        KeyFrame::kfOn3Dshow.clear();
         for (Landmark* p : optLandmark_) {
             if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
                 p->ManySupport() && p->Converge()) {
@@ -2126,6 +2137,8 @@ void Optimizer::ShowLocalMap() {
                     lPoints.insert(p);
                 }
             }
+
+            KeyFrame::kfOn3Dshow.insert(kf);
         }
     }
 

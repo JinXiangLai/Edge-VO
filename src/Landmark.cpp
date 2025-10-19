@@ -152,11 +152,11 @@ void Landmark::BackUpStatus() {
 //}
 
 void Landmark::ResetFEJ() {
-    J_Pc2_Twc2.clear();
-    J_Pc2_Pw.clear();
-    J_Pw_z.clear();
-    J_Pw_Twc1.clear();
-    J_Pc2_T12_.clear();
+    //J_Pc2_Twc2.clear();
+    //J_Pc2_Pw.clear();
+    //J_Pw_z.clear();
+    //J_Pw_Twc1.clear();
+    //J_Pc2_T12_.clear();
     noUsed_ = false;
     matchNextPixel_.setZero();
 }
