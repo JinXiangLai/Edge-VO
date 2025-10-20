@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -114,4 +114,4 @@ debugKFpointSet: [97_167]
 # 显示相关flag
 debugShowGlobalMap: false # 默认显示局部地图
 debugRunOnDesktop: false # 是否运行在台式机上，台式机无法显示过多的元素
-debugShowOnlineResult3D: false # 是否显示viz3d窗口
+debugShowOnlineResult3D: true # 是否显示viz3d窗口

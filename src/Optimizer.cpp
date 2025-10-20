@@ -1040,8 +1040,10 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
         }
     }
     cout << fmt::format(
-        "margKF transform landmark num: {}, newAddOptimizeLandmarkNum: {}\n",
-        transformLandmarkNum, newAddOptimizeLandmarkNum);
+        "margKF transform landmark num: {}, newAddOptimizeLandmarkNum: {}, "
+        "total landmark num: {}\n",
+        transformLandmarkNum, newAddOptimizeLandmarkNum,
+        oldest->landmark_.size());
     return true;
 }
 
@@ -1083,17 +1085,16 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
                                         optFlw.prevHistoryPts_);
 
     // 删除老帧看看是否会有影响
-    delete oldest;
-    //delayEraseKeyframe_.push_back(oldest);
-    //if (delayEraseKeyframe_.size() > 1) {
-    //    lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
-    //    if(!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
-    //        KeyFrame* outKf = delayEraseKeyframe_[0];
-    //        delete outKf;
-    //        outKf = nullptr;
-    //        delayEraseKeyframe_.erase(delayEraseKeyframe_.begin());
-    //    }
-    //}
+    // delete oldest;
+    delayEraseKeyframe_.push_back(oldest);
+    if (delayEraseKeyframe_.size() > 1) {
+        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+        if (!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
+            delete delayEraseKeyframe_[0];
+            delayEraseKeyframe_[0] = nullptr;
+            delayEraseKeyframe_.erase(delayEraseKeyframe_.begin());
+        }
+    }
     return;
 }
 

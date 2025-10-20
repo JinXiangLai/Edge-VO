@@ -92,7 +92,7 @@ class Landmark {
 
     void CopyStatus();
 
-    void SetCanDelete() { canBedelete_ = true; }
+    void SetCanDelete(const bool flag = true) { canBedelete_ = flag; }
     void SetNoUsed() { noUsed_ = true; }
     bool NoUsed() const { return noUsed_; }
     bool CanBeDelete() const { return canBedelete_; }

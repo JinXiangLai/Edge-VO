@@ -61,7 +61,7 @@ KeyFrame::KeyFrame(const KeyFrame& f)
     if (cam_ == nullptr) {
         cam_ = f.cam_;
     }
-    
+
     debugGrayImg_ = f.debugGrayImg_;
     depthImage_ = f.depthImage_;
 }
@@ -88,8 +88,8 @@ void KeyFrame::operator=(const KeyFrame& f) {
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
     int deleteLKnum = 0;
-    for (Landmark* lk : landmark_) {
-        if (lk != nullptr && lk->CanBeDelete()) {
+    for (Landmark*& lk : landmark_) {
+        if (lk != nullptr && lk->CanBeDelete() && lk->host_ == this) {
             delete lk;
             ++deleteLKnum;
             lk = nullptr;
