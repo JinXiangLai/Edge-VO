@@ -165,7 +165,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     }
 
     // 由观测数量由高到低进行采样
-    constexpr int kMaxSampleLandmarkNum = 2000;
+    constexpr int kMaxSampleLandmarkNum = 20000;
     canUseNum = 0;
     for (const auto& vec : resampleStableLkIndex2Chi2) {
         canUseNum += vec.size();
@@ -619,8 +619,10 @@ bool Optimizer::ExecuteWindowOptimize() {
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         bool accept = false;
         double costRelativeAbsDiff = 100;
-        UpdateLMlambda(lastCost, newCost, accept, continousNoImprovementNum,
-                       costRelativeAbsDiff);
+        const double predictReduction =
+            ComputePredictionReduction(delta_x, g_, H_);
+        UpdateLMlambda(lastCost, newCost, predictReduction, accept,
+                       continousNoImprovementNum, costRelativeAbsDiff);
         if (!accept) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
                 if (!optLandmark_[i]->NoUsed()) {
@@ -794,8 +796,10 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 
         bool accept = false;
         double costRelativeAbsDiff = 100;
-        UpdateLMlambda(lastCost, newCost, accept, continousNoImprovementNum,
-                       costRelativeAbsDiff);
+        const double predictReduction =
+            ComputePredictionReduction(delta_x, g_, H_);
+        UpdateLMlambda(lastCost, newCost, predictReduction, accept,
+                       continousNoImprovementNum, costRelativeAbsDiff);
         // LM 方法
         if (!accept) {
             Twc2 = poseBackup;
@@ -1454,20 +1458,33 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
     return true;
 }
 
+double Optimizer::ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+                                             const Eigen::VectorXd& g,
+                                             const Eigen::MatrixXd& H) {
+    // 实际下降值为： lastCost - newCost
+    // g = -J.T * r
+    return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
+           0.5 * lambda_ * deltaX.squaredNorm();
+}
+
 void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
                                const Optimizer::ResidualInfo& newCost,
-                               bool& accept, int& continousNoImprovementNum,
+                               const double predictReduction, bool& accept,
+                               int& continousNoImprovementNum,
                                double& costRelativeAbsDiff) {
     // TODO: 使用更好的LM更新方式
     costRelativeAbsDiff = lastCost.cost - newCost.cost;
-    if (costRelativeAbsDiff <= 0) {
+    const double rho = costRelativeAbsDiff / (predictReduction + 1e-12);
+    if (rho > 0) {
+        if (rho > 0.75) {
+            lambda_ *= 0.3;
+        }
+        accept = true;
+        continousNoImprovementNum = 0;
+    } else {
         lambda_ *= 1.8;
         accept = false;
         ++continousNoImprovementNum;
-    } else {
-        lambda_ *= 0.3;
-        accept = true;
-        continousNoImprovementNum = 0;
     }
     costRelativeAbsDiff = abs(costRelativeAbsDiff);
 }
@@ -1873,8 +1890,8 @@ void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho) {
         // loss = 0.5 * (JΔx + r)^2 = 0.5 * (Δx.T*J.T*J*Δx + 2*Δx.T*J.T*r + r*r)，易知极小值点在dloss/dΔx = 0处，则有：
         // 2*J.T*J*Δx + 2*J.T*r = 0 ==>
         // J.T*J*Δx = -J.T*r
-        rho[0] = chi2;
-        rho[1] = 1;
+        rho[0] = 0.5 * chi2;
+        rho[1] = 0.5;
     }
 }
 

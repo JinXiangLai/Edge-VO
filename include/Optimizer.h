@@ -120,9 +120,11 @@ class Optimizer {
     bool CalculatePriorCostChi2(const Eigen::VectorXd& deltaX);
 
     void UpdateLMlambda(const ResidualInfo& lastCost,
-                        const ResidualInfo& newCost, bool& accept,
+                        const ResidualInfo& newCost, const double predictReduction, bool& accept,
                         int& continousNoImprovementNum,
                         double& costRelativeAbsDiff);
+
+    double ComputePredictionReduction(const Eigen::VectorXd& deltaX, const Eigen::VectorXd& g, const Eigen::MatrixXd& H);
 
     bool LMstopJudge(const int& continousNoImprovementNum,
                      const double& costRelativeAbsDiff,

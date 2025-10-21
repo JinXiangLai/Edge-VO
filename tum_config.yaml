@@ -1,4 +1,4 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_desk
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i" 
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -31,9 +31,9 @@ maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差�
 maxDepthConvergeStd: 0.01 # 深度收敛的标准差，由于逆深度与正深度是非线性关系，不能给正深度的收敛标准
 abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与优化步骤
 huberDelta: 6 # 胡伯核函数参数，sqrt(chi2)
-maxProjectError: 9 # 超过这个残差，意味着地图点错误，地图点需要被删除了
+maxProjectError: 12 # 超过这个残差，意味着地图点错误，地图点需要被删除了
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
-maxKFnumInWindow: 5
+maxKFnumInWindow: 9
 useMarginalization: false # 是否使用边缘化最老帧
 imgTimeOffset: 0.0 # sec,时间同步误差
 needNewKFtrans: 0.1 # 选取新KF的条件
@@ -52,9 +52,9 @@ iterateLogFreqLM: 30 # 迭代输出频率
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
 
-fastTh: 30 # 角点，暂不启用，目标是仅利用边缘点
+fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
 fastNum: 0 # 大于周边16个像素多少个
-maxFlowTrackError: 20 # 光流跟踪最大的误差
+maxFlowTrackError: 10 # 光流跟踪最大的误差
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
 
@@ -62,7 +62,7 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 50
+firstImgIdx: 30
 loopClosureImgIdx: 10
 
 cannyLowerTh: 80 # 150
