@@ -72,6 +72,8 @@ class Config {
     int maxActiveLandmarkEachKF;
     int fastTh;
     double maxFlowTrackError;
+    int optflowWinSize;
+    int optflowLayer;
     double relativePoseConstraintWeight;
     std::string model;
     int maxKeepEpilorMatchPointNum = 3;

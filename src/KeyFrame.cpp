@@ -247,7 +247,9 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<uchar> status;
     vector<float> error;
 
-    cv::calcOpticalFlowPyrLK(prevImg, curImg, prevPts, nextPts, status, error);
+    const int winLen = config->optflowWinSize;
+    cv::calcOpticalFlowPyrLK(prevImg, curImg, prevPts, nextPts, status, error,
+                             cv::Size(winLen, winLen), config->optflowLayer);
     vector<Landmark*> trackLandmark;
     const auto debugPts1 = prevPts;
     prevPts.clear();

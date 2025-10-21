@@ -59,6 +59,8 @@ Config::Config(const std::string& yamlFilePath) {
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
     maxFlowTrackError = f["maxFlowTrackError"].as<double>();
+    optflowWinSize = f["optflowWinSize"].as<int>();
+    optflowLayer = f["optflowLayer"].as<int>();
     relativePoseConstraintWeight =
         f["relativePoseConstraintWeight"].as<double>();
 
