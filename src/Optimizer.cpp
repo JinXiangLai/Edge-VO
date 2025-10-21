@@ -1891,7 +1891,7 @@ void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho) {
         // 2*J.T*J*Δx + 2*J.T*r = 0 ==>
         // J.T*J*Δx = -J.T*r
         rho[0] = 0.5 * chi2;
-        rho[1] = 0.5;
+        rho[1] = 1.0;
     }
 }
 
