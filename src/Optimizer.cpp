@@ -19,6 +19,7 @@ using namespace cv;
 
 constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
 constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
+constexpr double kFirstFrameFixedCoffee = 1e20;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
@@ -258,7 +259,8 @@ void Optimizer::CalculateHandGradiantCurFrame(
         const double d = 1 / Pc2.z();
         const double d2 = 1. / pow(Pc2.z(), 2);
         J_Pc2Norm_Pc2 << d, 0, -Pc2.x() * d2, 0, d, -Pc2.y() * d2, 0, 0, 0;
-        Eigen::Matrix<double, 2, 3> J_px2_Pc2 = J_px2_Pc2Norm * J_Pc2Norm_Pc2;
+        Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
+            J_px2_Pc2Norm * J_Pc2Norm_Pc2 * rho[1];
 
         // Pc2 w.r.t T12 [3x6]
         Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
@@ -300,14 +302,14 @@ void Optimizer::CalculateHandGradiantCurFrame(
         Eigen::Matrix<double, 2, 6> A =
             J_px2_Pc2 * J_Pc2_Twc2 * noUpdatePoseNum;
         double w = 1.0;  // 1.0 / lk1s[i]->invDepthCov_;
-        H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w * rho[1];
+        H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
 
         /******** -J.T * b的size为[J.cols() x 1]**************
             * | A.T  C.T  E.T |       | A.T*b1 + C.T*b2 + E.T*b3|
             * | B.T  D.T  F.T | * b = | B.T*b1 + D.T*b2 + F.T*b3|
             *
         *****************************************************/
-        g.middleRows(aj, A.cols()) -= A.transpose() * r * w * rho[1];
+        g.middleRows(aj, A.cols()) -= A.transpose() * r * w;
 
         if (!onlyPoseUpdate_) {
             Eigen::MatrixXd B = J_px2_Pc2 * J_Pc2_Pw1 * J_Pw1_Pc1 * J_Pc1_z1;
@@ -323,13 +325,10 @@ void Optimizer::CalculateHandGradiantCurFrame(
                 * 观察D、E矩阵块的变化规律，可以写出如下的等式
             **************************************************/
             // TODO:添加胡伯核关于chi2的一阶导数
-            H.block(aj, bj, A.cols(), B.cols()) +=
-                A.transpose() * B * w * rho[1];
-            H.block(bj, aj, B.cols(), A.cols()) +=
-                B.transpose() * A * w * rho[1];
-            H.block(bj, bj, B.cols(), B.cols()) +=
-                B.transpose() * B * w * rho[1];
-            g.middleRows(bj, B.cols()) -= B.transpose() * r * w * rho[1];
+            H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B * w;
+            H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A * w;
+            H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B * w;
+            g.middleRows(bj, B.cols()) -= B.transpose() * r * w;
         }
     }
 }
@@ -536,11 +535,13 @@ bool Optimizer::ExecuteWindowOptimize() {
             H_ += Hp_;
             g_ += g_p_;
         } else {
-            _lambda.head(6).setConstant(1e10);  // 首帧的约束足够大
+            _lambda.head(6).diagonal().setConstant(
+                kFirstFrameFixedCoffee);  // 首帧的约束足够大
             //_lambda.head(window_.size() * window_[0]->Tcw_.Size())
             //    .setConstant(DBL_MAX);  // 不优化位姿
             if (i == 0) {
-                cout << "Fixed First Frame!!!" << endl;
+                cout << "Fixed First Frame!!! _lambda.head(6): "
+                     << _lambda.head(6).transpose() << endl;
             }
         }
         H_.diagonal() += _lambda;
@@ -614,6 +615,11 @@ bool Optimizer::ExecuteWindowOptimize() {
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         bool accept = false;
         double costRelativeAbsDiff = 100;
+        if (!margKFstatus_) {
+            H_.diagonal().head(6) =
+                H_.diagonal().head(6).array() - kFirstFrameFixedCoffee;
+        }
+
         const double predictReduction =
             ComputePredictionReduction(delta_x, g_, H_);
         UpdateLMlambda(lastCost, newCost, predictReduction, accept,
@@ -1603,7 +1609,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             J_Pc2Norm_Pc2 << d, 0, -pc2.x() * d2, 0, d, -pc2.y() * d2, 0, 0, 0;
             const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
                 J_px2_Pc2Norm * J_Pc2Norm_Pc2;
-            const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2;
+            const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2 * rho[1];
 
             // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
             Eigen::Matrix<double, 3, 6>
@@ -1678,26 +1684,17 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             * | B'*A1,  B'*A2,   B'*B |
             *******************************************************************/
             // clang-format on
-            H_.block(a1j, a1j, poseDim, poseDim) +=
-                A1.transpose() * A1 * w * rho[1];
-            H_.block(a1j, a2j, poseDim, poseDim) +=
-                A1.transpose() * A2 * w * rho[1];
-            H_.block(a1j, bj, poseDim, depthDim) +=
-                A1.transpose() * B * w * rho[1];
+            H_.block(a1j, a1j, poseDim, poseDim) += A1.transpose() * A1 * w;
+            H_.block(a1j, a2j, poseDim, poseDim) += A1.transpose() * A2 * w;
+            H_.block(a1j, bj, poseDim, depthDim) += A1.transpose() * B * w;
 
-            H_.block(a2j, a1j, poseDim, poseDim) +=
-                A2.transpose() * A1 * w * rho[1];
-            H_.block(a2j, a2j, poseDim, poseDim) +=
-                A2.transpose() * A2 * w * rho[1];
-            H_.block(a2j, bj, poseDim, depthDim) +=
-                A2.transpose() * B * w * rho[1];
+            H_.block(a2j, a1j, poseDim, poseDim) += A2.transpose() * A1 * w;
+            H_.block(a2j, a2j, poseDim, poseDim) += A2.transpose() * A2 * w;
+            H_.block(a2j, bj, poseDim, depthDim) += A2.transpose() * B * w;
 
-            H_.block(bj, a1j, depthDim, poseDim) +=
-                B.transpose() * A1 * w * rho[1];
-            H_.block(bj, a2j, depthDim, poseDim) +=
-                B.transpose() * A2 * w * rho[1];
-            H_.block(bj, bj, depthDim, depthDim) +=
-                B.transpose() * B * w * rho[1];
+            H_.block(bj, a1j, depthDim, poseDim) += B.transpose() * A1 * w;
+            H_.block(bj, a2j, depthDim, poseDim) += B.transpose() * A2 * w;
+            H_.block(bj, bj, depthDim, depthDim) += B.transpose() * B * w;
             // clang-format off
             /********************* 利用稀疏性计算g=-J'*b ****************************
             * | A1'|       | A1' * b |
@@ -1705,9 +1702,9 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             * | B' |       | B'  * b |
             **********************************************************************/
             // clang-format on
-            g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w * rho[1];
-            g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w * rho[1];
-            g_.middleRows(bj, depthDim) -= B.transpose() * r * w * rho[1];
+            g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w;
+            g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w;
+            g_.middleRows(bj, depthDim) -= B.transpose() * r * w;
 
             addConstraint = true;
         }
@@ -1822,8 +1819,9 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     cout << fmt::format("win size: {}, win BA spend {} sec!\n", window_.size(),
                         spendTime);
 
-    const int markDeleteNum = MarkBigResidualLandmarkDelete();
-    cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum, winOptSuccess);
+    // const int markDeleteNum = MarkBigResidualLandmarkDelete();
+    // cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
+    //                     winOptSuccess);
 
     return winOptSuccess;
 }
@@ -1992,7 +1990,7 @@ void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
 }
 
 int Optimizer::MarkBigResidualLandmarkDelete() {
-    const double maxMeanChi2 = 6 * 6;
+    constexpr double kMaxChi2 = 9 * 9;
     int markCount = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* lk = optLandmark_[i];
@@ -2003,7 +2001,7 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
         KeyFrame* host = lk->host_;
         const Eigen::Vector3d pc1 = lk->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
-        double sumChi2 = 0.;
+        double maxChi2 = 0.;
         for (const auto& kf2obv : lk->target_) {
             KeyFrame* tar = kf2obv.first;
             if (tar == host) {
@@ -2014,12 +2012,11 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
             Eigen::Vector2d r = px2 - kf2obv.second;
-            double chi2 = r.squaredNorm();
-            sumChi2 += chi2;
+            const double chi2 = r.squaredNorm();
+            maxChi2 = chi2 > maxChi2 ? chi2 : maxChi2;
         }
 
-        const double meanChi2 = sumChi2 / (lk->target_.size() - 1);
-        if (meanChi2 > maxMeanChi2) {
+        if (maxChi2 > kMaxChi2) {
             lk->SetCanDelete();
             ++markCount;
         }
