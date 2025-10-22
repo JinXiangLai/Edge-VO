@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
              << endl;
         chrono::steady_clock::time_point t10, t11;
         cout << fmt::format(
-            "add kf case: needKFbySight: {}, case2: {}, case3: {}, case4: {}",
+            "add kf case: needKFbySight: {}, case2: {}, case3: {}, case4: {}\n",
             needKFbySight, case2, case3, case4);
         if (needKFbySight || case2 || case3 || case4) {
             {

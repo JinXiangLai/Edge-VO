@@ -134,6 +134,8 @@ class Optimizer {
                                       std::vector<Landmark*>& lk1s,
                                       std::vector<Eigen::Vector2d>& obvs);
 
+    int MarkBigResidualLandmarkDelete();
+
     cv::VideoWriter debugTriangulateWriter_;
 
    private:

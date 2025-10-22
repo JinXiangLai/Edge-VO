@@ -96,6 +96,9 @@ class Landmark {
     void SetNoUsed() { noUsed_ = true; }
     bool NoUsed() const { return noUsed_; }
     bool CanBeDelete() const { return canBedelete_; }
+    bool CanBeUseForOptimization() {
+        return initialized_ && !canBedelete_ && !noUsed_;
+    }
 
     //void AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv);
     //std::mutex mute_;

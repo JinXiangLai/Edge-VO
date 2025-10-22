@@ -118,11 +118,6 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
             continue;
         }
 
-        if (!lk1->initialized_) {
-            lk1->SetNoUsed();
-            continue;
-        }
-
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
         const bool inRange = InRange(img, px.cast<int>());
@@ -668,40 +663,29 @@ void Optimizer::PreSelectLandmarkForTracking(
     lk1s.reserve(optFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
     constexpr int kDebugNum = 20000;
-    for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-        // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
-        Landmark* lk = optFlw.trackLandmark_[i];
-        if (lk->initialized_) {
-            lk->ResetFEJ();
-            lk1s.emplace_back(lk);
-            const cv::Point2f& p = optFlw.prevPts_[i];
-            obvs.emplace_back(p.x, p.y);
-#if defined(WRITE_MATCH_PAIR_IMAGE)
-            //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
-#endif
-        }
-        if (lk1s.size() > kDebugNum) {
-            break;
-        }
-    }
 
-    for (size_t i = 0; i < optFlw.trackHistoryLandmark_.size(); ++i) {
-        // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
-        Landmark* lk = optFlw.trackHistoryLandmark_[i];
-        if (lk->initialized_) {
-            lk->ResetFEJ();
-            lk1s.emplace_back(lk);
-            const cv::Point2f& p = optFlw.prevHistoryPts_[i];
-            obvs.emplace_back(p.x, p.y);
+    auto SelectLandmark = [&lk1s, &obvs](const vector<Landmark*>& trackLandmark,
+                                         const vector<cv::Point2f>& prevPts) {
+        for (size_t i = 0; i < trackLandmark.size(); ++i) {
+            // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
+            Landmark* lk = trackLandmark[i];
+            if (lk->CanBeUseForOptimization()) {
+                lk->ResetFEJ();
+                lk1s.emplace_back(lk);
+                const cv::Point2f& p = prevPts[i];
+                obvs.emplace_back(p.x, p.y);
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-            //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
+                //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
 #endif
+            }
+            if (lk1s.size() > kDebugNum) {
+                break;
+            }
         }
+    };
 
-        if (lk1s.size() > kDebugNum) {
-            break;
-        }
-    }
+    SelectLandmark(optFlw.trackLandmark_, optFlw.prevPts_);
+    SelectLandmark(optFlw.trackHistoryLandmark_, optFlw.prevHistoryPts_);
 
     cout << fmt::format(
         "curF pose opt preselect landmark num: {}, last kf track feature num: "
@@ -1197,7 +1181,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
             continue;
         }
 
-        if (!p->initialized_) {
+        if (!p->CanBeUseForOptimization()) {
             p->SetNoUsed();
             continue;
         }
@@ -1837,6 +1821,10 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     const double spendTime = chrono::duration<double>(t1 - t0).count();
     cout << fmt::format("win size: {}, win BA spend {} sec!\n", window_.size(),
                         spendTime);
+
+    const int markDeleteNum = MarkBigResidualLandmarkDelete();
+    cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum, winOptSuccess);
+
     return winOptSuccess;
 }
 
@@ -2001,6 +1989,42 @@ void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
 
     window_.erase(window_.begin());
     cout << "Remove the first keyframe from window!";
+}
+
+int Optimizer::MarkBigResidualLandmarkDelete() {
+    const double maxMeanChi2 = 6 * 6;
+    int markCount = 0;
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        Landmark* lk = optLandmark_[i];
+        if (lk->NoUsed()) {
+            lk->SetCanDelete();
+            continue;
+        }
+        KeyFrame* host = lk->host_;
+        const Eigen::Vector3d pc1 = lk->GetPc();
+        const Eigen::Vector3d pw = host->Twc_ * pc1;
+        double sumChi2 = 0.;
+        for (const auto& kf2obv : lk->target_) {
+            KeyFrame* tar = kf2obv.first;
+            if (tar == host) {
+                continue;
+            }
+
+            const Eigen::Vector3d pc2 = tar->Tcw_ * pw;
+            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+
+            Eigen::Vector2d r = px2 - kf2obv.second;
+            double chi2 = r.squaredNorm();
+            sumChi2 += chi2;
+        }
+
+        const double meanChi2 = sumChi2 / (lk->target_.size() - 1);
+        if (meanChi2 > maxMeanChi2) {
+            lk->SetCanDelete();
+            ++markCount;
+        }
+    }
+    return markCount;
 }
 
 void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
