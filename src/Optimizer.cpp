@@ -535,10 +535,9 @@ bool Optimizer::ExecuteWindowOptimize() {
             H_ += Hp_;
             g_ += g_p_;
         } else {
-            _lambda.head(6).diagonal().setConstant(
-                kFirstFrameFixedCoffee);  // 首帧的约束足够大
-            //_lambda.head(window_.size() * window_[0]->Tcw_.Size())
-            //    .setConstant(DBL_MAX);  // 不优化位姿
+            //_lambda.head(6).setConstant(
+            //    g_.head(6).cwiseAbs().maxCoeff() * 1e4);  // 首帧的约束足够大，但不能使矩阵病态
+            //_lambda[0] = 1e20;
             if (i == 0) {
                 cout << "Fixed First Frame!!! _lambda.head(6): "
                      << _lambda.head(6).transpose() << endl;
@@ -610,6 +609,8 @@ bool Optimizer::ExecuteWindowOptimize() {
             cout << "LM one iteration spend: "
                  << chrono::duration<double>(t5 - t1).count() << " sec.\n"
                  << endl;
+
+            cout << "the first two pose delta x: " << delta_x.head(12).transpose() << "\n";
         }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
@@ -1656,9 +1657,9 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             // Residual w.r.t optimization variables Jacobian
             Eigen::Matrix<double, 2, 6> A1 =
                 J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;  // J_res_Pw * J_Pw_Twc1;
-            if (host == window_[0]) {
+            if (host == window_[0] && !margKFstatus_) {
                 // fixed滑动窗口第一帧，不在这里执行，而是添加大的lambda或使用先验约束其变化量
-                //A1.setZero();
+                A1.setZero();
             }
             Eigen::Matrix<double, 2, 6> A2 =
                 J_res_Pc2 * J_Pc2_Twc2;  // J_res_Pc2 * J_Pc2_Twc2;
