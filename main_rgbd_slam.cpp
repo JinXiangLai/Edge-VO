@@ -86,7 +86,6 @@ int main(int argc, char** argv) {
 
     bool isInitialized = false;
     vector<KeyFrame*>& win = optimizer.window_;
-    double accDist = 0.;
     stack<KeyFrame>
         unmappedFrame;  // 由于当前把每一帧都用来更新深度，所以不需要像lsd slam那样保留一些帧
     for (size_t i = firstImgIdx; i < vTimeStamps.size(); ++i) {
@@ -141,9 +140,9 @@ int main(int argc, char** argv) {
         Tc1c2 = Twc1.Inverse() * Twc2;
         curF.SetTwc(win.back()->Twc_ * Tc1c2);
 
-        const double trans =
-            (lastF.priorTwc_.Inverse() * curF.priorTwc_).t_wb_.norm();
-        accDist += trans;
+        const double trans = (win.back()->priorTwc_.Inverse() * curF.priorTwc_)
+                                 .t_wb_.head(2)
+                                 .norm();
 
         // 显示线程使用
         //interaction->visualCurF = curF;
@@ -155,18 +154,22 @@ int main(int argc, char** argv) {
             lastF = curF;
             const double findMatchRatio =
                 win.back()->TrackWithOpticalFlow(curF, findMatchNum);
-            cout << "Initializing findMatchRatio, accDist: " << findMatchRatio
-                 << ", " << accDist << endl;
-            if (findMatchRatio < 0.5 ||
-                (accDist > 0.2 && (curF.id_ - initFrame->id_ > 30)) ||
-                accDist > config->needNewKFtrans || config->useDepthImage) {
+            cout << "Initializing findMatchRatio, trans: " << findMatchRatio
+                 << ", " << trans << endl;
+            if ((trans > 0.2 && (curF.id_ - initFrame->id_ > 30)) ||
+                config->useDepthImage) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
-                accDist = 0.;
                 cout << "\n******\nInitialized!\n******\n";
                 // TODO: 初始化，首帧固定为单位阵，计算当前帧位姿
                 optimizer.AddOneKeyFeame(new KeyFrame(curF));
+            } else if(findMatchNum < 0.3) {
+                cout << "Few match to initialize! Reset!" << endl;
+                initFrame = nullptr;
+                win.clear();
             }
+
+            
 
             continue;
         }
@@ -216,20 +219,18 @@ int main(int argc, char** argv) {
             (findMatchRatio < 0.5 ||
              findMatchNum <
                  500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
-        const bool case3 = T12.t_wb_.norm() > config->needNewKFtrans;
+        const bool case3 = T12.t_wb_.head(2).norm() > config->needNewKFtrans;
         const bool case4 =
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
-        const bool case5 = accDist > config->needNewKFtrans;
         const bool case6 = curF.id_ - win.back()->id_ > 5;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
-                    "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
-                    "trans "
-                    "dist: {:.2f}, "
-                    "rot ang: {:.1f}deg, accumulate dist: {:.2f}, ",
-                    findMatchRatio, findMatchNum, T12.t_wb_.norm(),
-                    Quat2RPY(T12.q_wb_).norm() * kRad2Deg, accDist)
-             << endl;
+            "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
+            "trans "
+            "dist: {:.2f}, "
+            "rot ang: {:.1f}deg\n",
+            findMatchRatio, findMatchNum, T12.t_wb_.head(2).norm(),
+            Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
         chrono::steady_clock::time_point t10, t11;
 
         if (needKFbySight || case2 || case3 || case4) {
@@ -256,8 +257,6 @@ int main(int argc, char** argv) {
                   << p.y() << ", " << p.z() << endl;
                 f.close();
             }
-
-            accDist = 0.;
 
             // 可视化滑窗内点云
             // ShowPointCloud(curF.landmark_);
