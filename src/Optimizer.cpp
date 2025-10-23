@@ -1671,14 +1671,15 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             // Residual w.r.t optimization variables Jacobian
             Eigen::Matrix<double, 2, 6> A1 =
                 J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;  // J_res_Pw * J_Pw_Twc1;
-            if (host == window_[0] && !margKFstatus_) {
+            if ((host == window_[0] || host == window_[1]) && !margKFstatus_) {
                 // fixed滑动窗口第一帧，不在这里执行，而是添加大的lambda或使用先验约束其变化量
                 A1.setZero();
             }
             Eigen::Matrix<double, 2, 6> A2 =
                 J_res_Pc2 * J_Pc2_Twc2;  // J_res_Pc2 * J_Pc2_Twc2;
-            if (target == window_[0]) {
-                //A2.setZero();
+            if ((target == window_[1] || target == window_[0]) &&
+                !margKFstatus_) {
+                A2.setZero();
             }
             const Eigen::Matrix<double, 2, 1> B =
                 J_res_Pc2 * J_Pc2_Pw *
@@ -1948,7 +1949,7 @@ void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
 }
 
 void Optimizer::AdaptSetInitLambda() {
-    lambda_ = 10.0;
+    lambda_ = 1.0;
 }
 
 void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
