@@ -55,7 +55,7 @@ fastTh: 20 # 角点，暂不启用，目标是仅利用边缘点
 fastNum: 0 # 大于周边16个像素多少个
 maxFlowTrackError: 10 # 光流跟踪最大的误差
 optflowWinSize: 21 # 21
-optflowLayer: 2
+optflowLayer: 3
 
 relativePoseConstraintWeight: 1 # 先验Hp已经包含了对各pose的约束，所以其实上不需要该约束，除了先验约束值为0的情况
 

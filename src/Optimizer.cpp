@@ -656,7 +656,7 @@ bool Optimizer::ExecuteWindowOptimize() {
     const double spendTime = chrono::duration<double>(T2 - T1).count();
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
-        "last mean proj cost: {:.1f}, priorConstraintChi2: {:.1f}, "
+        "last mean proj cost: {:.1f},\npriorConstraintChi2: {:.1f}, "
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
         "spend: {:.1f}s in window\n",
@@ -1895,7 +1895,6 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
 }
 
 bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
-
     Pose Twc2 = kf2->Twc_;
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
@@ -1985,11 +1984,13 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
     int markCount = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* lk = optLandmark_[i];
-        if (lk->target_.size() < kMinObvStableTime) {
-            continue;
-        }
+
         KeyFrame* host = lk->host_;
         const Eigen::Vector3d pc1 = lk->GetPc();
+        if (pc1.z() < kMinSceneDepthInCamera) {
+            lk->SetCanDelete();
+            continue;
+        }
         const Eigen::Vector3d pw = host->Twc_ * pc1;
         double maxChi2 = 0.;
         for (const auto& kf2obv : lk->target_) {
@@ -1998,7 +1999,15 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
                 continue;
             }
 
+            if (lk->CanBeDelete()) {
+                break;
+            }
+
             const Eigen::Vector3d pc2 = tar->Tcw_ * pw;
+            if (pc2.z() < kMinSceneDepthInCamera) {
+                lk->SetCanDelete();
+                break;
+            }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
             Eigen::Vector2d r = px2 - kf2obv.second;
@@ -2006,7 +2015,7 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
             maxChi2 = chi2 > maxChi2 ? chi2 : maxChi2;
         }
 
-        if (maxChi2 > kMaxChi2) {
+        if (maxChi2 > kMaxChi2 && lk->target_.size() >= kMinObvStableTime) {
             lk->SetCanDelete();
             ++markCount;
         }
