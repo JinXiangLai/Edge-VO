@@ -97,6 +97,8 @@ class Optimizer {
 
     void SetInitLambda(const double lambda) { lambda_ = lambda; }
 
+    void AdaptSetInitLambda();
+
     void CullingErrorLandmark(KeyFrame* curF = nullptr);
 
     void AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
@@ -141,7 +143,7 @@ class Optimizer {
    private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小
-    double lambda_ = 1.0;
+    double lambda_ = 0.;
     // 普通帧位姿优化使用
     int maxIte_ = 100;
     bool onlyPoseUpdate_ = false;

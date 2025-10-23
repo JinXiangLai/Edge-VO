@@ -516,6 +516,13 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         ConstructJ_H_b_g(i == 0);
 
+        if (i == 0) {
+            AdaptSetInitLambda();
+            // SetInitLambda(10.0);
+            cout << "window BA: H_.diag: " << H_.diagonal().transpose()
+                 << "\ng_: " << g_.transpose() << "\n";
+        }
+
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
         Eigen::VectorXd _lambda(H_.rows());
@@ -535,6 +542,7 @@ bool Optimizer::ExecuteWindowOptimize() {
             H_ += Hp_;
             g_ += g_p_;
         } else {
+            // 破坏了优化问题一致性，不可取
             //_lambda.head(6).setConstant(
             //    g_.head(6).cwiseAbs().maxCoeff() * 1e4);  // 首帧的约束足够大，但不能使矩阵病态
             //_lambda[0] = 1e20;
@@ -610,16 +618,13 @@ bool Optimizer::ExecuteWindowOptimize() {
                  << chrono::duration<double>(t5 - t1).count() << " sec.\n"
                  << endl;
 
-            cout << "the first two pose delta x: " << delta_x.head(12).transpose() << "\n";
+            cout << "the first two pose delta x: "
+                 << delta_x.head(12).transpose() << "\n";
         }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         bool accept = false;
         double costRelativeAbsDiff = 100;
-        if (!margKFstatus_) {
-            H_.diagonal().head(6) =
-                H_.diagonal().head(6).array() - kFirstFrameFixedCoffee;
-        }
 
         const double predictReduction =
             ComputePredictionReduction(delta_x, g_, H_);
@@ -750,6 +755,13 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                                 lastCost.usefulLandmarkNum);
             return false;
         }
+
+        if (i == 0) {
+            AdaptSetInitLambda();
+            cout << "frame BA: H_.diag: " << H_.diagonal().transpose()
+                 << "\ng_: " << g_.transpose() << "\n";
+        }
+
         Eigen::VectorXd _lambda(H_.rows());
         _lambda.setConstant(lambda_);
         if (H_.diagonal().head(6).isApproxToConstant(0)) {
@@ -1468,12 +1480,14 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
     const double rho = costRelativeAbsDiff / (predictReduction + 1e-12);
     if (rho > 0) {
         if (rho > 0.75) {
-            lambda_ *= 0.3;
+            lambda_ = max(0.3 * lambda_, 1e-6);
+        } else {
+            lambda_ = max(0.99 * lambda_, 1e-6);
         }
         accept = true;
         continousNoImprovementNum = 0;
     } else {
-        lambda_ *= 1.8;
+        lambda_ *= 1.5;
         accept = false;
         ++continousNoImprovementNum;
     }
@@ -1812,7 +1826,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         RemoveOldestKeyFrame(margKFid);
     }
 
-    SetInitLambda(1.0);
+    SetInitLambda(10.0);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     const bool winOptSuccess = ExecuteWindowOptimize();
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
@@ -1820,9 +1834,9 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     cout << fmt::format("win size: {}, win BA spend {} sec!\n", window_.size(),
                         spendTime);
 
-    // const int markDeleteNum = MarkBigResidualLandmarkDelete();
-    // cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
-    //                     winOptSuccess);
+    const int markDeleteNum = MarkBigResidualLandmarkDelete();
+    cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
+                        winOptSuccess);
 
     return winOptSuccess;
 }
@@ -1830,44 +1844,15 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
 void Optimizer::HuberLoss(const double chi2, Eigen::Vector2d& rho) {
 
     //const double scale = 1.0 / pow(2, lvl);
-    const double huberDelta = config->huberDelta;  //  * scale;
+    const double& huberDelta = config->huberDelta;  //  * scale;
+    const double& huberDelta2 = config->huberDelta2;
+    const double sqrtChi2 = sqrt(chi2);
 
-    const double huberDelta2 = huberDelta * huberDelta;
     if (chi2 > huberDelta2) {
-        // r = δ*(|a|-0.5*δ), 这里的loss形式为：
-        // loss = hb*|f(x) - obv| - 0.5*hb^2{写成向量乘法为0.5*hb.T*hb}, f(x)非线性，在x0处展开有：
-        // loss = hb*|f(x0) + J*Δx -obv| - 0.5*hb^2，记: r = f(x0) - obv，则：
-        // loss = hb*|J*Δx + r| - 0.5*hb*hb{点积形式}, 目标是让 loss = 0，那么，当|J*Δx + r| >= 0时，
-        // 根据矩阵乘法及点积运算规则，有：
-        // loss = hb.T*J*Δx + hb.T*r - 0.5*hb.T*hb, 欲让loss最小值为0，则：
-        // hb.T*J*Δx = -hb.T*r + 0.5*hb.T*hb
-        // 等式两边同乘以J.T，有：
-        // hb.T* J.T*J*Δx = -J.T * (hb.T*r - 0.5*hb.T*hb)
-        // 当hb是一维的时候，有：
-        // J.T*J*Δx = -J.T*(r - 0.5*hb)
-        // 同理，当 |J*Δx + r| < 0时，
-        // loss = -hb.T*J*Δx - hb.T*r - 0.5hb.T*hb，欲让loss为，则：
-        // hb.T*J*Δx = -hb.T*r - 0.5*hb.T*hb
-        // 两边同乘以J.T，并约去hb：
-        // J.T*J*Δx = -J.T*(r + 0.5*hb)
-        // 提问：当hb是2维及以上向量的时候，如何处理？
-        // 答：求向量的逆，即有 hb.inv * hb.T = Identity，由于向量没有逆矩阵，这种方法不可行
-        // 另一种想法是：由于 a.dot(b) = |a|*|b|*cosθ，当 a平行于b时取得最大值，若|r|>|hb|，
-        // 那么， r.dot(hb) = |a|*|hb|*cosθ<a, hb>，这时可能出现负值，使得残差下降，这种方式是不行的，因为最小化目的是让残差为0，
-        // 所以我原本计算残差值的想法才是对的？？？
-
-        // OK，对于向量形式，以i2维向量为例，我们定义hb=(h1, h2).T{h1, h2 > 0}，残差为：
-        // hb.T * |r| - 0.5 hb.T*hb，我们只需要对残差r各个维度取绝对值即可就记为|r|，那么可以证明：
-        // hb与|r|同属于第一象限，夹角小于90度，即hb.T.dot(|r|) < r.dot(r)且均>0
-        // 存在的问题是： |r|*cos<r, hb> < 0.5*|hb|，那么这个时候，loss = hb.T * |r| - 0.5*hb.T*hb还是会出现负值
-        // 或者直接定义： loss = 0.5*hb.T*|r|这样可以保证其小于 0.5*r.T*r
-        // 即 loss = 0.5 * hb.T * |r| = 0.5 * hb.T * |f(x0) + JΔx - obv|，这个|r|还是无法展开
-
-        // 如果每个维度都单独考虑呢？ 那么有： loss = hb.T*|f(x) - obv| - 0.5*hb.T*hb
-        // loss = hb.T * |JΔx + r| -0.5
-
-        // 经过查看 g2o源码，发现我原来的理解才是正确的，胡伯核函数只能是关于标量的实现
-        // 因为这里胡伯核函数值关于状态量的关系简单，不需要像投影函数那样再线性化
+        if (sqrtChi2 < huberDelta) {
+            cerr << fmt::format("sqrtChi2: {} < huberDelta: {}\n", sqrtChi2,
+                                huberDelta);
+        }
         rho[0] = sqrt(chi2) * huberDelta - 0.5 * huberDelta2;
         rho[1] = huberDelta / sqrt(chi2);
     } else {
@@ -1963,6 +1948,10 @@ void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
     */
 }
 
+void Optimizer::AdaptSetInitLambda() {
+    lambda_ = 10.0;
+}
+
 void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
     // 1. 如果当前帧与上上一帧有足够的水平距离，就移除最老帧
     // 2. 否则移除最近帧以保证视差
@@ -1991,12 +1980,12 @@ void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
 }
 
 int Optimizer::MarkBigResidualLandmarkDelete() {
+    constexpr int kMinObvStableTime = 4;
     constexpr double kMaxChi2 = 9 * 9;
     int markCount = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* lk = optLandmark_[i];
-        if (lk->NoUsed()) {
-            lk->SetCanDelete();
+        if (lk->target_.size() < kMinObvStableTime) {
             continue;
         }
         KeyFrame* host = lk->host_;

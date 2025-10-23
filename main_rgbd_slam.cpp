@@ -185,7 +185,6 @@ int main(int argc, char** argv) {
         // step1: 优化当前帧pose
         Pose Ttemp = GetPredictPose(lastF, lastLastF);
         curF.SetTwc(Ttemp, true);
-        optimizer.SetInitLambda(1.0);
         bool needKFbySight = false;
         const bool trackOk = optimizer.TrackLocalMap(
             &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
