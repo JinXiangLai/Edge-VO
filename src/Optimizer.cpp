@@ -76,7 +76,6 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
         }
     }
 
-    info.meanCost = info.cost / info.totalConstraintNum;
     //chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     //const double spendTime = chrono::duration<double>(t1 - t0).count();
 
@@ -86,8 +85,10 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     //    "residual info: {}\n",
     //    info.cost, info.usefulLandmarkNum, info.totalConstraintNum, meanCost,
     //    spendTime, debugInfo);
-    if (isnan(info.cost) || isinf(info.cost)) {
+    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         info.cost = DBL_MAX;
+    } else {
+        info.meanCost = info.cost / info.totalConstraintNum;
     }
     return info;
 }
@@ -185,7 +186,6 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         }
     }
 
-    info.meanCost = info.cost / info.totalConstraintNum;
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     const double spendTime = chrono::duration<double>(t1 - t0).count();
 
@@ -196,8 +196,10 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         "residual info: {}\n",
         info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
         info.meanCost, spendTime, debugInfo);
-    if (isnan(info.cost) || isinf(info.cost)) {
+    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         info.cost = DBL_MAX;
+    } else {
+        info.meanCost = info.cost / info.totalConstraintNum;
     }
     return info;
 }
@@ -827,7 +829,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / stableLks.size() * 100, spendTime);
 
-    return lastCost.cost < firstCost.cost;
+    return lastCost.cost < (firstCost.cost - 1.0);
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
@@ -1162,17 +1164,18 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
         }
     }
 
-    info.meanCost = info.cost / info.totalConstraintNum;
     // cout << fmt::format(
     //     "window BA: residual info.all.cost: {:.1f}, useful landmark num: {}, "
     //     "total constraint num: {}, mean cost: {:.1f}\n",
     //     info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
     //     info.meanCost);
 
-    if (isnan(info.cost) || isinf(info.cost)) {
+    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
                             info.cost, info.usefulLandmarkNum);
         info.cost = DBL_MAX;
+    } else {
+        info.meanCost = info.cost / info.totalConstraintNum;
     }
     return info;
 }
@@ -1262,7 +1265,6 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
         }
     }
 
-    info.meanCost = info.cost / info.totalConstraintNum;
     cout << fmt::format(
         "window BA: set opt variable residual info.all.cost: {:.1f}, useful "
         "landmark num: {}, "
@@ -1270,10 +1272,12 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
         info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
         info.meanCost);
 
-    if (isnan(info.cost) || isinf(info.cost)) {
+    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
                             info.cost, info.usefulLandmarkNum);
         info.cost = DBL_MAX;
+    } else {
+        info.meanCost = info.cost / info.totalConstraintNum;
     }
     return info;
 }
@@ -1949,7 +1953,8 @@ void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
 }
 
 void Optimizer::AdaptSetInitLambda() {
-    lambda_ = 1.0;
+    // lambda_ = 1.0;
+    lambda_ = config->initLambda;
 }
 
 void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {

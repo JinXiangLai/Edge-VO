@@ -247,14 +247,28 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<uchar> status;
     vector<float> error;
 
+    constexpr double kGoodMatchRatio = 0.99;
+    auto GetGoodMatchMaxResidual = [&error]() -> float {
+        vector<float> temp = error;
+        sort(temp.begin(), temp.end());
+        const int index = static_cast<int>(kGoodMatchRatio * temp.size());
+        return temp[index];
+    };
+
     const int winLen = config->optflowWinSize;
     cv::calcOpticalFlowPyrLK(prevImg, curImg, prevPts, nextPts, status, error,
                              cv::Size(winLen, winLen), config->optflowLayer);
     vector<Landmark*> trackLandmark;
     const auto debugPts1 = prevPts;
     prevPts.clear();
+    const float maxError = min(static_cast<float>(config->maxFlowTrackError),
+                               GetGoodMatchMaxResidual());
+    cout << fmt::format(
+        "adaptive optflow track maxError: {}, onfig->maxFlowTrackError: {}\n",
+        maxError, config->maxFlowTrackError);
     for (size_t i = 0; i < status.size(); ++i) {
-        if (status[i] == 1 && error[i] < config->maxFlowTrackError) {
+        // if (status[i] == 1 && error[i] < config->maxFlowTrackError) {
+        if (status[i] == 1 && error[i] < maxError) {
             // 重新赋值landmark在当前帧上的观测
             prevPts.emplace_back(nextPts[i]);
             trackLandmark.emplace_back(prevTrackLandmark[i]);

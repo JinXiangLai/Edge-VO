@@ -104,6 +104,14 @@ class KeyFrame {
             totalFeatureCreated_ = GetTrackFeatureNum();
             return totalFeatureCreated_;
         }
+        void Reset() {
+            prevImg_.release();
+            prevPts_.clear();
+            trackLandmark_.clear();
+            prevHistoryPts_.clear();
+            trackHistoryLandmark_.clear();
+            totalFeatureCreated_ = 0;
+        }
     };
     void SetOpticalFlowStructCurFrame();
     double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);

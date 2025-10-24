@@ -21,6 +21,9 @@ void Run(Optimizer* optimizer);
 const cv::Point kViz3DWindowPos(1920 + 1920 / 2,
                                 1080 - 100);  // 窗口左上角点在屏幕上的位置
 
+void ResetStatus(Optimizer* optimizer, bool* isInitialized,
+                 int* trackLostCount);
+
 int main(int argc, char** argv) {
 
     // 读取程序参数
@@ -79,12 +82,12 @@ int main(int argc, char** argv) {
     shared_ptr<Camera> cam = make_shared<Camera>(config);
     Optimizer optimizer(cam);
 
-    KeyFrame* initFrame = nullptr;
     KeyFrame lastF, lastLastF;
 
-    thread* viewerThread;
+    thread* viewerThread = nullptr;
 
     bool isInitialized = false;
+    int trackLostCount = 0;
     vector<KeyFrame*>& win = optimizer.window_;
     stack<KeyFrame>
         unmappedFrame;  // 由于当前把每一帧都用来更新深度，所以不需要像lsd slam那样保留一些帧
@@ -117,8 +120,8 @@ int main(int argc, char** argv) {
         chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
-        if (!initFrame) {
-            initFrame = new KeyFrame(curF);
+        if (win.empty()) {
+            KeyFrame* initFrame = new KeyFrame(curF);
             // 首帧设置为单位矩阵
             initFrame->SetTwc(Pose(), true);
             initFrame->depthImage_ = depthImg;
@@ -126,12 +129,13 @@ int main(int argc, char** argv) {
             optimizer.AddOneKeyFeame(initFrame);
             interaction->visualLastKF = *win.back();
 
-            if (config->debugShowOnlineResult3D) {
+            if (config->debugShowOnlineResult3D && !viewerThread) {
                 viewerThread = new thread(Run, &optimizer);
             }
-
+            cout << "Set initFrame with frame id: " << i << endl;
             continue;  // 认为初始化完毕
         }
+        cout << "win.size: " << win.size() << endl;
 
         // 使用KF更新当前帧的pose
         const Pose Twc2 = curF.priorTwc_;
@@ -156,20 +160,17 @@ int main(int argc, char** argv) {
                 win.back()->TrackWithOpticalFlow(curF, findMatchNum);
             cout << "Initializing findMatchRatio, trans: " << findMatchRatio
                  << ", " << trans << endl;
-            if ((trans > 0.2 && (curF.id_ - initFrame->id_ > 30)) ||
+            if ((trans > 0.2 && (curF.id_ - win.back()->id_ > 30)) ||
                 config->useDepthImage) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
                 // TODO: 初始化，首帧固定为单位阵，计算当前帧位姿
                 optimizer.AddOneKeyFeame(new KeyFrame(curF));
-            } else if(findMatchNum < 0.3) {
+            } else if (findMatchNum < 0.3) {
                 cout << "Few match to initialize! Reset!" << endl;
-                initFrame = nullptr;
-                win.clear();
+                ResetStatus(&optimizer, &isInitialized, &trackLostCount);
             }
-
-            
 
             continue;
         }
@@ -191,6 +192,21 @@ int main(int argc, char** argv) {
         bool needKFbySight = false;
         const bool trackOk = optimizer.TrackLocalMap(
             &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+        bool debugReset =
+            false && static_cast<int>(win.size()) == config->maxKFnumInWindow &&
+            i % 150 == 0;  // debug
+        if (!trackOk || debugReset) {
+            ++trackLostCount;
+            if (static_cast<int>(win.size()) < config->maxKFnumInWindow ||
+                trackLostCount > 5 || debugReset)
+                cout << fmt::format(
+                            "track lost time: {}, sliding window size: {}, "
+                            "debugReset: {}",
+                            trackLostCount, win.size(), debugReset)
+                     << endl;
+            ResetStatus(&optimizer, &isInitialized, &trackLostCount);
+            continue;
+        }
         needKFbySight = needKFbySight && trackOk;
         //needKFbySight = false; // 强制不使用
 
@@ -326,4 +342,16 @@ void Run(Optimizer* optimizer) {
         }
         usleep(10 * 1000);
     }
+}
+
+void ResetStatus(Optimizer* optimizer, bool* isInitialized,
+                 int* trackLostCount) {
+    cout << fmt::format("Reset vo system!!!") << endl;
+    *isInitialized = false;
+    optimizer->window_.clear();
+    KeyFrame::Tc0w = Pose();
+    KeyFrame::kfOn3Dshow.clear();
+    KeyFrame::optFlw.Reset();
+    *trackLostCount = 0;
+    interaction->trajectory.clear();
 }

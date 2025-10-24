@@ -138,6 +138,13 @@ class Optimizer {
 
     int MarkBigResidualLandmarkDelete();
 
+    void Reset() {
+        window_.clear();
+        optLandmark_.clear();
+        triPointMapDebugImage_.clear();
+        delayEraseKeyframe_.clear();
+    }
+
     cv::VideoWriter debugTriangulateWriter_;
 
    private:
@@ -153,7 +160,6 @@ class Optimizer {
     // edge slam使用
     // 关键帧滑窗优化使用
     std::vector<KeyFrame*> window_;
-    Pose* margTwc_ = nullptr;
     std::vector<Landmark*>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
     Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量

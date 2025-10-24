@@ -47,6 +47,7 @@ convergeCostDiffLM: 1e-14
 maxLambdaValueLM: 1e12
 maxNoImprovementCountLM: 5 # 没有下降的最大次数
 iterateLogFreqLM: 30 # 迭代输出频率
+initLambda: 100.0 # LM优化算法lambda初值
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
@@ -63,7 +64,7 @@ maxKeepEpilorMatchPointNum: 3 # 3极线约束取最匹配的数量
 
 useInvZ: false
 showDebugImg: false
-firstImgIdx: 30
+firstImgIdx: 10
 loopClosureImgIdx: 10
 
 cannyLowerTh: 80 # 150

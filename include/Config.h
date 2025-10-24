@@ -69,6 +69,7 @@ class Config {
     double maxLambdaValueLM;
     int maxNoImprovementCountLM;
     int iterateLogFreqLM;
+    double initLambda;
     int maxActiveLandmarkEachKF;
     int fastTh;
     double maxFlowTrackError;

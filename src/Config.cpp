@@ -56,6 +56,7 @@ Config::Config(const std::string& yamlFilePath) {
     maxLambdaValueLM = f["maxLambdaValueLM"].as<double>();
     maxNoImprovementCountLM = f["maxNoImprovementCountLM"].as<int>();
     iterateLogFreqLM = f["iterateLogFreqLM"].as<int>();
+    initLambda = f["initLambda"].as<double>();
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
     fastTh = f["fastTh"].as<int>();
     maxFlowTrackError = f["maxFlowTrackError"].as<double>();
