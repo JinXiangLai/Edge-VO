@@ -235,9 +235,10 @@ int main(int argc, char** argv) {
             (findMatchRatio < 0.7 || findMatchNum < 500);
 
         const Pose T12 = win.back()->Tcw_ * curF.Twc_;
+        const double horDist = T12.t_wb_.head(2).norm();
+        const double meanDepth = optimizer.GetLastKFmeanDepth();
         const bool caseMoveBaselineLOng =
-            optimizer.GetLastKFmeanDepth() > 0 &&
-            T12.t_wb_.head(2).norm() > optimizer.GetLastKFmeanDepth() * 0.5;
+            meanDepth > 0 && horDist > meanDepth * 0.5;
 
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
@@ -248,9 +249,11 @@ int main(int argc, char** argv) {
             findMatchRatio, findMatchNum, T12.t_wb_.head(2).norm(),
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
         chrono::steady_clock::time_point t10, t11;
-        
+
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
-        if (trackLocalMapLow || caseOptflowTrackLow || caseMoveBaselineLOng) {
+        if (((trackLocalMapLow || caseOptflowTrackLow) &&
+             horDist > 0.05 * meanDepth) ||
+            caseMoveBaselineLOng) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
                 "caseMoveBaselineLOng: {}\n",

@@ -235,7 +235,12 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachImage() {
                          return p1.response > p2.response;
                      });
             }
-            res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
+            // 只添加响应值最大的，但由于已经进行了极大值抑制，
+            // res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
+            // 故可以全部添加，影响不大
+            for (const auto& p : pts) {
+                res.emplace_back(j + p.pt.x, i + p.pt.y);
+            }
 
 #endif
         }
@@ -371,7 +376,7 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<Landmark*> trackLandmark;
     const auto debugPts1 = prevPts;
     prevPts.clear();
-    const float maxError = min(static_cast<float>(config->maxFlowTrackError),
+    const float maxError = max(static_cast<float>(config->maxFlowTrackError),
                                GetGoodMatchMaxResidual());
     cout << fmt::format(
         "adaptive optflow track maxError: {}, onfig->maxFlowTrackError: {}\n",
