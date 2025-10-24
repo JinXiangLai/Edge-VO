@@ -823,23 +823,37 @@ bool NeedNewKF(const KeyFrame* kf, const KeyFrame* f) {
            Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
 }
 
-bool IsFastPoint(const cv::Mat& gray, const Eigen::Vector2i px) {
+bool IsFastPoint(const cv::Mat& gray, const int fastTh1, const cv::Point2i& pt,
+                 int& response) {
     if (config->fastNum == 0) {
         return true;
     }
-    const Point2i pt{px.x(), px.y()};
-    const int v = gray.at<uchar>(pt);
+
+    constexpr int imgEdgeLen = 6;
+    const int maxX = gray.cols - imgEdgeLen;
+    const int maxY = gray.rows - imgEdgeLen;
+    if (pt.x < imgEdgeLen || pt.x > maxX || pt.y < imgEdgeLen || pt.y > maxY) {
+        return false;
+    }
 
     int maxNum = 0;
     int minNum = 0;
+    const int v = gray.at<uchar>(pt);
+
     for (int i = 0; i < 16; ++i) {
         const Point2i pt2{pt.x + FASTpoint[i][0], pt.y + FASTpoint[i][1]};
+        if (pt2.x < imgEdgeLen || pt2.x > maxX || pt2.y < imgEdgeLen ||
+            pt2.y > maxY) {
+            return false;
+        }
         const int v2 = gray.at<uchar>(pt2);
         const int diff = v - v2;
-        if (diff > config->fastTh) {
+        if (diff > fastTh1) {
             ++maxNum;
-        } else if (diff < -config->fastTh) {
+            response += diff;
+        } else if (diff < -fastTh1) {
             ++minNum;
+            response -= diff;
         }
     }
     return maxNum > config->fastNum || minNum > config->fastNum;
@@ -1502,7 +1516,9 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化相机pose
     vector<Point3d> startEndCameraPos(2);
-    for (int i = 0; i < vTwc.size(); ++i) {
+    const double coordinateScale =
+        0.5 * (vTwc[0].t_wb_ - vTwc[1].t_wb_).head(2).norm();
+    for (size_t i = 0; i < vTwc.size(); ++i) {
         // Eigen默认列优先，这里先将其改为行优先以与Mat适配
         Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Twc =
             vTwc[i].ToMatrix4d();
@@ -1519,7 +1535,8 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
             }
         }
         // 显示坐标系
-        //window.showWidget("cam"+to_string(i), viz::WCoordinateSystem(), Twc);
+        window.showWidget(fmt::format("cam_{}", i),
+                          viz::WCoordinateSystem(coordinateScale), Twc);
     }
 
     // 创建一个球体表示起点和终点
@@ -1544,8 +1561,6 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
                     cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget("curImage", cv::viz::WImageOverlay(
                                           curImg, cv::Rect(w + 10, 0, w, h)));
-
-        // cv::imshow("curProjImg", curImg);
     }
 
     if (!config->debugRunOnDesktop) {

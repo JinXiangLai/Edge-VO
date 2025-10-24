@@ -272,7 +272,8 @@ bool NeedNewKF(const KeyFrame* kf, const KeyFrame* f);
 
 void ShowPointCloud(const std::set<Landmark*>& ps);
 
-bool IsFastPoint(const cv::Mat& gray, const Eigen::Vector2i px);
+bool IsFastPoint(const cv::Mat& gray, const int fastTh1, const cv::Point2i& pt,
+                 int& response);
 
 Eigen::Vector3d LogSO3(const Eigen::Matrix3d& R);
 

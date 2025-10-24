@@ -116,9 +116,11 @@ class KeyFrame {
     void SetOpticalFlowStructCurFrame();
     double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
     void ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw);
-    void DrawOpticalMatchImg();
     void GenerateUndistordMap();
     int RemoveNoInitializeLongFeature();
+    bool ExtractFastPointEachGrid(const int diffRow, const int diffCol,
+                                  const int fastTh1, cv::Point2f& fast);
+    std::vector<cv::Point2f> ExtractFastPointEachImage();
 
     static OpticalFlowStruct optFlw;
 
@@ -159,6 +161,10 @@ class KeyFrame {
         mutexForSyncView3Dstatus;  // 由于地图点在关键帧失效时会被删除，因此需要同步
     static std::unordered_set<KeyFrame*> kfOn3Dshow;
     static std::shared_ptr<Camera> cam_;
+    static cv::Size eachGridSize;
+    static cv::Ptr<cv::FastFeatureDetector> detectorTh1, detectorTh2;
+    void CalculateEachGridForExtractFast();
+    void InitFastDetector();
 };
 
 #endif

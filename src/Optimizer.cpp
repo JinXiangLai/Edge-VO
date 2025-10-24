@@ -711,7 +711,8 @@ void Optimizer::PreSelectLandmarkForTracking(
 
 bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                                  Pose& Twc2, const int curFid,
-                                 int& totalPointNum, int& usefulPointNum) {
+                                 int& totalPointNum, int& usefulPointNum,
+                                 ResidualInfo& info) {
 
     // 构建优化问题所需观测
     vector<Landmark*> preLks;
@@ -829,6 +830,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / stableLks.size() * 100, spendTime);
 
+    info = lastCost;
     return lastCost.cost < (firstCost.cost - 1.0);
 }
 
@@ -939,9 +941,8 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         // 应该是不需要的
         window_.push_back(kf);
     }
-    // TODO 1：进行滑窗BA
-    // TODO 2：进行三角化工作
 
+    CalculateLastKFmeanDepth();
     cout << "add kf id: " << kf->id_ << "\n";
     cout << fmt::format(
         "Triangulate by KF_{} report: trackHistoryLandmark size: {}, "
@@ -1023,7 +1024,7 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
     for (Landmark* lk : oldest->landmark_) {
         bool transformSucceed = false;
         for (auto kf2lk : lk->target_) {
-            KeyFrame* kf = kf2lk.first;
+            const KeyFrame* kf = kf2lk.first;
             if (nextKF != kf) {
                 continue;
             }
@@ -1144,7 +1145,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
             useBackUpStatus ? host->TwcBack_ * pc1 : host->Twc_ * pc1;
 
         for (const auto& kf2obv : p->target_) {
-            KeyFrame* target = kf2obv.first;
+            const KeyFrame* target = kf2obv.first;
             // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
             // 但是影响不大，可能会出现
             if (target == host) {
@@ -1219,7 +1220,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
         const Eigen::Vector3d pw = host->Twc_ * pc1;
 
         for (const auto& kf2obv : p->target_) {
-            KeyFrame* target = kf2obv.first;
+            const KeyFrame* target = kf2obv.first;
             // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
             // 但是影响不大，可能会出现
             if (target == host) {
@@ -1587,7 +1588,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
 
         for (const auto& kf2obv : p->target_) {
             // 需要注意每个关键帧、每个landmark在H矩阵中的位置
-            KeyFrame* target = kf2obv.first;
+            const KeyFrame* target = kf2obv.first;
             if (target == host) {
                 continue;
             }
@@ -1899,21 +1900,24 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
     return smallId;
 }
 
-bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight) {
+bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
     Pose Twc2 = kf2->Twc_;
     // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
     // 同时加快计算速度
     int totalPointNum = 0;
     int usefulPointNum = 0;
+    ResidualInfo info;
     onlyPoseUpdate_ = true;
-    const bool optSuccess = OptimizeCurFrame(KeyFrame::optFlw, Twc2, kf2->id_,
-                                             totalPointNum, usefulPointNum);
+    const bool optSuccess = OptimizeCurFrame(
+        KeyFrame::optFlw, Twc2, kf2->id_, totalPointNum, usefulPointNum, info);
     onlyPoseUpdate_ = false;
     const double usefulRatio = double(usefulPointNum) / totalPointNum;
     cout << fmt::format(
-        "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}\n",
-        totalPointNum, usefulPointNum, usefulRatio);
-    needNewKFbySight = usefulRatio < 0.3 || usefulPointNum < 30;
+        "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}, "
+        "mean residual: {}\n",
+        totalPointNum, usefulPointNum, usefulRatio, info.meanCost);
+    trackLocalMapLow = usefulRatio < 0.7 || usefulPointNum < 99 ||
+                       info.meanCost > config->maxMeanProjectResidual2CreateKF;
 
     Pose beforeTwc2 = kf2->Twc_;
     if (optSuccess) {
@@ -2000,7 +2004,7 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
         const Eigen::Vector3d pw = host->Twc_ * pc1;
         double maxChi2 = 0.;
         for (const auto& kf2obv : lk->target_) {
-            KeyFrame* tar = kf2obv.first;
+            const KeyFrame* tar = kf2obv.first;
             if (tar == host) {
                 continue;
             }
@@ -2027,6 +2031,39 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
         }
     }
     return markCount;
+}
+
+void Optimizer::CalculateLastKFmeanDepth() {
+    // 在最新关键帧被添加到滑窗内的时候调用
+    if (window_.size() < 2) {
+        lastKFmeanDepth_ = 0.0;
+        return;
+    }
+    const KeyFrame* last = window_.back();
+    double sumDepth = 0.;
+    int num = 0;
+    for (Landmark* lk : KeyFrame::optFlw.trackHistoryLandmark_) {
+        if (!lk->CanBeUseForOptimization() || !lk->target_.count(last)) {
+            continue;
+        }
+
+        const Eigen::Vector3d pc1 = lk->GetPc();
+        if (pc1.z() < kMinSceneDepthInCamera) {
+            lk->SetCanDelete();
+            continue;
+        }
+        const Eigen::Vector3d pw = lk->host_->Twc_ * pc1;
+        const Eigen::Vector3d pc2 = last->Tcw_ * pw;
+        if (pc2.z() < kMinSceneDepthInCamera) {
+            lk->SetCanDelete();
+            continue;
+        }
+        sumDepth += pc2.z();
+        ++num;
+    }
+    lastKFmeanDepth_ = sumDepth / num;
+    cout << fmt::format("last kf id: {}, mean depth: {}\n", last->id_,
+                        lastKFmeanDepth_);
 }
 
 void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,

@@ -30,7 +30,6 @@ keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 8
 imgTimeOffset: 0.06 # sec,时间同步误差
 needNewKFtrans: 1.0 # 选取新KF的条件
-needNewKFrot: 50 # deg
 needNewKFMaxMatchEdgeRatio: 0.2 # 匹配边缘点数量小于该阈值时，需要选定新KF
 filterPixelError: 1 # 按1个像素误差推导深度三角化不确定度
 maxIterationLM: 2 # LM算法迭代次数

@@ -26,6 +26,8 @@ KeyFrame::OpticalFlowStruct KeyFrame::optFlw;
 std::mutex KeyFrame::mutexForSyncView3Dstatus;
 std::unordered_set<KeyFrame*> KeyFrame::kfOn3Dshow;
 std::shared_ptr<Camera> KeyFrame::cam_;
+cv::Size KeyFrame::eachGridSize(0, 0);
+cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
 
 class Landmark;
 
@@ -43,6 +45,8 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
     GenerateUndistordMap();
     cv::remap(grayImg_, grayImg_, map1, map2, cv::INTER_LINEAR);
     debugGrayImg_ = grayImg_.clone();
+    CalculateEachGridForExtractFast();
+    InitFastDetector();
 }
 
 KeyFrame::KeyFrame(const KeyFrame& f)
@@ -149,6 +153,40 @@ void KeyFrame::GenerateUndistordMap() {
     }
 }
 
+void KeyFrame::CalculateEachGridForExtractFast() {
+    if (eachGridSize.height != 0) {
+        return;
+    }
+    const float width = grayImg_.cols;
+    const float height = grayImg_.rows;
+    // 计算每个格子含有的像素个数
+    const int gridPixelNum = static_cast<int>(
+        width * height / config->extractFastNumEachFrame + 0.5);
+    const float ratio = width / height;  // 宽高比
+    const int gridHeight = static_cast<int>(sqrt(gridPixelNum / ratio) + 0.5);
+    const int gridWidth = static_cast<int>(gridHeight * ratio + 0.5);
+    cout << fmt::format(
+        "gridHeight: {}, gridWidth: {}, need feature num: {}, recalculate "
+        "feature num: {}\n",
+        gridHeight, gridWidth, config->extractFastNumEachFrame,
+        (width * height / (gridHeight * gridWidth)));
+    constexpr int kMinGridHeight = 6;
+    eachGridSize.width =
+        max(static_cast<int>(kMinGridHeight * ratio + 0.5), gridWidth);
+    eachGridSize.height = max(kMinGridHeight, gridHeight);
+}
+
+void KeyFrame::InitFastDetector() {
+    if (detectorTh1 != nullptr) {
+        return;
+    }
+    detectorTh1 = cv::FastFeatureDetector::create(
+        config->fastTh1, true, cv::FastFeatureDetector::TYPE_9_16);
+
+    detectorTh2 = cv::FastFeatureDetector::create(
+        config->fastTh2, true, cv::FastFeatureDetector::TYPE_9_16);
+}
+
 int KeyFrame::RemoveNoInitializeLongFeature() {
     vector<Landmark*>::iterator it1 = optFlw.trackHistoryLandmark_.begin();
     vector<cv::Point2f>::iterator it2 = optFlw.prevHistoryPts_.begin();
@@ -165,6 +203,63 @@ int KeyFrame::RemoveNoInitializeLongFeature() {
         ++it2;
     }
     return removeFeatNum;
+}
+
+vector<cv::Point2f> KeyFrame::ExtractFastPointEachImage() {
+    vector<cv::Point2f> res;
+    res.reserve(config->extractFastNumEachFrame);
+    for (int i = 0; i < grayImg_.rows; i += eachGridSize.height) {
+        for (int j = 0; j < grayImg_.cols; j += eachGridSize.width) {
+#if 0
+            cv::Point2f fast(0, 0);
+            if (ExtractFastPointEachGrid(i, j, config->fastTh1, fast)) {
+                res.emplace_back(fast);
+            } else if (ExtractFastPointEachGrid(i, j, config->fastTh2, fast)) {
+                res.emplace_back(fast);
+            }
+#else
+            const int w = min(eachGridSize.width, grayImg_.cols - j);
+            const int h = min(eachGridSize.height, grayImg_.rows - i);
+            const cv::Mat& gridImg = grayImg_(cv::Rect2i(j, i, w, h));
+            vector<cv::KeyPoint> pts;
+            detectorTh1->detect(gridImg, pts);
+            if (pts.empty()) {
+                detectorTh2->detect(gridImg, pts);
+            }
+            if (pts.empty()) {
+                continue;
+            }
+            if (pts.size() > 1) {
+                sort(pts.begin(), pts.end(),
+                     [](const cv::KeyPoint& p1, const cv::KeyPoint& p2) {
+                         return p1.response > p2.response;
+                     });
+            }
+            res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
+
+#endif
+        }
+    }
+
+    return res;
+}
+
+bool KeyFrame::ExtractFastPointEachGrid(const int diffRow, const int diffCol,
+                                        const int fastTh1, cv::Point2f& fast) {
+    int maxResponse = 0;
+    for (int i = diffRow + 3; i < diffRow + eachGridSize.height; ++i) {
+        for (int j = diffCol + 3; j < diffCol + eachGridSize.width; ++j) {
+            int response = -1;
+            IsFastPoint(grayImg_, fastTh1, {j, i}, response);
+            if (response > maxResponse) {
+                maxResponse = response;
+                fast.x = static_cast<float>(j);
+                fast.y = static_cast<float>(i);
+            }
+        }
+    }
+
+    return maxResponse > 0;
 }
 
 void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
@@ -211,11 +306,10 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
                                      p.y))[static_cast<int>(p.x)] == 0;
     };
 
+#if 0
     // 创建FAST检测器
-    cv::Ptr<cv::FastFeatureDetector> detector = cv::FastFeatureDetector::create(
-        config->fastTh, true, cv::FastFeatureDetector::TYPE_9_16);
     vector<cv::KeyPoint> pts;
-    detector->detect(grayImg_, pts);
+    detectorTh1->detect(grayImg_, pts);
     pts.reserve(5000);
     unKeypoints_.reserve(pts.size());
     for (const cv::KeyPoint& p : pts) {
@@ -225,6 +319,22 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
             unKeypoints_.emplace_back(p.pt.x, p.pt.y);
         }
     }
+#else
+    vector<cv::Point2f> pts = ExtractFastPointEachImage();
+    unKeypoints_.reserve(pts.size());
+    for (const cv::Point2f& p : pts) {
+        // 注意：需要把上一KF的optFlw一直保留而不能重置
+        if (search.empty() || CanGenerateKeypoint(p)) {
+            cv::circle(debugGrayImg_, p, 2, kColor.at("white"));
+            unKeypoints_.emplace_back(p.x, p.y);
+        }
+    }
+    cout << fmt::format(
+        "self extract fast num: {}, current frame add kp num: {}, new create "
+        "ratio: {:.2f}\n",
+        pts.size(), unKeypoints_.size(),
+        static_cast<double>(unKeypoints_.size()) / pts.size());
+#endif
 }
 
 void KeyFrame::AddReportElement(const std::string& key) {

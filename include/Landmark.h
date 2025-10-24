@@ -52,7 +52,7 @@ class Landmark {
     KeyFrame* host_;      // cnchor frame
     Eigen::Vector2d uv_;  // host帧下的像素坐标z
 
-    std::unordered_map<KeyFrame*, Eigen::Vector2d> target_;
+    std::unordered_map<const KeyFrame*, Eigen::Vector2d> target_;
     static std::shared_ptr<Camera> cam_;
 
     // keep FEJ
@@ -96,7 +96,7 @@ class Landmark {
     void SetNoUsed() { noUsed_ = true; }
     bool NoUsed() const { return noUsed_; }
     bool CanBeDelete() const { return canBedelete_; }
-    bool CanBeUseForOptimization() {
+    bool CanBeUseForOptimization() const {
         return initialized_ && !canBedelete_ && !noUsed_;
     }
 

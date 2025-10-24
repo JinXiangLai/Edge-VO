@@ -47,6 +47,7 @@ Config::Config(const std::string& yamlFilePath) {
 
     needNewKFtrans = f["needNewKFtrans"].as<double>();
     needNewKFrot = f["needNewKFrot"].as<double>();
+    maxMeanProjectResidual2CreateKF = f["maxMeanProjectResidual2CreateKF"].as<double>();
     needNewKFMaxMatchEdgeRatio = f["needNewKFMaxMatchEdgeRatio"].as<double>();
     filterPixelError = f["filterPixelError"].as<double>();
 
@@ -58,7 +59,9 @@ Config::Config(const std::string& yamlFilePath) {
     iterateLogFreqLM = f["iterateLogFreqLM"].as<int>();
     initLambda = f["initLambda"].as<double>();
     maxActiveLandmarkEachKF = f["maxActiveLandmarkEachKF"].as<int>();
-    fastTh = f["fastTh"].as<int>();
+    fastTh1 = f["fastTh1"].as<int>();
+    fastTh2 = f["fastTh2"].as<int>();
+    extractFastNumEachFrame = f["extractFastNumEachFrame"].as<int>();
     maxFlowTrackError = f["maxFlowTrackError"].as<double>();
     optflowWinSize = f["optflowWinSize"].as<int>();
     optflowLayer = f["optflowLayer"].as<int>();

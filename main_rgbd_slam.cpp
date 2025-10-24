@@ -189,9 +189,9 @@ int main(int argc, char** argv) {
         // step1: 优化当前帧pose
         Pose Ttemp = GetPredictPose(lastF, lastLastF);
         curF.SetTwc(Ttemp, true);
-        bool needKFbySight = false;
+        bool trackLocalMapLow = false;
         const bool trackOk = optimizer.TrackLocalMap(
-            &curF, needKFbySight);  // TODO: 问题是这里的pose估计不准
+            &curF, trackLocalMapLow);  // TODO: 问题是这里的pose估计不准
         bool debugReset =
             false && static_cast<int>(win.size()) == config->maxKFnumInWindow &&
             i % 150 == 0;  // debug
@@ -207,8 +207,8 @@ int main(int argc, char** argv) {
             ResetStatus(&optimizer, &isInitialized, &trackLostCount);
             continue;
         }
-        needKFbySight = needKFbySight && trackOk;
-        //needKFbySight = false; // 强制不使用
+        trackLocalMapLow = trackLocalMapLow && trackOk;
+        //trackLocalMapLow = false; // 强制不使用
 
         // TODO 1：利用跟踪结果更新当前帧pose，做当前帧和关键帧之间的BA优化
         // 这里暂时利用真值实现
@@ -230,15 +230,15 @@ int main(int argc, char** argv) {
         // Step: 当前帧选为新关键帧，
         // step1：追踪landmark，能够产生2D-2D的数据关联
         // step2：为剩余的edge point产生的landmark
-        const Pose T12 = win.back()->priorTwc_.Inverse() * curF.priorTwc_;
-        const bool case2 =
-            (findMatchRatio < 0.5 ||
-             findMatchNum <
-                 500);  // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
-        const bool case3 = T12.t_wb_.head(2).norm() > config->needNewKFtrans;
-        const bool case4 =
-            Quat2RPY(T12.q_wb_).norm() * kRad2Deg > config->needNewKFrot;
-        const bool case6 = curF.id_ - win.back()->id_ > 5;
+        // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
+        const bool caseOptflowTrackLow =
+            (findMatchRatio < 0.7 || findMatchNum < 500);
+
+        const Pose T12 = win.back()->Tcw_ * curF.Twc_;
+        const bool caseMoveBaselineLOng =
+            optimizer.GetLastKFmeanDepth() > 0 &&
+            T12.t_wb_.head(2).norm() > optimizer.GetLastKFmeanDepth() * 0.5;
+
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -248,12 +248,13 @@ int main(int argc, char** argv) {
             findMatchRatio, findMatchNum, T12.t_wb_.head(2).norm(),
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
         chrono::steady_clock::time_point t10, t11;
-
-        if (needKFbySight || case2 || case3 || case4) {
+        
+        // 检验地图点跟踪效果，光流跟踪效果和运行基线
+        if (trackLocalMapLow || caseOptflowTrackLow || caseMoveBaselineLOng) {
             cout << fmt::format(
-                "add kf case: needKFbySight: {}, case2: {}, case3: {}, case4: "
-                "{}\n",
-                needKFbySight, case2, case3, case4);
+                "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
+                "caseMoveBaselineLOng: {}\n",
+                trackLocalMapLow, caseOptflowTrackLow, caseMoveBaselineLOng);
             {
                 static bool first = true;
                 ofstream f;

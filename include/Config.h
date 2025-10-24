@@ -61,7 +61,7 @@ class Config {
     int keepLastKFnumInWindow, maxKFnumInWindow;
     bool useMarginalization;
     double imgTimeOffset;
-    double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio;
+    double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio, maxMeanProjectResidual2CreateKF;
     double filterPixelError;
     int messageLevel;
     int maxIterationLM;
@@ -71,7 +71,8 @@ class Config {
     int iterateLogFreqLM;
     double initLambda;
     int maxActiveLandmarkEachKF;
-    int fastTh;
+    int fastTh1, fastTh2;
+    int extractFastNumEachFrame;
     double maxFlowTrackError;
     int optflowWinSize;
     int optflowLayer;

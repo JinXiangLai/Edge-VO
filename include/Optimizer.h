@@ -28,7 +28,7 @@ class Optimizer {
 
     bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
                           const int curFid, int& totalPointNum,
-                          int& usefulPointNum);
+                          int& usefulPointNum, ResidualInfo& info);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Landmark*>& lk1s,
@@ -40,10 +40,10 @@ class Optimizer {
         const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
         std::vector<Eigen::Vector2d>& stableObvs);
 
-    void CalculateHandGradiantCurFrame(
-        const std::vector<Landmark*>& lk1s,
-        const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        Eigen::MatrixXd& H, Eigen::VectorXd& g);
+    void CalculateHandGradiantCurFrame(const std::vector<Landmark*>& lk1s,
+                                       const std::vector<Eigen::Vector2d>& obvs,
+                                       const Pose& Twc2, Eigen::MatrixXd& H,
+                                       Eigen::VectorXd& g);
 
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
                                        const Eigen::VectorXd& b,
@@ -78,7 +78,8 @@ class Optimizer {
     ResidualInfo SetOptimizeStatusVariableForWindowBA(
         KeyFrame* const margKF = nullptr);
 
-    void DebugOptlandmarkStatus(const size_t num = 20, const std::string& name="debug");
+    void DebugOptlandmarkStatus(const size_t num = 20,
+                                const std::string& name = "debug");
 
     bool SlidingWindowOptimize(KeyFrame* curKF);
 
@@ -122,11 +123,14 @@ class Optimizer {
     bool CalculatePriorCostChi2(const Eigen::VectorXd& deltaX);
 
     void UpdateLMlambda(const ResidualInfo& lastCost,
-                        const ResidualInfo& newCost, const double predictReduction, bool& accept,
+                        const ResidualInfo& newCost,
+                        const double predictReduction, bool& accept,
                         int& continousNoImprovementNum,
                         double& costRelativeAbsDiff);
 
-    double ComputePredictionReduction(const Eigen::VectorXd& deltaX, const Eigen::VectorXd& g, const Eigen::MatrixXd& H);
+    double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+                                      const Eigen::VectorXd& g,
+                                      const Eigen::MatrixXd& H);
 
     bool LMstopJudge(const int& continousNoImprovementNum,
                      const double& costRelativeAbsDiff,
@@ -137,6 +141,10 @@ class Optimizer {
                                       std::vector<Eigen::Vector2d>& obvs);
 
     int MarkBigResidualLandmarkDelete();
+
+    void CalculateLastKFmeanDepth();
+
+    double GetLastKFmeanDepth() { return lastKFmeanDepth_; }
 
     void Reset() {
         window_.clear();
@@ -155,6 +163,7 @@ class Optimizer {
     int maxIte_ = 100;
     bool onlyPoseUpdate_ = false;
     std::shared_ptr<Camera> cam_;
+    double lastKFmeanDepth_ = 0.;
 
    public:
     // edge slam使用
