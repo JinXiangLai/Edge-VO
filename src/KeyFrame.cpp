@@ -367,6 +367,13 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
         vector<float> temp = error;
         sort(temp.begin(), temp.end());
         const int index = static_cast<int>(kGoodMatchRatio * temp.size());
+        cout << fmt::format(
+            "optflow track temp min error: {}, select error: {}, select +1 "
+            "error: {},  max "
+            "error: {}, temp size: "
+            "{}\n",
+            temp.front(), temp[index], temp[index + 1], temp.back(),
+            temp.size());
         return temp[index];
     };
 

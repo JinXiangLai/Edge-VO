@@ -822,7 +822,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     const double spendTime = chrono::duration<double>(t2 - t1).count();
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
-        "last mean proj cost: {:.1f}, "
+        "last mean proj cost: {:.1f}, \n"
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
         "spend: {:.3f}s.\n",
@@ -1879,9 +1879,11 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         return -1;
     }
 
-    // 说明预设关键帧数量较少，直接移除最老帧
     int smallId = 0;
+    // 说明预设关键帧数量较少，直接移除最老帧
     if (window_.size() > 3) {
+#if 0
+
         const Eigen::Vector3d posDiff =
             curKF.Twc_.t_wb_ - window_[window_.size() - 2]->Twc_.t_wb_;
         const double horDist = posDiff.head(2).norm();
@@ -1891,45 +1893,95 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
             smallId = window_.size() - 1;  // 移除掉最新的，因为重复观测可能大
             cout << "Will remove the last keyframe from window!\n";
         }
+#else
+        // 计算每个关键帧被当前最新关键帧观测到的特征点数量，
+        // 找出光流特征最少的关键帧，由于光流特性，说明其已经超出当前视野，直接移除该帧
+        constexpr size_t kKeepLastKFnum = 1;
+        const size_t keepMaxFrameId = window_.size() - kKeepLastKFnum;
+        unordered_map<const KeyFrame*, size_t> kf2Index;
+        vector<size_t> trackFeatNumEachKF(keepMaxFrameId, 0);
+        for (size_t i = 0; i < keepMaxFrameId; ++i) {
+            kf2Index.insert({window_[i], i});
+        }
+
+        // 上一关键帧跟踪成功的fast点数量
+        if (kKeepLastKFnum < 2) {
+            const int lastKFidx = kf2Index[window_[window_.size() - 2]];
+            trackFeatNumEachKF[lastKFidx] = KeyFrame::optFlw.prevPts_.size();
+        }
+
+        // 历史关键帧被当前KF观测到的特征点数量统计
+        for (Landmark* const lk : KeyFrame::optFlw.trackHistoryLandmark_) {
+            const int kfIdx = kf2Index[lk->host_];
+            ++trackFeatNumEachKF[kfIdx];
+        }
+
+        // 找出最小值
+        size_t minTrackFeatureNum = trackFeatNumEachKF[smallId];
+        for (size_t i = 0; i < trackFeatNumEachKF.size(); ++i) {
+            if (trackFeatNumEachKF[i] < minTrackFeatureNum) {
+                smallId = i;
+                minTrackFeatureNum = trackFeatNumEachKF[i];
+            }
+        }
+
+        // 打印统计结果
+        string logInfo(
+            "track feature num of each kf in window by newest kf:\n");
+        for (size_t i = 0; i < trackFeatNumEachKF.size(); ++i) {
+            if (i == 0) {
+                logInfo.append(
+                    fmt::format("window[{}]: {} ", i, trackFeatNumEachKF[i]));
+            } else {
+                logInfo.append(
+                    fmt::format(", window[{}]: {}", i, trackFeatNumEachKF[i]));
+            }
+        }
+        logInfo.append(fmt::format("; will delete window[{}]\n", smallId));
+        cout << logInfo;
     }
 
-    // 将待删除的最老帧移到滑窗开头
-    KeyFrame* oldest = window_[smallId];
-    window_.erase(window_.begin() + smallId);
-    window_.insert(window_.begin(), oldest);
-    return smallId;
-}
-
-bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
-    Pose Twc2 = kf2->Twc_;
-    // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
-    // 同时加快计算速度
-    int totalPointNum = 0;
-    int usefulPointNum = 0;
-    ResidualInfo info;
-    onlyPoseUpdate_ = true;
-    const bool optSuccess = OptimizeCurFrame(
-        KeyFrame::optFlw, Twc2, kf2->id_, totalPointNum, usefulPointNum, info);
-    onlyPoseUpdate_ = false;
-    const double usefulRatio = double(usefulPointNum) / totalPointNum;
-    cout << fmt::format(
-        "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}, "
-        "mean residual: {}\n",
-        totalPointNum, usefulPointNum, usefulRatio, info.meanCost);
-    trackLocalMapLow = usefulRatio < 0.7 || usefulPointNum < 99 ||
-                       info.meanCost > config->maxMeanProjectResidual2CreateKF;
-
-    Pose beforeTwc2 = kf2->Twc_;
-    if (optSuccess) {
-        kf2->SetTwc(Twc2);  // 关闭这个出现错乱，证明优化有效
+#endif
+        // 将待删除的最老帧移到滑窗开头
+        KeyFrame* oldest = window_[smallId];
+        window_.erase(window_.begin() + smallId);
+        window_.insert(window_.begin(), oldest);
+        return smallId;
     }
-    cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_ << endl;
-    return optSuccess;
-}
 
-void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
-    // TODO：如何剔除异常点
-    /*
+    bool Optimizer::TrackLocalMap(KeyFrame * kf2, bool& trackLocalMapLow) {
+        Pose Twc2 = kf2->Twc_;
+        // 仅优化当前帧pose，避免由于其运动模糊影响landmark估计值导致系统崩溃
+        // 同时加快计算速度
+        int totalPointNum = 0;
+        int usefulPointNum = 0;
+        ResidualInfo info;
+        onlyPoseUpdate_ = true;
+        const bool optSuccess =
+            OptimizeCurFrame(KeyFrame::optFlw, Twc2, kf2->id_, totalPointNum,
+                             usefulPointNum, info);
+        onlyPoseUpdate_ = false;
+        const double usefulRatio = double(usefulPointNum) / totalPointNum;
+        cout << fmt::format(
+            "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}, "
+            "mean residual: {}\n",
+            totalPointNum, usefulPointNum, usefulRatio, info.meanCost);
+        trackLocalMapLow =
+            usefulRatio < 0.7 || usefulPointNum < 99 ||
+            info.meanCost > config->maxMeanProjectResidual2CreateKF;
+
+        Pose beforeTwc2 = kf2->Twc_;
+        if (optSuccess) {
+            kf2->SetTwc(Twc2);  // 关闭这个出现错乱，证明优化有效
+        }
+        cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_
+             << endl;
+        return optSuccess;
+    }
+
+    void Optimizer::CullingErrorLandmark(KeyFrame * curF) {
+        // TODO：如何剔除异常点
+        /*
     int winSize = window_.size();  // 为避免size_t对应的负数是极大正数
     if (curF == nullptr) {
         // pose正确的前提下，如果是合理的深度，那么投影到当前帧的地图点必须要正常
@@ -1954,279 +2006,283 @@ void Optimizer::CullingErrorLandmark(KeyFrame* curF) {
         }
     }
     */
-}
-
-void Optimizer::AdaptSetInitLambda() {
-    // lambda_ = 1.0;
-    lambda_ = config->initLambda;
-}
-
-void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
-    // 1. 如果当前帧与上上一帧有足够的水平距离，就移除最老帧
-    // 2. 否则移除最近帧以保证视差
-    if (static_cast<int>(window_.size()) < config->maxKFnumInWindow) {
-        return;
     }
 
-    // 说明预设关键帧数量较少
-    if (window_.size() < 3) {
-        window_.erase(window_.begin());
-        return;
+    void Optimizer::AdaptSetInitLambda() {
+        // lambda_ = 1.0;
+        lambda_ = config->initLambda;
     }
 
-    const Eigen::Vector3d posDiff =
-        curF.Twc_.t_wb_ - window_[window_.size() - 2]->Twc_.t_wb_;
-    const double horDist = posDiff.head(2).norm();
-    cout << "curF hor dist to the last 2 frame: " << horDist << endl;
-    if (horDist < config->needNewKFtrans * 1.5) {
-        window_.pop_back();
-        cout << "Remove the last keyframe from window!";
-        return;
-    }
-
-    window_.erase(window_.begin());
-    cout << "Remove the first keyframe from window!";
-}
-
-int Optimizer::MarkBigResidualLandmarkDelete() {
-    constexpr int kMinObvStableTime = 4;
-    constexpr double kMaxChi2 = 9 * 9;
-    int markCount = 0;
-    for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark* lk = optLandmark_[i];
-
-        KeyFrame* host = lk->host_;
-        const Eigen::Vector3d pc1 = lk->GetPc();
-        if (pc1.z() < kMinSceneDepthInCamera) {
-            lk->SetCanDelete();
-            continue;
+    void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
+        // 1. 如果当前帧与上上一帧有足够的水平距离，就移除最老帧
+        // 2. 否则移除最近帧以保证视差
+        if (static_cast<int>(window_.size()) < config->maxKFnumInWindow) {
+            return;
         }
-        const Eigen::Vector3d pw = host->Twc_ * pc1;
-        double maxChi2 = 0.;
-        for (const auto& kf2obv : lk->target_) {
-            const KeyFrame* tar = kf2obv.first;
-            if (tar == host) {
+
+        // 说明预设关键帧数量较少
+        if (window_.size() < 3) {
+            window_.erase(window_.begin());
+            return;
+        }
+
+        const Eigen::Vector3d posDiff =
+            curF.Twc_.t_wb_ - window_[window_.size() - 2]->Twc_.t_wb_;
+        const double horDist = posDiff.head(2).norm();
+        cout << "curF hor dist to the last 2 frame: " << horDist << endl;
+        if (horDist < config->needNewKFtrans * 1.5) {
+            window_.pop_back();
+            cout << "Remove the last keyframe from window!";
+            return;
+        }
+
+        window_.erase(window_.begin());
+        cout << "Remove the first keyframe from window!";
+    }
+
+    int Optimizer::MarkBigResidualLandmarkDelete() {
+        constexpr int kMinObvStableTime = 4;
+        constexpr double kMaxChi2 = 9 * 9;
+        int markCount = 0;
+        for (size_t i = 0; i < optLandmark_.size(); ++i) {
+            Landmark* lk = optLandmark_[i];
+
+            KeyFrame* host = lk->host_;
+            const Eigen::Vector3d pc1 = lk->GetPc();
+            if (pc1.z() < kMinSceneDepthInCamera) {
+                lk->SetCanDelete();
+                continue;
+            }
+            const Eigen::Vector3d pw = host->Twc_ * pc1;
+            double maxChi2 = 0.;
+            for (const auto& kf2obv : lk->target_) {
+                const KeyFrame* tar = kf2obv.first;
+                if (tar == host) {
+                    continue;
+                }
+
+                if (lk->CanBeDelete()) {
+                    break;
+                }
+
+                const Eigen::Vector3d pc2 = tar->Tcw_ * pw;
+                if (pc2.z() < kMinSceneDepthInCamera) {
+                    lk->SetCanDelete();
+                    break;
+                }
+                const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
+
+                Eigen::Vector2d r = px2 - kf2obv.second;
+                const double chi2 = r.squaredNorm();
+                maxChi2 = chi2 > maxChi2 ? chi2 : maxChi2;
+            }
+
+            if (maxChi2 > kMaxChi2 && lk->target_.size() >= kMinObvStableTime) {
+                lk->SetCanDelete();
+                ++markCount;
+            }
+        }
+        return markCount;
+    }
+
+    void Optimizer::CalculateLastKFmeanDepth() {
+        // 在最新关键帧被添加到滑窗内的时候调用
+        if (window_.size() < 2) {
+            lastKFmeanDepth_ = 0.0;
+            return;
+        }
+        const KeyFrame* last = window_.back();
+        double sumDepth = 0.;
+        int num = 0;
+        for (Landmark* lk : KeyFrame::optFlw.trackHistoryLandmark_) {
+            if (!lk->CanBeUseForOptimization() || !lk->target_.count(last)) {
                 continue;
             }
 
-            if (lk->CanBeDelete()) {
-                break;
+            const Eigen::Vector3d pc1 = lk->GetPc();
+            if (pc1.z() < kMinSceneDepthInCamera) {
+                lk->SetCanDelete();
+                continue;
             }
-
-            const Eigen::Vector3d pc2 = tar->Tcw_ * pw;
+            const Eigen::Vector3d pw = lk->host_->Twc_ * pc1;
+            const Eigen::Vector3d pc2 = last->Tcw_ * pw;
             if (pc2.z() < kMinSceneDepthInCamera) {
                 lk->SetCanDelete();
-                break;
+                continue;
             }
-            const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-
-            Eigen::Vector2d r = px2 - kf2obv.second;
-            const double chi2 = r.squaredNorm();
-            maxChi2 = chi2 > maxChi2 ? chi2 : maxChi2;
+            sumDepth += pc2.z();
+            ++num;
         }
-
-        if (maxChi2 > kMaxChi2 && lk->target_.size() >= kMinObvStableTime) {
-            lk->SetCanDelete();
-            ++markCount;
-        }
-    }
-    return markCount;
-}
-
-void Optimizer::CalculateLastKFmeanDepth() {
-    // 在最新关键帧被添加到滑窗内的时候调用
-    if (window_.size() < 2) {
-        lastKFmeanDepth_ = 0.0;
-        return;
-    }
-    const KeyFrame* last = window_.back();
-    double sumDepth = 0.;
-    int num = 0;
-    for (Landmark* lk : KeyFrame::optFlw.trackHistoryLandmark_) {
-        if (!lk->CanBeUseForOptimization() || !lk->target_.count(last)) {
-            continue;
-        }
-
-        const Eigen::Vector3d pc1 = lk->GetPc();
-        if (pc1.z() < kMinSceneDepthInCamera) {
-            lk->SetCanDelete();
-            continue;
-        }
-        const Eigen::Vector3d pw = lk->host_->Twc_ * pc1;
-        const Eigen::Vector3d pc2 = last->Tcw_ * pw;
-        if (pc2.z() < kMinSceneDepthInCamera) {
-            lk->SetCanDelete();
-            continue;
-        }
-        sumDepth += pc2.z();
-        ++num;
-    }
-    lastKFmeanDepth_ = sumDepth / num;
-    cout << fmt::format("last kf id: {}, mean depth: {}\n", last->id_,
-                        lastKFmeanDepth_);
-}
-
-void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
-                                    const Eigen::Vector2i& matchKp2,
-                                    const cv::Mat& debugImg2, const Pose& T12,
-                                    const bool success) {
-    const KeyFrame* host = lk1.host_;
-    const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
-    cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
-                    cv::Scalar{0, 0, 0});
-    cv::Mat im1, im2;
-    cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
-    cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
-    im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
-    im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
-
-    int start_text_row = 20;
-    int step_text_row = 20;
-    cv::putText(showImg, T12.QwbString(), cv::Point(10, (start_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-    cv::putText(showImg, T12.PwbString(),
-                cv::Point(10, (start_text_row += step_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-    const string caseName = success ? "Suc tri" : "Fai tri";
-    cv::putText(showImg,
-                fmt::format("{}_kf_id:{}", caseName, to_string(lk1.host_->id_)),
-                cv::Point(10, (start_text_row += step_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-
-    const cv::Vec3b& matchColor = kColor.at("yellow");
-
-    int radius = 3;
-
-    cv::Vec3b nearColor(0, 255, 0);
-    cv::Vec3b farColor(0, 0, 255);
-    const cv::Point pointDiff(debugGrayImg_.cols, 0);
-    const Eigen::Vector2i& kp1 = lk1.uv_.cast<int>();
-    cv::Point p1(kp1.x(), kp1.y());
-    cv::Point p2(matchKp2.x(), matchKp2.y());
-    constexpr double kTextRatio = 0.5;
-    const cv::Point textDiff(5, 0);
-    // 写必要信息
-    cv::putText(showImg,
-                fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1.x, p1.y,
-                            1.0 / estD1, lk1.trueDepth_, lk1.obvTime_ + 1),
-                p1 + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
-                1);
-
-    // 画极线起终点，起点绿色，终点红色，连线蓝色
-    cv::line(showImg, p1, p2 + pointDiff, matchColor, 1);
-
-    // 画极线以查看匹配是否准确
-    cv::circle(showImg, p1, radius, matchColor, 1);
-    cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
-
-    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
-    triPointMapDebugImage_[debugImgName].emplace_back(showImg);
-}
-
-void Optimizer::DrawProjectCase(const Landmark& lk1,
-                                const Eigen::Vector2d& matchKp2,
-                                const cv::Mat& debugImg2, const Pose& Twc2) {
-    const KeyFrame* host = lk1.host_;
-    const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
-    cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
-                    cv::Scalar{0, 0, 0});
-    cv::Mat im1, im2;
-    cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
-    cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
-    im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
-    im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
-
-    int start_text_row = 20;
-    int step_text_row = 20;
-    const Pose T12 = host->Tcw_ * Twc2;
-    cv::putText(showImg,
-                fmt::format("kf id: {}, {}", host->id_, T12.PwbString()),
-                cv::Point(10, (start_text_row)), cv::FONT_ITALIC, 0.8,
-                kColor.at("red"), 1);
-    cv::putText(showImg, T12.QwbString(),
-                cv::Point(10, (start_text_row += step_text_row)),
-                cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
-
-    const cv::Point pointDiff(debugGrayImg_.cols, 0);
-    const cv::Point textDiff(5, 0);
-    const Eigen::Vector3d pc2 = Twc2.Inverse() * lk1.GetPw();
-    const Eigen::Vector2d px = cam_->Project2PixelPlane(pc2);
-    const double residual = (px - matchKp2).norm();
-    cv::Point pxi(int(px.x()), int(px.y()));
-    cv::Point kp2i(int(matchKp2.x()), int(matchKp2.y()));
-    cv::putText(showImg, fmt::format("r: {:.1f}", residual),
-                pointDiff + pxi + textDiff, cv::FONT_ITALIC, 0.8,
-                kColor.at("red"), 1);
-
-    const cv::Vec3b& matchColor = kColor.at("yellow");
-
-    int radius = 3;
-
-    const Eigen::Vector2d& kp1 = lk1.uv_;
-    cv::Point p1i(int(kp1.x()), int(kp1.y()));
-    constexpr double kTextRatio = 0.5;
-    // 写必要信息
-    cv::putText(showImg,
-                fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1i.x, p1i.y,
-                            1.0 / lk1.invZ_, lk1.trueDepth_, lk1.obvTime_ + 1),
-                p1i + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"),
-                1);
-
-    // 画极线起终点，起点绿色，终点红色，连线蓝色
-    cv::line(showImg, p1i, kp2i + pointDiff, matchColor, 1);
-
-    // 画极线以查看匹配是否准确
-    cv::circle(showImg, p1i, radius, matchColor, 1);
-    cv::circle(showImg, kp2i + pointDiff, radius, matchColor, 1);
-    cv::circle(showImg, pxi + pointDiff, radius, kColor.at("red"), 1);
-
-    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
-    triPointMapDebugImage_[debugImgName].emplace_back(showImg);
-}
-
-void Optimizer::ShowLocalMap() {
-    if (window_.size() < 1) {
-        return;
+        lastKFmeanDepth_ = sumDepth / num;
+        cout << fmt::format("last kf id: {}, mean depth: {}\n", last->id_,
+                            lastKFmeanDepth_);
     }
 
-    vector<Pose> vTwc;
-    for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
-        KeyFrame* kf = window_[i];
-        vTwc.push_back(kf->Twc_);
+    void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
+                                        const Eigen::Vector2i& matchKp2,
+                                        const cv::Mat& debugImg2,
+                                        const Pose& T12, const bool success) {
+        const KeyFrame* host = lk1.host_;
+        const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
+        cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                        cv::Scalar{0, 0, 0});
+        cv::Mat im1, im2;
+        cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
+        cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
+        im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
+
+        int start_text_row = 20;
+        int step_text_row = 20;
+        cv::putText(showImg, T12.QwbString(), cv::Point(10, (start_text_row)),
+                    cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+        cv::putText(showImg, T12.PwbString(),
+                    cv::Point(10, (start_text_row += step_text_row)),
+                    cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+        const string caseName = success ? "Suc tri" : "Fai tri";
+        cv::putText(
+            showImg,
+            fmt::format("{}_kf_id:{}", caseName, to_string(lk1.host_->id_)),
+            cv::Point(10, (start_text_row += step_text_row)), cv::FONT_ITALIC,
+            0.8, kColor.at("red"), 1);
+
+        const cv::Vec3b& matchColor = kColor.at("yellow");
+
+        int radius = 3;
+
+        cv::Vec3b nearColor(0, 255, 0);
+        cv::Vec3b farColor(0, 0, 255);
+        const cv::Point pointDiff(debugGrayImg_.cols, 0);
+        const Eigen::Vector2i& kp1 = lk1.uv_.cast<int>();
+        cv::Point p1(kp1.x(), kp1.y());
+        cv::Point p2(matchKp2.x(), matchKp2.y());
+        constexpr double kTextRatio = 0.5;
+        const cv::Point textDiff(5, 0);
+        // 写必要信息
+        cv::putText(showImg,
+                    fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1.x, p1.y,
+                                1.0 / estD1, lk1.trueDepth_, lk1.obvTime_ + 1),
+                    p1 + textDiff, cv::FONT_ITALIC, kTextRatio,
+                    kColor.at("red"), 1);
+
+        // 画极线起终点，起点绿色，终点红色，连线蓝色
+        cv::line(showImg, p1, p2 + pointDiff, matchColor, 1);
+
+        // 画极线以查看匹配是否准确
+        cv::circle(showImg, p1, radius, matchColor, 1);
+        cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
+
+        const string debugImgName =
+            fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+        triPointMapDebugImage_[debugImgName].emplace_back(showImg);
     }
 
-    set<Landmark*>& aPoints = interaction->activePoints;
-    set<Landmark*>& lPoints = interaction->localPoints;
-    aPoints.clear();
-    lPoints.clear();
-    {
-        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
-        KeyFrame::kfOn3Dshow.clear();
-        for (Landmark* p : optLandmark_) {
-            if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
-                p->ManySupport() && p->Converge()) {
-                aPoints.insert(p);
-            }
+    void Optimizer::DrawProjectCase(
+        const Landmark& lk1, const Eigen::Vector2d& matchKp2,
+        const cv::Mat& debugImg2, const Pose& Twc2) {
+        const KeyFrame* host = lk1.host_;
+        const cv::Mat& debugGrayImg_ = host->debugGrayImg_;
+        cv::Mat showImg(debugGrayImg_.rows, debugGrayImg_.cols * 2, CV_8UC3,
+                        cv::Scalar{0, 0, 0});
+        cv::Mat im1, im2;
+        cvtColor(debugGrayImg_, im1, cv::COLOR_GRAY2BGR);
+        cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
+        im1.copyTo(showImg.colRange(0, debugGrayImg_.cols));
+        im2.copyTo(showImg.colRange(debugGrayImg_.cols, showImg.cols));
+
+        int start_text_row = 20;
+        int step_text_row = 20;
+        const Pose T12 = host->Tcw_ * Twc2;
+        cv::putText(showImg,
+                    fmt::format("kf id: {}, {}", host->id_, T12.PwbString()),
+                    cv::Point(10, (start_text_row)), cv::FONT_ITALIC, 0.8,
+                    kColor.at("red"), 1);
+        cv::putText(showImg, T12.QwbString(),
+                    cv::Point(10, (start_text_row += step_text_row)),
+                    cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+
+        const cv::Point pointDiff(debugGrayImg_.cols, 0);
+        const cv::Point textDiff(5, 0);
+        const Eigen::Vector3d pc2 = Twc2.Inverse() * lk1.GetPw();
+        const Eigen::Vector2d px = cam_->Project2PixelPlane(pc2);
+        const double residual = (px - matchKp2).norm();
+        cv::Point pxi(int(px.x()), int(px.y()));
+        cv::Point kp2i(int(matchKp2.x()), int(matchKp2.y()));
+        cv::putText(showImg, fmt::format("r: {:.1f}", residual),
+                    pointDiff + pxi + textDiff, cv::FONT_ITALIC, 0.8,
+                    kColor.at("red"), 1);
+
+        const cv::Vec3b& matchColor = kColor.at("yellow");
+
+        int radius = 3;
+
+        const Eigen::Vector2d& kp1 = lk1.uv_;
+        cv::Point p1i(int(kp1.x()), int(kp1.y()));
+        constexpr double kTextRatio = 0.5;
+        // 写必要信息
+        cv::putText(
+            showImg,
+            fmt::format("({}, {}, {:.1f}, {:.1f}, {})", p1i.x, p1i.y,
+                        1.0 / lk1.invZ_, lk1.trueDepth_, lk1.obvTime_ + 1),
+            p1i + textDiff, cv::FONT_ITALIC, kTextRatio, kColor.at("red"), 1);
+
+        // 画极线起终点，起点绿色，终点红色，连线蓝色
+        cv::line(showImg, p1i, kp2i + pointDiff, matchColor, 1);
+
+        // 画极线以查看匹配是否准确
+        cv::circle(showImg, p1i, radius, matchColor, 1);
+        cv::circle(showImg, kp2i + pointDiff, radius, matchColor, 1);
+        cv::circle(showImg, pxi + pointDiff, radius, kColor.at("red"), 1);
+
+        const string debugImgName =
+            fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+        triPointMapDebugImage_[debugImgName].emplace_back(showImg);
+    }
+
+    void Optimizer::ShowLocalMap() {
+        if (window_.size() < 1) {
+            return;
         }
 
+        vector<Pose> vTwc;
         for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
-            // for(int i = window_.size()-1; i < window_.size(); ++i) {
             KeyFrame* kf = window_[i];
-            for (Landmark* p : kf->landmark_) {
-                if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
-                    !p->CanBeDelete() && p->initialized_) {
-                    lPoints.insert(p);
+            vTwc.push_back(kf->Twc_);
+        }
+
+        set<Landmark*>& aPoints = interaction->activePoints;
+        set<Landmark*>& lPoints = interaction->localPoints;
+        aPoints.clear();
+        lPoints.clear();
+        {
+            lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+            KeyFrame::kfOn3Dshow.clear();
+            for (Landmark* p : optLandmark_) {
+                if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
+                    p->ManySupport() && p->Converge()) {
+                    aPoints.insert(p);
                 }
             }
 
-            KeyFrame::kfOn3Dshow.insert(kf);
+            for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
+                // for(int i = window_.size()-1; i < window_.size(); ++i) {
+                KeyFrame* kf = window_[i];
+                for (Landmark* p : kf->landmark_) {
+                    if (p != nullptr && !aPoints.count(p) &&
+                        !lPoints.count(p) && !p->CanBeDelete() &&
+                        p->initialized_) {
+                        lPoints.insert(p);
+                    }
+                }
+
+                KeyFrame::kfOn3Dshow.insert(kf);
+            }
+        }
+
+        if (!aPoints.empty() || !lPoints.empty()) {
+            ::ShowLocalMap(vTwc);
+            // cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
+        } else {
+            //cerr << "wait for local map..." << endl;
         }
     }
-
-    if (!aPoints.empty() || !lPoints.empty()) {
-        ::ShowLocalMap(vTwc);
-        // cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
-    } else {
-        //cerr << "wait for local map..." << endl;
-    }
-}
