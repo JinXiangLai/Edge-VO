@@ -181,6 +181,9 @@ class Optimizer {
     std::map<std::string, std::vector<cv::Mat>> triPointMapDebugImage_;
 
     std::vector<KeyFrame*> delayEraseKeyframe_;
+
+    cv::VideoWriter debugTrackLostStatusVideoWriter_;
+    void WriteDebugTrackLostStatus(const KeyFrame& curF);
 };
 
 #endif

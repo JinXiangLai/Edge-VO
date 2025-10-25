@@ -31,6 +31,10 @@ Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
 }
 
 Optimizer::~Optimizer() {
+    if (debugTrackLostStatusVideoWriter_.isOpened()) {
+        debugTrackLostStatusVideoWriter_.release();
+    }
+
     // 排查内存泄漏
     for (KeyFrame* kf : window_) {
         if (kf != nullptr) {
@@ -1940,7 +1944,6 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         logInfo.append(fmt::format("; will delete window[{}]\n", smallId));
         cout << logInfo;
     }
-
 #endif
         // 将待删除的最老帧移到滑窗开头
         KeyFrame* oldest = window_[smallId];
@@ -1973,6 +1976,8 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         Pose beforeTwc2 = kf2->Twc_;
         if (optSuccess) {
             kf2->SetTwc(Twc2);  // 关闭这个出现错乱，证明优化有效
+        } else {
+            WriteDebugTrackLostStatus(*kf2);
         }
         cout << "cur frame pose diff: " << beforeTwc2.Inverse() * kf2->Twc_
              << endl;
@@ -2116,6 +2121,104 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         lastKFmeanDepth_ = sumDepth / num;
         cout << fmt::format("last kf id: {}, mean depth: {}\n", last->id_,
                             lastKFmeanDepth_);
+    }
+
+    void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
+        unordered_map<const KeyFrame*, size_t> kf2Idx;
+        for (size_t i = 0; i < window_.size(); ++i) {
+            kf2Idx.insert({window_[i], i});
+        }
+        vector<vector<Landmark*>> usefulMapPointEachKf(window_.size());
+        vector<vector<cv::Point2f>> usefulObservationCurF(window_.size());
+        for (size_t i = 0; i < usefulMapPointEachKf.size(); ++i) {
+            usefulMapPointEachKf[i].reserve(500);
+            usefulObservationCurF[i].reserve(500);
+        }
+
+        auto AssignLandmark = [&kf2Idx, &usefulMapPointEachKf,
+                               &usefulObservationCurF](
+                                  const vector<Landmark*>& lks,
+                                  const vector<cv::Point2f>& curFobv) {
+            for (size_t i = 0; i < lks.size(); ++i) {
+                if (lks[i]->NoUsed() || !lks[i]->CanBeUseForOptimization()) {
+                    continue;
+                }
+                const int idx = kf2Idx[lks[i]->host_];
+                usefulMapPointEachKf[idx].emplace_back(lks[i]);
+                usefulObservationCurF[idx].emplace_back(curFobv[i]);
+            }
+        };
+
+        AssignLandmark(KeyFrame::optFlw.trackLandmark_,
+                       KeyFrame::optFlw.prevPts_);
+        AssignLandmark(KeyFrame::optFlw.trackHistoryLandmark_,
+                       KeyFrame::optFlw.prevHistoryPts_);
+
+        const int wDiff = window_[0]->debugGrayImg_.cols;
+        const cv::Point2f pointDiff(wDiff, 0);
+        const cv::Mat& debugImg2 = KeyFrame::optFlw.prevImg_;
+        vector<string> colorKey;
+        for (const auto& match : kColor) {
+            colorKey.emplace_back(match.first);
+        }
+        constexpr int circleRadius = 3;
+        cv::Mat showImg(window_[0]->debugGrayImg_.rows,
+                        window_[0]->debugGrayImg_.cols * 2, CV_8UC3,
+                        cv::Scalar{0, 0, 0});
+        cv::Mat im1, im2;
+        string videoPath = config->debugMessageSaveFolder;
+        videoPath += "/track_lost_frame_message.avi";
+        // 或者使用未压缩的格式（如果磁盘IO不是瓶颈）
+        int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+        int fps = 30;
+        for (size_t i = 0; i < usefulMapPointEachKf.size(); ++i) {
+            // 创建对比图像
+            const cv::Mat& debugGrayImg = window_[i]->debugGrayImg_;
+            cvtColor(debugGrayImg, im1, cv::COLOR_GRAY2BGR);
+            cvtColor(debugImg2, im2, cv::COLOR_GRAY2BGR);
+            im1.copyTo(showImg.colRange(0, debugGrayImg.cols));
+            im2.copyTo(showImg.colRange(debugGrayImg.cols, showImg.cols));
+
+            // 写入关键信息
+            int start_text_row = 20;
+            int step_text_row = 20;
+            cv::putText(showImg,
+                        fmt::format("window[{}], useful lk num: {}", i,
+                                    usefulMapPointEachKf[i].size()),
+                        cv::Point(10, (start_text_row)), cv::FONT_ITALIC, 0.8,
+                        kColor.at("red"), 1);
+            cv::putText(showImg, fmt::format("curf id: {}", curF.id_),
+                        cv::Point(10, (start_text_row += step_text_row)),
+                        cv::FONT_ITALIC, 0.8, kColor.at("red"), 1);
+
+            // 绘制匹配点
+            for (size_t j = 0; j < usefulMapPointEachKf[i].size(); ++j) {
+                Landmark* const lk = usefulMapPointEachKf[i][j];
+                const cv::Point2f p1(lk->uv_.x(), lk->uv_.y());
+                const cv::Point2f& p2 = usefulObservationCurF[i][j] + pointDiff;
+                const Vec3b& color =
+                    kColor.at(colorKey[rand() % kColor.size()]);
+                // 画极线以查看匹配是否准确
+                cv::circle(showImg, p1, circleRadius, color, 1);
+                cv::circle(showImg, p2, circleRadius, color, 1);
+                cv::line(showImg, p1, p2, color);
+            }
+
+            if (!debugTrackLostStatusVideoWriter_.isOpened()) {
+                debugTrackLostStatusVideoWriter_.open(videoPath, fourcc, fps,
+                                                      showImg.size(), true);
+                if (debugTrackLostStatusVideoWriter_.isOpened()) {
+                    cout << "open track lost debug video at: " << videoPath
+                         << "\n";
+                } else {
+                    cout << fmt::format(
+                        "Error to open track lost debug video path: {}\n",
+                        videoPath);
+                    return;
+                }
+            }
+            debugTrackLostStatusVideoWriter_.write(showImg);
+        }
     }
 
     void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,

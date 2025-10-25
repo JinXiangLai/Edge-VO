@@ -329,6 +329,11 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    if (optimizer.debugTrackLostStatusVideoWriter_.isOpened()) {
+        // 显式调用release才可写入视频
+        optimizer.debugTrackLostStatusVideoWriter_.release();
+    }
+
     if (config->debugShowOnlineResult3D) {
         viewerThread->join();
         delete viewerThread;
