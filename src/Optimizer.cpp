@@ -1496,7 +1496,7 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
         accept = true;
         continousNoImprovementNum = 0;
     } else {
-        lambda_ *= 1.5;
+        lambda_ *= 1.5 * (1 + 0.1 * continousNoImprovementNum);
         accept = false;
         ++continousNoImprovementNum;
     }
@@ -1506,7 +1506,7 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
 bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
                             const double& costRelativeAbsDiff,
                             const Eigen::VectorXd& delta) {
-    const bool lambdaTestEnough = lambda_ > 1e9 || lambda_ < 1e-9;
+    const bool lambdaTestEnough = lambda_ > 1e6 || lambda_ < 1e-6;
     if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
         cout << fmt::format("LM cost diff: {} converge!\n",
                             costRelativeAbsDiff);

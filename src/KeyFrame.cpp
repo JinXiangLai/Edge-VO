@@ -383,13 +383,13 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<Landmark*> trackLandmark;
     const auto debugPts1 = prevPts;
     prevPts.clear();
+    // 使用min会导致有效跟踪逐渐减少，导致关键帧频繁更新，最终影响系统的精度，甚至失败
     const float maxError = max(static_cast<float>(config->maxFlowTrackError),
                                GetGoodMatchMaxResidual());
     cout << fmt::format(
         "adaptive optflow track maxError: {}, onfig->maxFlowTrackError: {}\n",
         maxError, config->maxFlowTrackError);
     for (size_t i = 0; i < status.size(); ++i) {
-        // if (status[i] == 1 && error[i] < config->maxFlowTrackError) {
         if (status[i] == 1 && error[i] < maxError) {
             // 重新赋值landmark在当前帧上的观测
             prevPts.emplace_back(nextPts[i]);
