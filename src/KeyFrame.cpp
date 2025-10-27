@@ -113,15 +113,13 @@ KeyFrame::~KeyFrame() {
 
 void KeyFrame::SetOpticalFlowStructCurFrame() {
     optFlw.prevImg_ = grayImg_;
-    optFlw.prevPts_.reserve(landmark_.size());
-    optFlw.trackLandmark_.reserve(landmark_.size());
     for (const auto& p : landmark_) {
         // 添加landmark对跟踪成功点的相互观测
         optFlw.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
         optFlw.trackLandmark_.push_back(p);
     }
     cout << fmt::format("kf id: {}, SetOpticalFlowStructCurFrame num: {}\n",
-                        id_, optFlw.trackLandmark_.size());
+                        id_, landmark_.size());
 }
 
 void KeyFrame::GenerateUndistordMap() {
@@ -188,14 +186,15 @@ void KeyFrame::InitFastDetector() {
 }
 
 int KeyFrame::RemoveNoInitializeLongFeature() {
-    vector<Landmark*>::iterator it1 = optFlw.trackHistoryLandmark_.begin();
-    vector<cv::Point2f>::iterator it2 = optFlw.prevHistoryPts_.begin();
+    vector<Landmark*>::iterator it1 = optFlw.trackLandmark_.begin();
+    vector<cv::Point2f>::iterator it2 = optFlw.prevPts_.begin();
     int removeFeatNum = 0;
-    while (it1 != optFlw.trackHistoryLandmark_.end()) {
+    while (it1 != optFlw.trackLandmark_.begin() + optFlw.historyLandmarkNum_) {
         if ((*it1)->failInitializeNum_ > 1) {
             (*it1)->SetCanDelete();
-            it1 = optFlw.trackHistoryLandmark_.erase(it1);
-            it2 = optFlw.prevHistoryPts_.erase(it2);
+            it1 = optFlw.trackLandmark_.erase(it1);
+            it2 = optFlw.prevPts_.erase(it2);
+            --optFlw.historyLandmarkNum_;
             ++removeFeatNum;
             continue;
         }
@@ -297,13 +296,6 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
         for (const cv::Point2f& p : lastKFoptFlw.prevPts_) {
             SetNoGenerateKeypointArea(p);
         }
-
-        for (const cv::Point2f& p : lastKFoptFlw.prevHistoryPts_) {
-            SetNoGenerateKeypointArea(p);
-        }
-
-        //cv::imshow("search", search);
-        //cv::waitKey();
     }
 
     auto CanGenerateKeypoint = [&search](const cv::Point2f& p) -> bool {
@@ -324,6 +316,7 @@ void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
             unKeypoints_.emplace_back(p.pt.x, p.pt.y);
         }
     }
+
 #else
     vector<cv::Point2f> pts = ExtractFastPointEachImage();
     unKeypoints_.reserve(pts.size());
@@ -355,9 +348,7 @@ void KeyFrame::ResetDebugMessage() {
 }
 
 void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
-                                       const cv::Mat& curImg,
-                                       vector<cv::Point2f>& prevPts,
-                                       vector<Landmark*>& prevTrackLandmark) {
+                                       const cv::Mat& curImg) {
     vector<cv::Point2f> nextPts;
     vector<uchar> status;
     vector<float> error;
@@ -378,28 +369,49 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     };
 
     const int winLen = config->optflowWinSize;
-    cv::calcOpticalFlowPyrLK(prevImg, curImg, prevPts, nextPts, status, error,
-                             cv::Size(winLen, winLen), config->optflowLayer);
-    vector<Landmark*> trackLandmark;
-    const auto debugPts1 = prevPts;
-    prevPts.clear();
+    cv::calcOpticalFlowPyrLK(prevImg, curImg, optFlw.prevPts_, nextPts, status,
+                             error, cv::Size(winLen, winLen),
+                             config->optflowLayer);
     // 使用min会导致有效跟踪逐渐减少，导致关键帧频繁更新，最终影响系统的精度，甚至失败
     const float maxError = max(static_cast<float>(config->maxFlowTrackError),
                                GetGoodMatchMaxResidual());
     cout << fmt::format(
         "adaptive optflow track maxError: {}, onfig->maxFlowTrackError: {}\n",
         maxError, config->maxFlowTrackError);
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    const auto debugPts1 = optFlw.prevPts_;
+#endif
+
+    optFlw.prevPts_.clear();
+    vector<Landmark*> trackLandmark;
+    size_t historyLandmarkTrackSuccessNum = 0;
     for (size_t i = 0; i < status.size(); ++i) {
         if (status[i] == 1 && error[i] < maxError) {
             // 重新赋值landmark在当前帧上的观测
-            prevPts.emplace_back(nextPts[i]);
-            trackLandmark.emplace_back(prevTrackLandmark[i]);
+            optFlw.prevPts_.emplace_back(nextPts[i]);
+            trackLandmark.emplace_back(optFlw.trackLandmark_[i]);
+            if (i < optFlw.historyLandmarkNum_) {
+                ++historyLandmarkTrackSuccessNum;
+            }
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
             Eigen::Vector2i p1(int(debugPts1[i].x), int(debugPts1[i].y));
             Eigen::Vector2i p2(int(nextPts[i].x), int(nextPts[i].y));
             DrawBestMatchEachFrame(p1, p2, curImg, true);
+#endif
         }
     }
-    prevTrackLandmark = trackLandmark;
+
+    optFlw.historyLandmarkNum_ = historyLandmarkTrackSuccessNum;
+    optFlw.trackLandmark_ = std::move(trackLandmark);
+
+    // 跟踪成功后，重新赋值
+    cout << fmt::format(
+        "optical flow tracked info: track last KF landmark num: {}, "
+        "track history landmark num: {}\n",
+        optFlw.trackLandmark_.size() - historyLandmarkTrackSuccessNum,
+        historyLandmarkTrackSuccessNum);
 }
 
 void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
@@ -410,23 +422,13 @@ void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
     }
 
     // 上一关键帧对当前帧的跟踪结果
-    OpticalFlowTrackExecute(optFlw.prevImg_, f2.grayImg_, optFlw.prevPts_,
-                            optFlw.trackLandmark_);
-    WriteDebugImage2VideoEachFrame(f2.id_, "lastKF_track_result.avi");
+    OpticalFlowTrackExecute(optFlw.prevImg_, f2.grayImg_);
 
-    if (!optFlw.prevHistoryPts_.empty()) {
-        OpticalFlowTrackExecute(optFlw.prevImg_, f2.grayImg_,
-                                optFlw.prevHistoryPts_,
-                                optFlw.trackHistoryLandmark_);
-        WriteDebugImage2VideoEachFrame(f2.id_, "historyKF_track_result.avi");
-    }
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    WriteDebugImage2VideoEachFrame(f2.id_, "lastKF_track_result.avi");
+#endif
 
     optFlw.prevImg_ = f2.grayImg_;
-    // 跟踪成功后，重新赋值
-    cout << fmt::format(
-        "optical flow tracked info: trackLandmark_ num: {}, "
-        "trackHistoryLandmark_ num: {}\n",
-        optFlw.trackLandmark_.size(), optFlw.trackHistoryLandmark_.size());
 }
 
 double KeyFrame::TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum) {
@@ -781,33 +783,18 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
         }
     }
 
-    // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
-    SetOpticalFlowStructCurFrame();  // 设置光流跟踪的匹配结构
-
-    //此外还需把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
+    //把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
     if (lastKf != nullptr) {
-        // 添加上一关键帧新提取的关键点
-        for (size_t i = 0; i < lastKFoptFlw.prevPts_.size(); ++i) {
-
-            optFlw.prevHistoryPts_.emplace_back(lastKFoptFlw.prevPts_[i]);
-            optFlw.trackHistoryLandmark_.emplace_back(
-                lastKFoptFlw.trackLandmark_[i]);
-        }
-
-        // 历史没有删除，这里不需重复添加
-        // for (size_t i = 0; i < lastKFoptFlw.prevHistoryPts_.size(); ++i) {
-        //     // 添加历史关键帧跟踪上的关键点
-        //     optFlw.prevHistoryPts_.emplace_back(
-        //         lastKFoptFlw.prevHistoryPts_[i]);
-        //     optFlw.trackHistoryLandmark_.emplace_back(
-        //         lastKFoptFlw.trackHistoryLandmark_[i]);
-        // }
+        optFlw.historyLandmarkNum_ = optFlw.prevPts_.size();
     }
+
+    // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
+    SetOpticalFlowStructCurFrame();
 
     optFlw.SetTotalFeatureCreated();
 
-    return optFlw
-        .GetTrackFeatureNum();  // 历史关键帧和当前关键帧在当前灰度图上提取到的关键点数量
+    // 历史关键帧和当前关键帧在当前灰度图上提取到的关键点数量
+    return optFlw.GetTrackFeatureNum();
 }
 
 void KeyFrame::Update(const Eigen::Vector3d& delta_q,

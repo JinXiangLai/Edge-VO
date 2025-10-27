@@ -344,10 +344,10 @@ std::string GetTriangulatePointName(const Eigen::Vector2d& p);
 
 Pose GetPredictPose(const KeyFrame& last1, const KeyFrame& last2);
 
-inline double ChronoTimeDurationCal(
+inline double ChronoMillisecTimeDuration(
     const std::chrono::steady_clock::time_point& t1,
     const std::chrono::steady_clock::time_point& t2) {
-    return std::chrono::duration<double>(t2 - t1).count();
+    return std::chrono::duration<double>(t2 - t1).count() * 1e3;
 }
 
 enum KeyboardEvent { Reset, StepByStep };

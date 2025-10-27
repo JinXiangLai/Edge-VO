@@ -78,9 +78,7 @@ class KeyFrame {
     void AddReportElement(const std::string& key);
     void ResetDebugMessage();
 
-    void OpticalFlowTrackExecute(const cv::Mat& prevImg, const cv::Mat& curImg,
-                                 std::vector<cv::Point2f>& prevPts,
-                                 std::vector<Landmark*>& prevTrackLandmark);
+    void OpticalFlowTrackExecute(const cv::Mat& prevImg, const cv::Mat& curImg);
 
     std::ofstream invDepthUncertaintyFile_;
     bool firstWriteUncertainty_ = true;
@@ -90,17 +88,15 @@ class KeyFrame {
         cv::Mat prevImg_;
         std::vector<cv::Point2f> prevPts_;
         std::vector<Landmark*> trackLandmark_;
-        // TODO： 保留历史关键帧的跟踪结果
-        std::vector<cv::Point2f> prevHistoryPts_;
-        std::vector<Landmark*> trackHistoryLandmark_;
-        int totalFeatureCreated_ = 0;
-        int GetTrackFeatureNum() {
-            return prevPts_.size() + prevHistoryPts_.size();
+        size_t totalFeatureCreated_ = 0;
+        size_t historyLandmarkNum_ = 0;  // 记录历史跟踪点的数量以区分上一KF的
+        size_t GetTrackFeatureNum() {
+            return prevPts_.size();
         }
         double GetTrackFeatureRatio() {
             return double(GetTrackFeatureNum()) / totalFeatureCreated_;
         }
-        int SetTotalFeatureCreated() {
+        size_t SetTotalFeatureCreated() {
             totalFeatureCreated_ = GetTrackFeatureNum();
             return totalFeatureCreated_;
         }
@@ -108,9 +104,8 @@ class KeyFrame {
             prevImg_.release();
             prevPts_.clear();
             trackLandmark_.clear();
-            prevHistoryPts_.clear();
-            trackHistoryLandmark_.clear();
             totalFeatureCreated_ = 0;
+            historyLandmarkNum_ = 0;
         }
     };
     void SetOpticalFlowStructCurFrame();

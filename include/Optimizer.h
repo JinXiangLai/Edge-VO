@@ -100,8 +100,6 @@ class Optimizer {
 
     void AdaptSetInitLambda();
 
-    void CullingErrorLandmark(KeyFrame* curF = nullptr);
-
     void AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
                               const Pose& T12, const int lvl = 0);
 

@@ -115,11 +115,6 @@ int main(int argc, char** argv) {
             curF.depthImage_ = depthImg;
         }
 
-        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-
         if (win.empty()) {
             KeyFrame* initFrame = new KeyFrame(curF);
             // 首帧设置为单位矩阵
@@ -135,7 +130,6 @@ int main(int argc, char** argv) {
             cout << "Set initFrame with frame id: " << i << endl;
             continue;  // 认为初始化完毕
         }
-        cout << "win.size: " << win.size() << endl;
 
         // 使用KF更新当前帧的pose
         const Pose Twc2 = curF.priorTwc_;
@@ -181,10 +175,10 @@ int main(int argc, char** argv) {
         // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
 
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
-        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         const double findMatchRatio =
             win.back()->TrackWithOpticalFlow(curF, findMatchNum);
-        chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
         // step1: 优化当前帧pose
         Pose Ttemp = GetPredictPose(lastF, lastLastF);
@@ -192,6 +186,8 @@ int main(int argc, char** argv) {
         bool trackLocalMapLow = false;
         const bool trackOk = optimizer.TrackLocalMap(
             &curF, trackLocalMapLow);  // TODO: 问题是这里的pose估计不准
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+
         bool debugReset =
             false && static_cast<int>(win.size()) == config->maxKFnumInWindow &&
             i % 150 == 0;  // debug
@@ -209,17 +205,6 @@ int main(int argc, char** argv) {
         }
         trackLocalMapLow = trackLocalMapLow && trackOk;
         //trackLocalMapLow = false; // 强制不使用
-
-        // TODO 1：利用跟踪结果更新当前帧pose，做当前帧和关键帧之间的BA优化
-        // 这里暂时利用真值实现
-
-        // TODO 2：利用跟踪帧进行必要的三角化(这个应该是在添加关键帧之后进行局部BA之后进行)
-        chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
-
-        chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
-
-        chrono::steady_clock::time_point t9 = chrono::steady_clock::now();
-        //cout << "Fuse depth spend " << chrono::duration<double>(t2 - t1).count() << "s" << endl;
 
         // 显示线程更新使用
         interaction->visualCurF = curF;  // 记录优化pose后的当前帧
@@ -248,7 +233,6 @@ int main(int argc, char** argv) {
             "rot ang: {:.1f}deg\n",
             findMatchRatio, findMatchNum, T12.t_wb_.head(2).norm(),
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
-        chrono::steady_clock::time_point t10, t11;
 
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
         if (((trackLocalMapLow || caseOptflowTrackLow) &&
@@ -282,11 +266,9 @@ int main(int argc, char** argv) {
             // ShowPointCloud(curF.landmark_);
             // optimizer.ShowLocalMap(nullptr);
 
-            t10 = chrono::steady_clock::now();
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
             // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
             cout << "Add new keyframe id: " << curF.id_ << "\n";
-            t11 = chrono::steady_clock::now();
             interaction->visualLastKF = *win.back();
 
         } else {
@@ -298,21 +280,11 @@ int main(int argc, char** argv) {
         lastF = curF;
         interaction->trajectory.push_back({curF.Twc_.t_wb_});
 
-        cout << "ExtractEdge spend: "
-             << chrono::duration<double>(t2 - t1).count() << "s" << endl
-             << "GenerateDTandDerivative spend: "
-             << chrono::duration<double>(t3 - t2).count() << "s" << endl
-             << "GenerateKeyPoint spend: "
-             << chrono::duration<double>(t4 - t3).count() << "s" << endl
-             << "UpdateDepth spend: "
-             << chrono::duration<double>(t6 - t5).count() << "s" << endl
-             << "CullingBadDepth spend: "
-             << chrono::duration<double>(t7 - t6).count() << "s" << endl
-             << "FuseDepth spend: " << chrono::duration<double>(t9 - t8).count()
-             << "s" << endl
-             << "AddOneKeyFeame transform spend: "
-             << chrono::duration<double>(t11 - t10).count() << "s\n\n"
-             << endl;
+        cout << fmt::format(
+            "TrackWithOpticalFlow spend:{:.3f}ms, TrackLocalMap spend: "
+            "{:.3f}ms\n\n",
+            ChronoMillisecTimeDuration(t1, t2),
+            ChronoMillisecTimeDuration(t2, t3));
 
         while (interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i
