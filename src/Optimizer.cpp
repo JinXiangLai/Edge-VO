@@ -222,7 +222,6 @@ void Optimizer::CalculateHandGradiantCurFrame(
     H.setZero();
     g.resize(optVariableDim);
     g.setZero();
-    constexpr double noUpdatePoseNum = 1.0;  // 或者是无穷大？
 
     /******** 投影过程 ********
     * K.inv * (u1, v1, 1) -> Pc1_norm * z1 -> Twc1 * Pw1 -> Twc2.inv * Pw1 -> Pc2 / z2 -> K * Pc2_norm -> (u2, v2, 1) -> res(u2, v2)
@@ -245,6 +244,14 @@ void Optimizer::CalculateHandGradiantCurFrame(
     J_px2_Pc2Norm(0, 2) = 0.;
     J_px2_Pc2Norm(1, 2) = 0.;
 
+    // Pc2 w.r.t T12 [3x6]
+    Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
+        Eigen::Matrix<double, 3, 6>::Zero();
+    // * Pc2 w.r.t t12
+    J_Pc2_Twc2.block<3, 3>(0, 3) = -Tc2w.q_wb_.toRotationMatrix();
+
+    Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
+
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark& p = *lk1s[j];
         if (p.NoUsed()) {
@@ -259,81 +266,31 @@ void Optimizer::CalculateHandGradiantCurFrame(
         Eigen::Vector2d rho;
         HuberLoss(chi2, rho);
 
-        Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
         const double d = 1 / Pc2.z();
         const double d2 = 1. / pow(Pc2.z(), 2);
         J_Pc2Norm_Pc2 << d, 0, -Pc2.x() * d2, 0, d, -Pc2.y() * d2, 0, 0, 0;
-        Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
+        const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
             J_px2_Pc2Norm * J_Pc2Norm_Pc2 * rho[1];
-
-        // Pc2 w.r.t T12 [3x6]
-        Eigen::Matrix<double, 3, 6> J_Pc2_Twc2 =
-            Eigen::Matrix<double, 3, 6>::Zero();
 
         const Eigen::Vector3d dt = Pw1 - Twc2.t_wb_;
         // * Pc2 w.r.t R12
-        J_Pc2_Twc2.block(0, 0, 3, 3) = SkewSymmetric(Tc2w.q_wb_ * dt);
-        // * Pc2 w.r.t t12
-        J_Pc2_Twc2.block(0, 3, 3, 3) = -Tc2w.q_wb_.toRotationMatrix();
-
-        Eigen::Matrix<double, 3, 3> J_Pc2_Pw1;
-        Eigen::Matrix<double, 3, 3> J_Pw1_Pc1;
-        Eigen::Matrix<double, 3, 1> J_Pc1_z1;
-        // TODO: 实现FEJ
-        if (!onlyPoseUpdate_) {
-            // Pc2 w.r.t Pc1 [3x3]
-            J_Pc2_Pw1 = Tc2w.q_wb_.toRotationMatrix();
-
-            // Pw1 w.r.t Pc1 [3x3]
-            J_Pw1_Pc1 = p.host_->Twc_.q_wb_.toRotationMatrix();
-
-            // Pc1 w.r.t z1 [3x1]
-            const Eigen::Vector3d pc1Norm(p.GetPcNorm());
-            J_Pc1_z1 << pc1Norm.x(), pc1Norm.y(), 1;
-            // 使用逆深度表示
-            const double d = pow(p.invZ_, 2);
-            J_Pc1_z1 << -pc1Norm.x() / d, -pc1Norm.y() / d, -1 / d;
-        }
+        J_Pc2_Twc2.block<3, 3>(0, 0) = SkewSymmetric(Tc2w.q_wb_ * dt);
 
         // 给整体雅可比矩阵赋值
         // H = J'*J, g = -J'*b;
         // 当前雅可比及梯度的行和列，用于构建上述H矩阵和g向量
         const int ai = j * resDim, aj = poseStartCol;
         const int bi = j * resDim, bj = pointStartCol + j * p.Size();
-        // cout << "J_res_px2:\n" << J_res_px2 << endl;
-        // cout << "J_px2_Pc2:\n" << J_px2_Pc2 << endl;
-        // cout << "J_Pc2_T12:\n" << J_Pc2_T12 << endl;
-        Eigen::Matrix<double, 2, 6> A =
-            J_px2_Pc2 * J_Pc2_Twc2 * noUpdatePoseNum;
+        const Eigen::Matrix<double, 2, 6> A = J_px2_Pc2 * J_Pc2_Twc2;
         double w = 1.0;  // 1.0 / lk1s[i]->invDepthCov_;
-        H.block(aj, aj, A.cols(), A.cols()) += A.transpose() * A * w;
+        H.block<6, 6>(aj, aj) += (A.transpose() * A) * w;
 
         /******** -J.T * b的size为[J.cols() x 1]**************
             * | A.T  C.T  E.T |       | A.T*b1 + C.T*b2 + E.T*b3|
             * | B.T  D.T  F.T | * b = | B.T*b1 + D.T*b2 + F.T*b3|
             *
         *****************************************************/
-        g.middleRows(aj, A.cols()) -= A.transpose() * r * w;
-
-        if (!onlyPoseUpdate_) {
-            Eigen::MatrixXd B = J_px2_Pc2 * J_Pc2_Pw1 * J_Pw1_Pc1 * J_Pc1_z1;
-            /******** 利用分块及稀疏矩阵性质直接计算H矩阵 ********
-                * 否则，H=J.T * J由于没有利用到稀疏性，计算量将异常大
-                * | A.T, C.T, E.T |   | A, B|
-                * | B.T, D.T, F.T | * | C, D|
-                *                     | E, F| = 
-                * | A.T*A + C.T*C + E.T*E,  A.T*B + C.T*D + E.T*F |
-                * | B.T*A + D.T*C + F.T*E,  B.T*B + D.T*D + F.T*F |
-                * | J矩阵第1列相关项和， J矩阵第1列转置与第2列相关项和 |
-                * | J矩阵第2列转置与第1列相关项和， J矩阵第2列相关项和 |
-                * 观察D、E矩阵块的变化规律，可以写出如下的等式
-            **************************************************/
-            // TODO:添加胡伯核关于chi2的一阶导数
-            H.block(aj, bj, A.cols(), B.cols()) += A.transpose() * B * w;
-            H.block(bj, aj, B.cols(), A.cols()) += B.transpose() * A * w;
-            H.block(bj, bj, B.cols(), B.cols()) += B.transpose() * B * w;
-            g.middleRows(bj, B.cols()) -= B.transpose() * r * w;
-        }
+        g.middleRows(aj, 6) -= A.transpose() * r * w;
     }
 }
 
@@ -1479,12 +1436,16 @@ bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
 void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     // 构建H, g
     // 给出每个KF对应的在H矩阵中的位置
-    map<const KeyFrame*, int> kfMapCol;
-    map<const KeyFrame*, int> debugKFMapResidualNum;
+    unordered_map<const KeyFrame*, int> kfMapCol;
+    unordered_map<const KeyFrame*, int> debugKFMapResidualNum;
+    unordered_map<const KeyFrame*, Eigen::Matrix3d> Rcw;
+    unordered_map<const KeyFrame*, Eigen::Matrix3d> Rwc;
     for (size_t i = 0; i < window_.size(); ++i) {
         kfMapCol.insert({window_[i], i * 6});
         debugKFMapResidualNum.insert(
             {window_[i], 0});  // 统计每个图像对应的residual数量
+        Rcw.insert({window_[i], window_[i]->Tcw_.q_wb_.toRotationMatrix()});
+        Rwc.insert({window_[i], window_[i]->Twc_.q_wb_.toRotationMatrix()});
     }
     const int poseDim = window_[0]->Twc_.Size();
     const int depthDim = 1;
@@ -1516,6 +1477,26 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     const int resDim = 2;
     int resNum = 0;  // 显示当前计算到雅可比的第几行
     int usefulLandmarkNum = 0;
+    // res w.r.t (u2, v2) [2x2]的单位矩阵
+    // px2 w.r.t Pc2 [2x3]
+    Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm = cam_->K_[0].block(0, 0, 2, 3);
+    J_px2_Pc2Norm(0, 2) = 0.;
+    J_px2_Pc2Norm(1, 2) = 0.;
+
+    // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
+    Eigen::Matrix<double, 3, 6> J_Pc2_Twc2;  // ---> optimization variable
+    Eigen::Matrix<double, 3, 6> J_Pw_Twc1;   // ---> optimization variable
+    // Pw w.r.t Pwc1
+    J_Pw_Twc1.block<3, 3>(0, 3) = Eigen::Matrix3d::Identity();
+    // Pc1 w.r.t z
+    Eigen::Vector3d J_Pc1_z(0, 0, 0);  // --------> optimization variable
+
+    // Residual w.r.t optimization variables Jacobian
+    Eigen::Matrix<double, 2, 6> A1, A2;
+    Eigen::Matrix<double, 6, 2> A1t, A2t;
+    Eigen::Matrix<double, 2, 1> B;
+    Eigen::Matrix<double, 1, 2> Bt;
+
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
         if (p->NoUsed()) {
@@ -1527,15 +1508,9 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
 
-        // res w.r.t (u2, v2) [2x2]的单位矩阵
-        // px2 w.r.t Pc2 [2x3]
-        Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm =
-            p->cam_->K_[0].block(0, 0, 2, 3);
-        J_px2_Pc2Norm(0, 2) = 0.;
-        J_px2_Pc2Norm(1, 2) = 0.;
-
         // 最新关键帧没有反向追踪能力
         bool addConstraint = false;
+        const Eigen::Vector3d pc1Norm(p->GetPcNorm());
 
         for (const auto& kf2obv : p->target_) {
             // 需要注意每个关键帧、每个landmark在H矩阵中的位置
@@ -1580,66 +1555,50 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             J_Pc2Norm_Pc2 << d, 0, -pc2.x() * d2, 0, d, -pc2.y() * d2, 0, 0, 0;
             const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
                 J_px2_Pc2Norm * J_Pc2Norm_Pc2;
-            const Eigen::Matrix<double, 2, 3>& J_res_Pc2 = J_px2_Pc2 * rho[1];
+            const Eigen::Matrix<double, 2, 3> J_res_Pc2 = J_px2_Pc2 * rho[1];
 
-            // Pc2 w.r.t Twc2 : Pc2 = Twc2.inv * Pw
-            Eigen::Matrix<double, 3, 6>
-                J_Pc2_Twc2;  // ------------------------> optimization variable
             const Eigen::Vector3d dt = pw - target->Twc_.t_wb_;
             // Pc2 w.r.t Rwc2
-            J_Pc2_Twc2.block(0, 0, 3, 3) =
-                SkewSymmetric(target->Tcw_.q_wb_ * dt);  // Twc_.q_wb_.inverse()
+            J_Pc2_Twc2.block<3, 3>(0, 0) =
+                SkewSymmetric(target->Tcw_.q_wb_ * dt);
             // Pc2 w.r.t Pwc2
-            J_Pc2_Twc2.block(0, 3, 3, 3) =
-                -target->Tcw_.q_wb_
-                     .toRotationMatrix();  // Twc.q_wb.R.transpose()
+            J_Pc2_Twc2.block<3, 3>(0, 3) = -Rcw[target];
 
             // Pc2 w.r.t Pw
-            // TODO: 这里也应该要使用首次的Tcw值吧！！！由于target有多帧，所以要保留多个
-            const Eigen::Matrix3d J_Pc2_Pw =
-                target->Tcw_.q_wb_.toRotationMatrix();
+            const Eigen::Matrix3d& J_Pc2_Pw = Rcw[target];
 
             // Pw w.r.t Twc1 : Pw = Twc1 * Pc1 = Rwc1 * pc1 + Pwc1
-            Eigen::Matrix<double, 3, 6>
-                J_Pw_Twc1;  // ------------------------> optimization variable
             // Pw w.r.t Rwc1
-            J_Pw_Twc1.block(0, 0, 3, 3) =
-                -host->Twc_.q_wb_.toRotationMatrix() * SkewSymmetric(pc1);
-            // Pw w.r.t Pwc1
-            J_Pw_Twc1.block(0, 3, 3, 3) = Eigen::Matrix3d::Identity();
+            J_Pw_Twc1.block<3, 3>(0, 0).noalias() =
+                -Rwc[host] * SkewSymmetric(pc1);
 
             // Pw w.r.t Pc1
-            const Eigen::Matrix3d J_Pw_Pc1 =
-                host->Twc_.q_wb_.toRotationMatrix();
+            const Eigen::Matrix3d& J_Pw_Pc1 = Rwc[host];
 
             // Pc1 w.r.t z
-            const Eigen::Vector3d pc1Norm(p->GetPcNorm());
-            Eigen::Vector3d J_Pc1_z{pc1Norm.x(), pc1Norm.y(),
-                                    1};  // --------> optimization variable
-                                         // 使用逆深度表示
+            // 使用逆深度表示
             const double d1 = pow(p->invZ_, 2);
             J_Pc1_z << -pc1Norm.x() / d1, -pc1Norm.y() / d1, -1 / d1;
 
             const Eigen::Matrix<double, 3, 1> J_Pw_z = J_Pw_Pc1 * J_Pc1_z;
 
-            // 不考虑使用首次雅可比
-
             // Residual w.r.t optimization variables Jacobian
-            Eigen::Matrix<double, 2, 6> A1 =
-                J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;  // J_res_Pw * J_Pw_Twc1;
-            if ((host == window_[0] || host == window_[1]) && !margKFstatus_) {
-                // fixed滑动窗口第一帧，不在这里执行，而是添加大的lambda或使用先验约束其变化量
-                A1.setZero();
+            if (!margKFstatus_) {
+                if (host == window_[0] || host == window_[1]) {
+                    // fixed滑动窗口第一帧
+                    A1.setZero();
+                } else {
+                    A1.noalias() = J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;
+                }
+
+                if (target == window_[1] || target == window_[0]) {
+                    A2.setZero();
+                } else {
+                    A2.noalias() = J_res_Pc2 * J_Pc2_Twc2;
+                }
             }
-            Eigen::Matrix<double, 2, 6> A2 =
-                J_res_Pc2 * J_Pc2_Twc2;  // J_res_Pc2 * J_Pc2_Twc2;
-            if ((target == window_[1] || target == window_[0]) &&
-                !margKFstatus_) {
-                A2.setZero();
-            }
-            const Eigen::Matrix<double, 2, 1> B =
-                J_res_Pc2 * J_Pc2_Pw *
-                J_Pw_z;  // J_res_Pw * J_Pw_Pc1 * J_Pc1_z;
+
+            B.noalias() = J_res_Pc2 * J_Pc2_Pw * J_Pw_z;
 
             const double w = 1.0;  // /p->depthCov_;
             const int a1i = resNum, a1j = kfMapCol[host], a2i = resNum,
@@ -1656,17 +1615,20 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             * | B'*A1,  B'*A2,   B'*B |
             *******************************************************************/
             // clang-format on
-            H_.block(a1j, a1j, poseDim, poseDim) += A1.transpose() * A1 * w;
-            H_.block(a1j, a2j, poseDim, poseDim) += A1.transpose() * A2 * w;
-            H_.block(a1j, bj, poseDim, depthDim) += A1.transpose() * B * w;
+            A1t = A1.transpose();
+            H_.block<6, 6>(a1j, a1j) += (A1.transpose() * A1) * w;
+            H_.block<6, 6>(a1j, a2j) += A1t * A2 * w;
+            H_.block<6, 1>(a1j, bj) += A1t * B * w;
 
-            H_.block(a2j, a1j, poseDim, poseDim) += A2.transpose() * A1 * w;
-            H_.block(a2j, a2j, poseDim, poseDim) += A2.transpose() * A2 * w;
-            H_.block(a2j, bj, poseDim, depthDim) += A2.transpose() * B * w;
+            A2t = A2.transpose();
+            H_.block<6, 6>(a2j, a1j) += A2t * A1 * w;
+            H_.block<6, 6>(a2j, a2j) += (A2.transpose() * A2) * w;
+            H_.block<6, 1>(a2j, bj) += A2t * B * w;
 
-            H_.block(bj, a1j, depthDim, poseDim) += B.transpose() * A1 * w;
-            H_.block(bj, a2j, depthDim, poseDim) += B.transpose() * A2 * w;
-            H_.block(bj, bj, depthDim, depthDim) += B.transpose() * B * w;
+            Bt = B.transpose();
+            H_.block<1, 6>(bj, a1j) += Bt * A1 * w;
+            H_.block<1, 6>(bj, a2j) += Bt * A2 * w;
+            H_.block<1, 1>(bj, bj) += (B.transpose() * B) * w;
             // clang-format off
             /********************* 利用稀疏性计算g=-J'*b ****************************
             * | A1'|       | A1' * b |
@@ -1674,9 +1636,9 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             * | B' |       | B'  * b |
             **********************************************************************/
             // clang-format on
-            g_.middleRows(a1j, poseDim) -= A1.transpose() * r * w;
-            g_.middleRows(a2j, poseDim) -= A2.transpose() * r * w;
-            g_.middleRows(bj, depthDim) -= B.transpose() * r * w;
+            g_.middleRows(a1j, poseDim) -= A1t * r * w;
+            g_.middleRows(a2j, poseDim) -= A2t * r * w;
+            g_.middleRows(bj, depthDim) -= Bt * r * w;
 
             addConstraint = true;
         }
