@@ -91,6 +91,9 @@ int main(int argc, char** argv) {
     vector<KeyFrame*>& win = optimizer.window_;
     stack<KeyFrame>
         unmappedFrame;  // 由于当前把每一帧都用来更新深度，所以不需要像lsd slam那样保留一些帧
+
+    const chrono::steady_clock::time_point& tStart =
+        chrono::steady_clock::now();
     for (size_t i = firstImgIdx; i < vTimeStamps.size(); ++i) {
         Mat img;
         Pose Twc;
@@ -271,7 +274,7 @@ int main(int argc, char** argv) {
             cout << "Add new keyframe id: " << curF.id_ << "\n";
             interaction->visualLastKF = *win.back();
 
-        } else {
+        } else if (viewerThread != nullptr) {
             // delete curF; // 释放非KF内存
             usleep(10 * 1000);
         }
@@ -291,6 +294,15 @@ int main(int argc, char** argv) {
             usleep(100 * 1000);
         }
     }
+
+    const chrono::steady_clock::time_point& tEnd = chrono::steady_clock::now();
+    cout << fmt::format(
+        "process {} images of sequence {}, total spend:{:.3f}s, sequence "
+        "record duration: {:.3f}s\n",
+        vTimeStamps.size() - firstImgIdx,
+        config->dataDir.substr(config->dataDir.find_last_of('/') + 1),
+        ChronoMillisecTimeDuration(tStart, tEnd) * 1e-3,
+        vTimeStamps.back() - vTimeStamps[firstImgIdx]);
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     if (KeyFrame::debugVideoWriter.isOpened()) {
