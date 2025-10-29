@@ -98,6 +98,8 @@ inline bool InRange(const cv::Mat& img, const Eigen::Vector2i& p) {
 
 Eigen::Matrix3d SkewSymmetric(const Eigen::Vector3d& v);
 
+Eigen::Vector3d SkewSymmetric2Vector(const Eigen::Matrix3d m);
+
 template <typename T>
 double BilinearInterpolate(const cv::Mat& img, const Eigen::Vector2d& p) {
     if (!InRange(img, p.cast<int>())) {
@@ -361,6 +363,7 @@ class InteractionParam {
     bool resetWindow = false;
     cv::viz::Viz3d* window;  // ("Local Map Viewer");
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
+    std::mutex mutPoints;
     std::set<Landmark*> activePoints;
     std::set<Landmark*> localPoints;
     std::vector<Eigen::Vector3d> allMapPoints;

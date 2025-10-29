@@ -9,7 +9,9 @@ Pose::Pose(const Pose& T) {
 }
 
 Pose::Pose(const Eigen::Quaterniond& q_wb, const Eigen::Vector3d& t_wb)
-    : q_wb_(q_wb), t_wb_(t_wb) {}
+    : q_wb_(q_wb), t_wb_(t_wb) {
+    q_wb_.normalize();
+}
 
 Pose Pose::Inverse() const {
     Eigen::Quaterniond q_bw = q_wb_.inverse();

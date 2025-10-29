@@ -59,6 +59,10 @@ Eigen::Matrix3d SkewSymmetric(const Eigen::Vector3d& v) {
     return m;
 }
 
+Eigen::Vector3d SkewSymmetric2Vector(const Eigen::Matrix3d m) {
+    return Eigen::Vector3d(m(2, 1), m(0, 2), m(1, 0));
+}
+
 void Assert(bool a, const string& s) {
     if (!a) {
         cerr << s << endl;
@@ -1481,10 +1485,17 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     vector<Point3d> localPoints;
     vector<cv::Vec3b> localColors;
-    localPoints.reserve(interaction->localPoints.size());
+    std::set<Landmark*> sactivePoints;
+    std::set<Landmark*> slocalPoints;
+    {
+        lock_guard<std::mutex> lockPointCloud(interaction->mutPoints);
+        sactivePoints = interaction->activePoints;
+        slocalPoints = interaction->localPoints;
+    }
+    localPoints.reserve(slocalPoints.size());
     localColors.reserve(localPoints.size());
     cv::Vec3b color1{0, 255, 0};
-    GenerateCloud(interaction->localPoints, color1, localPoints, localColors);
+    GenerateCloud(slocalPoints, color1, localPoints, localColors);
     if (!localPoints.empty()) {
         viz::WCloud localCloud(localPoints, localColors);
         if (localColors.empty()) {
@@ -1500,7 +1511,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     activeColors.reserve(localPoints.size());
     vector<cv::Vec3b> colors1;
     cv::Vec3b color2{0, 0, 255};
-    GenerateCloud(interaction->activePoints, color2, activePoints,
+    GenerateCloud(sactivePoints, color2, activePoints,
                   activeColors);
     if (!activePoints.empty()) {
         viz::WCloud activeCloud(activePoints, activeColors);

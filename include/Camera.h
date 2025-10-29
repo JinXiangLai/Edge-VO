@@ -19,7 +19,7 @@ class Camera {
     Eigen::Vector3d InverseProject(const Eigen::Matrix<T, 2, 1>& uv,
                                    const double& z = 1.0,
                                    const int level = 0) const {
-        if(Kinv_.empty()) {
+        if (Kinv_.empty()) {
             std::cout << "cam Kinv_ is empty!" << std::endl;
         }
         Eigen::Vector3d p(static_cast<double>(uv[0]),
@@ -29,6 +29,10 @@ class Camera {
         // cout << "K.inv * p: " << p.transpose() << endl;
         return p * z;
     }
+
+    Eigen::Vector3d InverseProject(const Eigen::Vector2d& uv,
+                                   const double& z = 1.0) const;
+
     std::vector<Eigen::Vector2i> UndistortPoints(
         std::vector<Eigen::Vector2i> px, const int level = 0) const;
     bool InImagePlaneRange(const Eigen::Vector2d& p, const int level = 0) const;

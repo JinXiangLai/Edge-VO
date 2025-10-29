@@ -1019,11 +1019,13 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     // 此时还未添加最新关键帧，并且最老关键帧已经选出来，且移到第0位
     const int startKFid = margKFid < 0 ? 0 : 1;
     optLandmark_.clear();
+    const int minObvNum = window_.size() > 2 ? kMinUsefulObvNumWithHost : 2;
+
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
             if (!p->initialized_ || p->IsOutOfRange() || p->CanBeDelete() ||
-                p->target_.size() < kMinUsefulObvNumWithHost) {
+                static_cast<int>(p->target_.size()) < minObvNum) {
                 continue;
             }
             p->ResetFEJ();
@@ -1105,6 +1107,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
     ResidualInfo info;
 
     const double maxChi2 = config->maxProjectError * config->maxProjectError;
+    int totalSelectConstraintNum = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark*& p = optLandmark_[i];
         if (p->NoUsed()) {
@@ -1156,6 +1159,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
                 HuberLoss(chi2, rho);
                 tempInfo.cost += rho[0];
                 ++tempInfo.totalConstraintNum;
+                ++totalSelectConstraintNum;
             }
         }
 
@@ -1163,8 +1167,10 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
         // 边缘化时，由于会移除边缘化帧，因此其观测不可计入
         const int excludeNum =
             (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
+        const int usefulConstraintNum =
+            window_.size() == 2 ? 1 : (kMinUsefulObvNum + excludeNum);
         if (!p->NoUsed() &&
-            tempInfo.totalConstraintNum >= (kMinUsefulObvNum + excludeNum)) {
+            tempInfo.totalConstraintNum >= usefulConstraintNum) {
             info.cost += tempInfo.cost;
             info.totalConstraintNum += tempInfo.totalConstraintNum;
             ++info.usefulLandmarkNum;
@@ -1174,11 +1180,12 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
     }
 
     cout << fmt::format(
-        "window BA: set opt variable residual info.all.cost: {:.1f}, useful "
+        "window BA: totalSelectConstraintNum: {}, set opt variable residual "
+        "info.all.cost: {:.1f}, useful "
         "landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}\n",
-        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
-        info.meanCost);
+        totalSelectConstraintNum, info.cost, info.usefulLandmarkNum,
+        info.totalConstraintNum, info.meanCost);
 
     if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         cout << fmt::format("Error window cost value: {}, landmark num: {}\n",
@@ -1725,7 +1732,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     const int sampleNum = SampleUsefulLandmark(margKFid);
     // 在滑窗优化前就把最新KF添加到滑窗之中
     window_.emplace_back(curKF);
-    if (window_.size() < 3) {
+    if (window_.size() < 2) {
         return false;
     }
     cout << fmt::format(
@@ -2232,35 +2239,40 @@ void Optimizer::ShowLocalMap() {
         vTwc.push_back(kf->Twc_);
     }
 
-    set<Landmark*>& aPoints = interaction->activePoints;
-    set<Landmark*>& lPoints = interaction->localPoints;
-    aPoints.clear();
-    lPoints.clear();
+    set<Landmark*>*aPoints, *lPoints;
     {
-        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
-        KeyFrame::kfOn3Dshow.clear();
-        for (Landmark* p : optLandmark_) {
-            if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
-                p->ManySupport() && p->Converge()) {
-                aPoints.insert(p);
-            }
-        }
+        std::lock_guard<std::mutex> lockPoints(interaction->mutPoints);
+        aPoints = &interaction->activePoints;
+        lPoints = &interaction->localPoints;
+        aPoints->clear();
+        lPoints->clear();
 
-        for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
-            // for(int i = window_.size()-1; i < window_.size(); ++i) {
-            KeyFrame* kf = window_[i];
-            for (Landmark* p : kf->landmark_) {
-                if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
-                    !p->CanBeDelete() && p->initialized_) {
-                    lPoints.insert(p);
+        {
+            lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+            KeyFrame::kfOn3Dshow.clear();
+            for (Landmark* p : optLandmark_) {
+                if (p != nullptr && !aPoints->count(p) && !p->IsOutOfRange() &&
+                    p->ManySupport() && p->Converge()) {
+                    aPoints->insert(p);
                 }
             }
 
-            KeyFrame::kfOn3Dshow.insert(kf);
+            for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
+                // for(int i = window_.size()-1; i < window_.size(); ++i) {
+                KeyFrame* kf = window_[i];
+                for (Landmark* p : kf->landmark_) {
+                    if (p != nullptr && !aPoints->count(p) &&
+                        !lPoints->count(p) && !p->CanBeDelete() &&
+                        p->initialized_) {
+                        lPoints->insert(p);
+                    }
+                }
+
+                KeyFrame::kfOn3Dshow.insert(kf);
+            }
         }
     }
-
-    if (!aPoints.empty() || !lPoints.empty()) {
+    if (!aPoints->empty() || !lPoints->empty()) {
         ::ShowLocalMap(vTwc);
         // cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
     } else {
