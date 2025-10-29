@@ -19,7 +19,6 @@ using namespace cv;
 
 constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
 constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
-constexpr double kFirstFrameFixedCoffee = 1e20;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
@@ -1024,7 +1023,7 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
             if (!p->initialized_ || p->IsOutOfRange() || p->CanBeDelete() ||
-                p->target_.size() < 3) {
+                p->target_.size() < kMinUsefulObvNumWithHost) {
                 continue;
             }
             p->ResetFEJ();
@@ -1461,6 +1460,10 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         cout << "opt variable dim: " << variableDim << endl;
     }
 
+    const bool canFixSecondKF =
+        window_.size() >
+        static_cast<size_t>(config->maxKFnumInWindow / 2.0 + 0.5);
+
     H_.resize(variableDim, variableDim);
     H_.setZero();
     g_.resize(variableDim);
@@ -1591,7 +1594,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
                     A1.noalias() = J_res_Pc2 * J_Pc2_Pw * J_Pw_Twc1;
                 }
 
-                if (target == window_[1] || target == window_[0]) {
+                if (canFixSecondKF && target == window_[1]) {
                     A2.setZero();
                 } else {
                     A2.noalias() = J_res_Pc2 * J_Pc2_Twc2;

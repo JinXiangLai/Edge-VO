@@ -561,7 +561,7 @@ void FindImageAndPose(const int idx, const vector<string>& vstrImages,
     auto InterpolatePose = [&vPriorPose, &calib](const double& t) -> Pose {
         if (t < vPriorPose.front()[0] || t > vPriorPose.back()[0]) {
             cerr << "Can't find match pose!!!" << endl;
-            exit(-1);
+            // exit(-1);
         }
         Eigen::Matrix<double, 8, 1> Twv1, Twv2;
         for (int i = 1; i < vPriorPose.size(); ++i) {
@@ -619,7 +619,7 @@ void GetImageAndPose(const int idx, const vector<string>& vstrImages,
     auto InterpolatePose = [&vPriorPose, &calib](const double& t) -> Pose {
         if (t < vPriorPose.front()[0] || t > vPriorPose.back()[0]) {
             cerr << "Can't find match pose!!!" << endl;
-            exit(-1);
+            // exit(-1);
         }
         Eigen::Matrix<double, 8, 1> Twv1, Twv2;
         for (int i = 1; i < vPriorPose.size(); ++i) {
