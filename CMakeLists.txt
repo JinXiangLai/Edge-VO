@@ -50,6 +50,7 @@ add_library(edge_slam SHARED
     src/Landmark.cpp
     src/KeyFrame.cpp
     src/Optimizer.cpp
+    src/Initializer.cpp
 )
 target_link_libraries(edge_slam
     ${OpenCV_LIBS}

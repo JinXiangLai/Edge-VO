@@ -2295,6 +2295,7 @@ void Optimizer::ShowLocalMap() {
         ::ShowLocalMap(vTwc);
         // cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
     } else {
-        //cerr << "wait for local map..." << endl;
+        cerr << "wait for local map..." << endl;
+        usleep(100 * 1e3);
     }
 }
