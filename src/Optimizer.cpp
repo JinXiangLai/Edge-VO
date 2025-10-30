@@ -19,6 +19,8 @@ using namespace cv;
 
 constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
 constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
+constexpr double kMaxSetError = 1e12;
+constexpr double kMaxErrorRatio = 0.95;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
@@ -103,61 +105,70 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     string debugInfo("chi2 residuals: ");
     constexpr int kStepInfoOut = 300000;
 
+    // 计算最大相对残差
+    const Camera& cam = *cam_;
+    const Pose Tc2w = Twc2.Inverse();
+    vector<double> errorVec(lk1s.size(), 0);
+    for (size_t i = 0; i < lk1s.size(); ++i) {
+        const Eigen::Vector3d pc = Tc2w * lk1s[i]->GetPw();
+        const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
+        const bool inRange = InRange(img, px.cast<int>());
+        if (inRange && pc.z() > kMinSceneDepthInCamera) {
+            errorVec[i] = (px - obvs[i]).squaredNorm();
+        } else {
+            errorVec[i] = kMaxSetError;
+        }
+    }
+    vector<double> errorCopy = errorVec;
+    sort(errorVec.begin(), errorVec.end());
+    int usefulIdx = errorVec.size() - 1;
+    while (errorVec[usefulIdx] == kMaxSetError) {
+        --usefulIdx;
+    }
+    const double maxChi2 =
+        max(config->maxProjectError * config->maxProjectError,
+            errorVec[static_cast<int>(kMaxErrorRatio * usefulIdx)]);
+    cout << fmt::format(
+        "frame BA error range: [{:.1f}, {:.1f}], usefulIdx: {}, maxChi2: "
+        "{:.1f}, "
+        "errorVec.size: {}\n",
+        errorVec.front(), errorVec.back(), usefulIdx, maxChi2, errorVec.size());
     // 根据观测数分，>1, >2, >3
     vector<vector<pair<int, double>>> resampleStableLkIndex2Chi2(3);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-
     for (auto& vec : resampleStableLkIndex2Chi2) {
         vec.reserve(lk1s.size());
     }
 
-    const Camera& cam = *cam_;
-    const Pose Tc2w = Twc2.Inverse();
-    const double maxChi2 = config->maxProjectError * config->maxProjectError;
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark* lk1 = lk1s[j];
-        if (lk1->NoUsed()) {
+        const double& chi2 = errorCopy[j];
+        if (chi2 > maxChi2) {
+            lk1->SetNoUsed();
             continue;
         }
 
-        const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
-        const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
-        const bool inRange = InRange(img, px.cast<int>());
-        if (inRange && pc.z() > kMinSceneDepthInCamera) {
-            // 必须与计算Jacobian的残差计算方式一致
-            // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
-            // 而胡伯核函数的自变量是r^2
-            double chi2 = (px - obvs[j]).squaredNorm();
-            if (chi2 > maxChi2) {
-                lk1->SetNoUsed();
-                continue;
-            }
+        Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
+        HuberLoss(chi2, rho);
+        if (j % kStepInfoOut == 0) {
+            debugInfo.append(fmt::format(
+                "curF set opt landmark chi2: {:.1f}-rho[0]: {:.1f}-kf id: "
+                "{}-kp1:({:.0f}, "
+                "{:.0f}); ",
+                chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+        }
 
-            Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
-            HuberLoss(chi2, rho);
-            if (j % kStepInfoOut == 0) {
-                debugInfo.append(fmt::format(
-                    "curF set opt landmark chi2: {:.1f}-rho[0]: {:.1f}-kf id: "
-                    "{}-kp1:({:.0f}, "
-                    "{:.0f}); ",
-                    chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
-            }
-
-            const int id = lk1->target_.size();
-            switch (id) {
-                case 2:
-                    resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
-                    break;
-                case 3:
-                    resampleStableLkIndex2Chi2[1].emplace_back(j, rho[0]);
-                    break;
-                default:
-                    resampleStableLkIndex2Chi2[2].emplace_back(j, rho[0]);
-                    break;
-            }
-
-        } else {
-            lk1->SetNoUsed();
+        const int id = lk1->target_.size();
+        switch (id) {
+            case 2:
+                resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
+                break;
+            case 3:
+                resampleStableLkIndex2Chi2[1].emplace_back(j, rho[0]);
+                break;
+            default:
+                resampleStableLkIndex2Chi2[2].emplace_back(j, rho[0]);
+                break;
         }
     }
 
@@ -190,12 +201,13 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
 
     cout << fmt::format(
-        "curF BA: set opt tracking variable residual info.all.cost: {:.1f}, "
+        "curF BA: maxChi2: {:.1f}, set opt tracking variable residual "
+        "info.all.cost: {:.1f}, "
         "useful landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}, spend time: "
         "{:.3f}ms\ndebug "
         "residual info: {}\n",
-        info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
+        maxChi2, info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
         info.meanCost, spendTime, debugInfo);
     if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         info.cost = DBL_MAX;
@@ -1104,31 +1116,21 @@ void Optimizer::DebugOptlandmarkStatus(const size_t num,
 
 Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
     KeyFrame* const margKF) {
-    ResidualInfo info;
 
-    const double maxChi2 = config->maxProjectError * config->maxProjectError;
+    vector<double> sumErrorVec(optLandmark_.size(), 0.);
+    vector<int> sumConstraintNum(optLandmark_.size(), 0);
     int totalSelectConstraintNum = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark*& p = optLandmark_[i];
-        if (p->NoUsed()) {
-            continue;
-        }
-
-        if (!p->CanBeUseForOptimization()) {
-            p->SetNoUsed();
-            continue;
-        }
-
         KeyFrame* host = p->host_;
         if (host->id_ == window_.back()->id_) {
-            p->SetNoUsed();
+            sumErrorVec[i] += kMaxSetError;
             continue;
         }
 
         ResidualInfo tempInfo;
         const Eigen::Vector3d pc1 = p->GetPc();
         const Eigen::Vector3d pw = host->Twc_ * pc1;
-
         for (const auto& kf2obv : p->target_) {
             const KeyFrame* target = kf2obv.first;
             // 这里如果还未被标记为noUsed_，那么会多计算几个残差，
@@ -1139,44 +1141,60 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
 
             const Eigen::Vector3d pc2 = target->Tcw_ * pw;
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
-
             const bool inRange = InRange(target->grayImg_, px2.cast<int>());
             if (!inRange || pc2.z() < kMinSceneDepthInCamera) {
-                // 需要认识到的是，未更新前的{poses, landmarks}一定是可以投影成功的！！！
-                // 所以理论上，这一步只会被更新后的{poses, landmarks}执行
-                p->SetNoUsed();
+                sumErrorVec[i] += kMaxSetError;
                 break;
-            } else {
-                Eigen::Vector2d r = px2 - kf2obv.second;
-                double chi2 = r.squaredNorm();
-                if (chi2 > maxChi2) {
-                    // 必须移除残差异常的项
-                    p->SetNoUsed();
-                    break;
-                }
-
-                Eigen::Vector2d rho;
-                HuberLoss(chi2, rho);
-                tempInfo.cost += rho[0];
-                ++tempInfo.totalConstraintNum;
-                ++totalSelectConstraintNum;
             }
+
+            Eigen::Vector2d r = px2 - kf2obv.second;
+            tempInfo.cost = max(tempInfo.cost, r.squaredNorm());
+            ++tempInfo.totalConstraintNum;
+            ++totalSelectConstraintNum;
         }
 
-        // 只有未被其余观测标记异常的地图点才可参与残差构建
-        // 边缘化时，由于会移除边缘化帧，因此其观测不可计入
         const int excludeNum =
             (margKF != nullptr && p->target_.count(margKF)) ? 1 : 0;
         const int usefulConstraintNum =
             window_.size() == 2 ? 1 : (kMinUsefulObvNum + excludeNum);
-        if (!p->NoUsed() &&
-            tempInfo.totalConstraintNum >= usefulConstraintNum) {
-            info.cost += tempInfo.cost;
-            info.totalConstraintNum += tempInfo.totalConstraintNum;
-            ++info.usefulLandmarkNum;
+        if (tempInfo.totalConstraintNum >= usefulConstraintNum) {
+            sumErrorVec[i] += tempInfo.cost;
+            sumConstraintNum[i] += tempInfo.totalConstraintNum;
         } else {
-            p->SetNoUsed();
+            sumErrorVec[i] += kMaxSetError;
         }
+    }
+
+    vector<double> errorCopy = sumErrorVec;
+    sort(sumErrorVec.begin(), sumErrorVec.end());
+
+    int usefulIdx = sumErrorVec.size() - 1;
+    while (usefulIdx >= 0 && sumErrorVec[usefulIdx] >= kMaxSetError) {
+        --usefulIdx;
+    }
+    const double maxChi2 =
+        max(config->maxProjectError * config->maxProjectError,
+            sumErrorVec[static_cast<int>(kMaxErrorRatio * usefulIdx)]);
+    cout << fmt::format(
+        "win BA error range: [{:.1f}, {:.1f}], usefulIdx: {}, maxChi2: {:.1f}, "
+        "sumErrorVec.size: {}\n",
+        sumErrorVec.front(), sumErrorVec.back(), usefulIdx, maxChi2,
+        sumErrorVec.size());
+
+    ResidualInfo info;
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        Landmark*& p = optLandmark_[i];
+        if (errorCopy[i] > maxChi2) {
+            p->SetNoUsed();
+            continue;
+        }
+
+        const double& chi2 = errorCopy[i];
+        Eigen::Vector2d rho;
+        HuberLoss(chi2, rho);
+        info.cost += errorCopy[i];
+        info.totalConstraintNum += sumConstraintNum[i];
+        ++info.usefulLandmarkNum;
     }
 
     cout << fmt::format(
@@ -1464,7 +1482,8 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         variableDim += lk->NoUsed() ? 0 : lk->Size();
     }
     if (logOut) {
-        cout << "opt variable dim: " << variableDim << endl;
+        cout << fmt::format("window_.size: {}, opt variable dim: {}\n",
+                            window_.size(), variableDim);
     }
 
     const bool canFixSecondKF =
