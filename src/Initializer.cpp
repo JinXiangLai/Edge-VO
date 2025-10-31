@@ -55,7 +55,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .norm();
     Pose result;
     // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
         const Pose Tdiff = result * curF.Tcw_;
@@ -272,7 +273,7 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
 }
 
 bool Initializer::ConstructAndDecomposeEssentialMatrixOpenCV(
-    std::vector<Eigen::Vector4d>& uv2obv, Pose& result) {
+    vector<Eigen::Vector4d>& uv2obv, Pose& result) {
     random_device rd;
     default_random_engine rng(rd());
     shuffle(uv2obv.begin(), uv2obv.end(), rng);
@@ -362,6 +363,213 @@ bool Initializer::CheckInitPose(const int selectNum, const Pose& T12,
     return false;
 }
 
+// 计算 Hartley 归一化变换 T，使点集中心在原点、平均距离为 sqrt(2)
+Eigen::Matrix3d Initializer::ComputeNormalizationTransform(
+    const vector<Eigen::Vector2d>& pts) {
+
+    // return Eigen::Matrix3d::Identity(); // 验证不使用归一化时的效果
+
+    const int N = static_cast<int>(pts.size());
+    double cx = 0.0, cy = 0.0;
+    for (const auto& p : pts) {
+        cx += p.x();
+        cy += p.y();
+    }
+    cx /= N;
+    cy /= N;
+
+    double meanDist = 0.0;
+    for (const auto& p : pts) {
+        double dx = p.x() - cx;
+        double dy = p.y() - cy;
+        meanDist += sqrt(dx * dx + dy * dy);
+    }
+    meanDist = (N > 0) ? meanDist / N : 1.0;
+
+    double s = (meanDist > 1e-12) ? sqrt(2.0) / meanDist : 1.0;
+
+    Eigen::Matrix3d T = Eigen::Matrix3d::Identity();
+    T(0, 0) = s;
+    T(1, 1) = s;
+    T(0, 2) = -s * cx;
+    T(1, 2) = -s * cy;
+    return T;
+}
+
+// 应用 3x3 变换到 2D 点
+vector<Eigen::Vector2d> Initializer::ApplyTransform(
+    const vector<Eigen::Vector2d>& pts, const Eigen::Matrix3d& T) {
+    vector<Eigen::Vector2d> out;
+    out.reserve(pts.size());
+    for (const auto& p : pts) {
+        Eigen::Vector3d ph(p.x(), p.y(), 1.0);
+        Eigen::Vector3d pn = T * ph;
+        out.push_back({pn(0) / pn(2), pn(1) / pn(2)});
+    }
+    return out;
+}
+
+// 构造 A（N x 9），满足 x2^T E x1 = 0
+Eigen::MatrixXd Initializer::BuildDesignMatrix(
+    const vector<Eigen::Vector2d>& pts1, const vector<Eigen::Vector2d>& pts2) {
+    const int N = static_cast<int>(pts1.size());
+    Eigen::MatrixXd A(N, 9);
+    for (int i = 0; i < N; ++i) {
+        double u1 = pts1[i].x(), v1 = pts1[i].y();
+        double u2 = pts2[i].x(), v2 = pts2[i].y();
+        A(i, 0) = u2 * u1;
+        A(i, 1) = u2 * v1;
+        A(i, 2) = u2;
+        A(i, 3) = v2 * u1;
+        A(i, 4) = v2 * v1;
+        A(i, 5) = v2;
+        A(i, 6) = u1;
+        A(i, 7) = v1;
+        A(i, 8) = 1.0;
+    }
+    return A;
+}
+
+// 将 9 维向量重组为 3x3 矩阵（按行）
+Eigen::Matrix3d Initializer::Vec9ToMat3(const Eigen::VectorXd& v) {
+    Eigen::Matrix3d E;
+    E << v(0), v(1), v(2), v(3), v(4), v(5), v(6), v(7), v(8);
+    return E;
+}
+
+// 对 E 施加本质矩阵约束：两个相等非零奇异值，第三个为 0
+Eigen::Matrix3d Initializer::EnforceEssentialConstraint(
+    const Eigen::Matrix3d& E_initial) {
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+        E_initial, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d U = svd.matrixU();
+    Eigen::Matrix3d V = svd.matrixV();
+    Eigen::Vector3d S = svd.singularValues();
+
+    // 保持尺度合理：取前两奇异值的平均
+    double s = 0.5 * (S(0) + S(1));
+    Eigen::Matrix3d S_new = Eigen::Matrix3d::Zero();
+    S_new(0, 0) = s;
+    S_new(1, 1) = s;
+
+    // 保证 U、V 对应的旋转是正定的（可选）
+    if (U.determinant() < 0)
+        U.col(2) *= -1;
+    if (V.determinant() < 0)
+        V.col(2) *= -1;
+
+    Eigen::Matrix3d E = U * S_new * V.transpose();
+    return E;
+}
+
+// 计算残差（x2^T E x1）的 RMS
+double Initializer::ComputeEpipolarRMS(const Eigen::Matrix3d& E,
+                                       const vector<Eigen::Vector2d>& pts1,
+                                       const vector<Eigen::Vector2d>& pts2) {
+    double sum2 = 0.0;
+    for (size_t i = 0; i < pts1.size(); ++i) {
+        Eigen::Vector3d x1(pts1[i].x(), pts1[i].y(), 1.0);
+        Eigen::Vector3d x2(pts2[i].x(), pts2[i].y(), 1.0);
+        double r = x2.transpose() * E * x1;
+        sum2 += r * r;
+    }
+    return sqrt(sum2 / pts1.size());
+}
+
+bool Initializer::ConstructAndDecomposeEssentialMatrixNormPoint(
+    vector<Eigen::Vector4d>& uv2obv, Pose& result) {
+
+    random_device rd;
+    default_random_engine rng(rd());
+    shuffle(uv2obv.begin(), uv2obv.end(), rng);
+
+    const int kSelectNum = min(
+        200, static_cast<int>(uv2obv.size()));  // 随机选取N个点求解本质矩阵E
+    const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
+    vector<Eigen::Vector2d> ps1, ps2;
+    vector<cv::Point2f> pts1, pts2;
+    pts1.reserve(kSelectNum);
+    pts2.reserve(kSelectNum);
+    ps1.reserve(kSelectNum);
+    ps2.reserve(kSelectNum);
+    int useNum = 0;
+    GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+    for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
+        const Eigen::Vector2d& p1 = uv2obv[j].head(2);
+        const Eigen::Vector2d p2 = uv2obv[j].tail(2);
+        DrawMatchPoint(p1, p2);
+        ++useNum;
+        pts1.emplace_back(p1.x(), p1.y());
+        pts2.emplace_back(p2.x(), p2.y());
+        const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
+        const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
+        ps1.emplace_back(pn1.x(), pn1.y());
+        ps2.emplace_back(pn2.x(), pn2.y());
+    }
+
+    // Hartley 归一化（在相机归一化平面上再做一次相似归一化，以提高数值稳定性）
+    Eigen::Matrix3d T1 = ComputeNormalizationTransform(ps1);
+    Eigen::Matrix3d T2 = ComputeNormalizationTransform(ps2);
+    vector<Eigen::Vector2d> npts1 = ApplyTransform(ps1, T1);
+    vector<Eigen::Vector2d> npts2 = ApplyTransform(ps2, T2);
+
+    // 构造设计矩阵并估计初始 E'（在归一化坐标下）
+    Eigen::MatrixXd A = BuildDesignMatrix(npts1, npts2);  // 计算T12
+    Eigen::JacobiSVD<Eigen::MatrixXd> svdA(A, Eigen::ComputeFullV);
+    Eigen::VectorXd evec = svdA.matrixV().col(8);  // 最小奇异值对应的右奇异向量
+    Eigen::Matrix3d E_prime = Vec9ToMat3(evec);
+
+    // 反归一化得到 E（满足 x2^T E x1 = 0）
+    Eigen::Matrix3d E_initial = T2.transpose() * E_prime * T1;
+
+    // 约束为本质矩阵
+    Eigen::Matrix3d E_final = EnforceEssentialConstraint(E_initial);
+
+    // 残差
+    double rms_initial = ComputeEpipolarRMS(E_initial, ps1, ps2);
+    double rms_final = ComputeEpipolarRMS(E_final, ps1, ps2);
+
+    // 输出
+    cout << fixed << setprecision(10);
+    cout << "Essential matrix (init):\n" << E_initial << "\n";
+    cout << "Essential matrix (constrained):\n";
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            cout << E_final(r, c) << (c == 2 ? '\n' : ' ');
+        }
+    }
+    cout << "RMS residual before constraint: " << rms_initial << "\n";
+    cout << "RMS residual after  constraint: " << rms_final << "\n";
+
+    // 统一计算T21
+    cv::Mat cvE =
+        cv::findEssentialMat(pts1, pts2, Eigen2CVmat(cam_->K_[0]), cv::LMEDS);
+    cout << "essential matrix cv:\n" << cvE << "\n";
+
+    // 2. 分解本质矩阵得到R,t
+    cv::Mat cvR, cv_t, mask;
+    int inliers = recoverPose(Eigen2CVmat(E_final), pts1, pts2,
+                              Eigen2CVmat(cam_->K_[0]), cvR, cv_t, mask);
+    cout << "Norm point recoverPose found " << inliers << " inliers" << endl;
+    cout << "normR: " << cvR << endl;
+    cout << "norm_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+
+    // inliers =
+    //     recoverPose(cvE, pts1, pts2, Eigen2CVmat(cam_->K_[0]), cvR, cv_t, mask);
+    // cout << "cv recoverPose found " << inliers << " inliers" << endl;
+    // cout << "cvR: " << cvR << endl;
+    // cout << "cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+    cvR = cvR.clone().t();
+    cv_t = -cvR * cv_t.clone();
+
+    const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
+    Eigen::Quaterniond q(Rres);
+    Pose initT12(q, CVmat2Eigen(cv_t));
+    result = initT12;
+
+    return inliers > static_cast<int>(ps1.size() * 0.75);
+}
+
 void Initializer::GenerateDebugImage(const cv::Mat& curImg) {
     if (debugMatchImg_.empty()) {
         debugMatchImg_ =
@@ -395,7 +603,7 @@ void Initializer::DrawMatchPoint(const Eigen::Vector2d& kp1,
     cv::line(debugMatchImg_, p1, p2, color, 1);
 }
 
-void Initializer::PutText2DebugMatchImg(const std::string& info,
+void Initializer::PutText2DebugMatchImg(const string& info,
                                         const int writeRow) {
     cv::putText(debugMatchImg_, info, cv::Point(10, writeRow), cv::FONT_ITALIC,
                 0.8, kColor.at("red"), 1);

@@ -28,6 +28,28 @@ class Initializer {
 
     void PutText2DebugMatchImg(const std::string& info, const int writeRow);
 
+    // 计算 Hartley 归一化变换 T，使点集中心在原点、平均距离为 sqrt(2)
+    Eigen::Matrix3d ComputeNormalizationTransform(
+        const std::vector<Eigen::Vector2d>& pts);
+
+    std::vector<Eigen::Vector2d> ApplyTransform(
+        const std::vector<Eigen::Vector2d>& pts, const Eigen::Matrix3d& T);
+
+    Eigen::MatrixXd BuildDesignMatrix(const std::vector<Eigen::Vector2d>& pts1,
+                                      const std::vector<Eigen::Vector2d>& pts2);
+
+    Eigen::Matrix3d Vec9ToMat3(const Eigen::VectorXd& v);
+
+    Eigen::Matrix3d EnforceEssentialConstraint(
+        const Eigen::Matrix3d& E_initial);
+
+    double ComputeEpipolarRMS(const Eigen::Matrix3d& E,
+                              const std::vector<Eigen::Vector2d>& pts1,
+                              const std::vector<Eigen::Vector2d>& pts2);
+
+    bool ConstructAndDecomposeEssentialMatrixNormPoint(
+        std::vector<Eigen::Vector4d>& uv2obv, Pose& result);
+
     cv::VideoWriter debugInitTrackWriter_;
     cv::Mat debugMatchImg_;
 
