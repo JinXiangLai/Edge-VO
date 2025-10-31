@@ -18,7 +18,7 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
                                                const double findMatchRatio,
                                                KeyFrame& curF) {
     constexpr int kMinMatchFeatureNum = 100;
-    constexpr double kMinParallax = 15;
+    constexpr double kMinParallax = 3;
     if (findMatchNum < kMinMatchFeatureNum) {
         return false;
     }
@@ -54,7 +54,12 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+        result.t_wb_ =
+            result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
+        const Pose Tdiff = result * curF.Tcw_;
+        cout << "result error: " << Tdiff << endl;
         curF.SetTwc(result);
         cout << fmt::format("Initialize succeed!, hor trans: {:.2f}m\n", trans);
         return true;
@@ -92,12 +97,14 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
         default_random_engine rng(rd());
         shuffle(uv2obv.begin(), uv2obv.end(), rng);
 
-        constexpr int kSelectNum = 25;  // 随机选取N个点求解本质矩阵E
+        constexpr int kSelectNum = 8;  // 随机选取N个点求解本质矩阵E
         Eigen::Matrix<double, kSelectNum, 9> A;
         A.setZero();
-        const size_t selectStep = uv2obv.size() / kSelectNum;
+        const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
         int useNum = 0;
         GenerateDebugImage(optFlw.prevImg_);
+        vector<cv::Point2f> pts1, pts2;
+        // vector<Eigen::Vector2d> ps1, ps2;
         for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
             const Eigen::Vector2d& p1 = uv2obv[j].head(2);
             const Eigen::Vector2d p2 = uv2obv[j].tail(2);
@@ -108,23 +115,26 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
             A.row(useNum) << x1 * x2, x1 * y2, x1, y1 * x2, y1 * y2, y1, x2, y2,
                 1.0;
             ++useNum;
+            pts1.emplace_back(p1.x(), p1.y());
+            pts2.emplace_back(p2.x(), p2.y());
         }
-        cout << "matrixA[" << i << "]:\n" << A << "\n";
+        // cout << "matrixA[" << i << "]:\n" << A << "\n";
 
         // SVD分解A，最小奇异值对应的特征向量即为e向量
         // Eigen::JacobiSVD<Eigen::Matrix<double, kSelectNum, 9>> svd(
         //     A, Eigen::ComputeThinU | Eigen::ComputeThinV);
         Eigen::JacobiSVD<Eigen::Matrix<double, kSelectNum, 9>> svd(
             A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        const Eigen::Matrix<double, 9, 1> singValue = svd.singularValues();
-        cout << "A matrix singValue: " << singValue.transpose() << "\n";
+        cv::Mat cvE = cv::findEssentialMat(pts2, pts1, Eigen2CVmat(cam_->K_[0]),
+                                           cv::LMEDS);
+        cout << "A matrix row: " << A.rows()
+             << ", singValue: " << svd.singularValues().transpose() << "\n";
         Eigen::Matrix<double, 9, 1> e = svd.matrixV().col(8);
-        // e.normalize();  // 归一化
         cout << "e: " << e.transpose() << "\n";
         Eigen::Matrix<double, 3, 3> essentialMatrix;
         essentialMatrix << e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8];
         cout << "essentialMatrix:\n" << essentialMatrix << "\n";
-
+        cout << "essential matrix from cv:\n" << cvE << "\n";
         // SVD分解E矩阵，并分解出旋转和平移
         // Eigen::JacobiSVD<Eigen::Matrix3d> svd2(
         //     essentialMatrix, Eigen::ComputeThinU | Eigen::ComputeThinV);
@@ -132,24 +142,35 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
             essentialMatrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
         Eigen::Matrix<double, 3, 1> s2 = svd2.singularValues();
         cout << "essentialMatrix singValue: " << s2.transpose() << "\n";
+
         Eigen::Matrix3d S = Eigen::Matrix3d::Zero();
-        // const double sigma = svd2.singularValues().head(2).sum() * 0.5;
-        // S.diagonal().head(2) << sigma, sigma;
+        const double sigma = svd2.singularValues().head(2).sum() * 0.5;
+        S.diagonal().head(2) << sigma, sigma;
         S.diagonal().head(2) << 1.0, 1.0;
-        // S.diagonal() = s2;
+        const Eigen::Matrix3d refineE =
+            svd2.matrixU() * S * svd2.matrixV().transpose();
+        Eigen::JacobiSVD<Eigen::Matrix3d> svd3(
+            refineE, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        cout << "refineE:\n" << refineE << "\n";
+        cout << "refineE singValue: " << svd3.singularValues().transpose()
+             << "\n";
 
         Eigen::Matrix3d Rpi_2, R_n_pi_2;
         Rpi_2 << 0, -1, 0, 1, 0, 0, 0, 0, 1;
         R_n_pi_2 << 0, 1, 0, -1, 0, 0, 0, 0, 1;
-        const Eigen::Matrix3d U2 = svd2.matrixU();
-        const Eigen::Matrix3d V2 = svd2.matrixV();
+        const Eigen::Matrix3d U2 = svd3.matrixU();
+        const Eigen::Matrix3d V2 = svd3.matrixV();
         // 一共有四种组合，区别在于t可以取负号
-        Eigen::Matrix3d R1 = U2 * Rpi_2.transpose() * V2.transpose();
-        Eigen::Matrix3d R2 = U2 * R_n_pi_2.transpose() * V2.transpose();
-        const Eigen::Vector3d t1 =
-            SkewSymmetric2Vector(U2 * Rpi_2 * S * U2.transpose());
-        const Eigen::Vector3d t2 =
-            SkewSymmetric2Vector(U2 * R_n_pi_2 * S * U2.transpose());
+        // Eigen::Matrix3d R1 = U2 * Rpi_2.transpose() * V2.transpose();
+        // Eigen::Matrix3d R2 = U2 * R_n_pi_2.transpose() * V2.transpose();
+        // const Eigen::Vector3d t1 =
+        //     SkewSymmetric2Vector(U2 * Rpi_2 * S * U2.transpose());
+        // const Eigen::Vector3d t2 =
+        //     SkewSymmetric2Vector(U2 * R_n_pi_2 * S * U2.transpose());
+        Eigen::Matrix3d R1 = U2 * Rpi_2 * V2.transpose();
+        Eigen::Matrix3d R2 = U2 * R_n_pi_2 * V2.transpose();
+        const Eigen::Vector3d t1 = U2.col(2);
+        const Eigen::Vector3d t2 = -U2.col(2);
         cout << fmt::format("det(R1): {:.1f}, det(R2):{:.1f}\n",
                             R1.determinant(), R2.determinant());
         // 修正反射矩阵
@@ -159,6 +180,25 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
         if (R2.determinant() < 0) {
             R2 = -R2;
         }
+        // 2. 分解本质矩阵得到R,t
+        cv::Mat cvR, cv_t, mask;
+        int inliers = recoverPose(cvE, pts2, pts1, Eigen2CVmat(cam_->K_[0]),
+                                  cvR, cv_t, mask);
+        // opencv是计算T21，因此输入特征点要倒序
+        cout << "OpenCV recoverPose found " << inliers << " inliers" << endl;
+        cout << "cvR: " << cvR << endl;
+        cout << "cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+
+        cout << "R1:\n"
+             << R1 << "\nR2:\n"
+             << R2 << "\nt1: " << t1.transpose() << ", norm: " << t1.norm()
+             << ", t2: " << t2.transpose() << ", norm: " << t2.norm() << "\n";
+        // const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
+        // Eigen::Quaterniond q(Rres);
+        // Pose initT12(q, CVmat2Eigen(cv_t));
+        // result = initT12;
+        // return true;
+
         vector<Eigen::Matrix3d> Rs{R1, R1, R2, R2};
         vector<Eigen::Vector3d> ts{t1, -t1, t2, -t2};
         if (t1.head(2).norm() / t1.norm() < 0.9) {
@@ -231,6 +271,46 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
     return false;
 }
 
+bool Initializer::ConstructAndDecomposeEssentialMatrixOpenCV(
+    std::vector<Eigen::Vector4d>& uv2obv, Pose& result) {
+    random_device rd;
+    default_random_engine rng(rd());
+    shuffle(uv2obv.begin(), uv2obv.end(), rng);
+
+    const int kSelectNum = min(
+        200, static_cast<int>(uv2obv.size()));  // 随机选取N个点求解本质矩阵E
+    const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
+    vector<cv::Point2f> ps1, ps2;
+    int useNum = 0;
+    GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+    for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
+        const Eigen::Vector2d& p1 = uv2obv[j].head(2);
+        const Eigen::Vector2d p2 = uv2obv[j].tail(2);
+        DrawMatchPoint(p1, p2);
+        ++useNum;
+        ps1.emplace_back(p1.x(), p1.y());
+        ps2.emplace_back(p2.x(), p2.y());
+    }
+
+    cv::Mat cvE =
+        cv::findEssentialMat(ps2, ps1, Eigen2CVmat(cam_->K_[0]), cv::RANSAC);
+
+    // 2. 分解本质矩阵得到R,t
+    cv::Mat cvR, cv_t, mask;
+    int inliers =
+        recoverPose(cvE, ps2, ps1, Eigen2CVmat(cam_->K_[0]), cvR, cv_t, mask);
+    cout << "OpenCV recoverPose found " << inliers << " inliers" << endl;
+    cout << "cvR: " << cvR << endl;
+    cout << "cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+
+    const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
+    Eigen::Quaterniond q(Rres);
+    Pose initT12(q, CVmat2Eigen(cv_t));
+    result = initT12;
+
+    return inliers > static_cast<int>(ps1.size() * 0.75);
+}
+
 bool Initializer::CheckInitPose(const int selectNum, const Pose& T12,
                                 vector<Eigen::Vector4d>& uv2obv) {
     const Pose T21 = T12.Inverse();
@@ -257,6 +337,11 @@ bool Initializer::CheckInitPose(const int selectNum, const Pose& T12,
         const Eigen::Vector3d p1 =
             cam_->InverseProject(uv2obv[i].head(2)) / idepth1;
         const Eigen::Vector3d pc2 = T21 * p1;
+        if (pc2.z() < kMinSceneDepthInCamera) {
+            sumProjectErrorSelectPoint += 1e9;
+            projResidualInfo.append(fmt::format(" {:.1f}", 1e9));
+            continue;
+        }
         const Eigen::Vector2d p2 = cam_->Project2PixelPlane(pc2);
         const double residual = (p2 - uv2obv[i].tail(2)).norm();
         sumProjectErrorSelectPoint += residual;

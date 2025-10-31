@@ -272,7 +272,7 @@ double GetDepthUncertainty(const Eigen::Vector2d& px2,
 
 bool NeedNewKF(const KeyFrame* kf, const KeyFrame* f);
 
-void ShowPointCloud(const std::set<Landmark*>& ps);
+void ShowPointCloud(const std::unordered_set<Landmark*>& ps);
 
 bool IsFastPoint(const cv::Mat& gray, const int fastTh1, const cv::Point2i& pt,
                  int& response);
@@ -281,6 +281,10 @@ Eigen::Vector3d LogSO3(const Eigen::Matrix3d& R);
 
 Eigen::Matrix3d InverseRightJacobianSO3(
     const Eigen::Vector3d& v);  // BCH近似使用
+
+Eigen::MatrixXd CVmat2Eigen(const cv::Mat& m);
+
+cv::Mat Eigen2CVmat(const Eigen::MatrixXd& eigen_mat);
 
 void VizInteraction(const cv::viz::KeyboardEvent& event, void* b);
 
@@ -364,8 +368,8 @@ class InteractionParam {
     cv::viz::Viz3d* window;  // ("Local Map Viewer");
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
     std::mutex mutPoints;
-    std::set<Landmark*> activePoints;
-    std::set<Landmark*> localPoints;
+    std::unordered_set<Landmark*> activePoints;
+    std::unordered_set<Landmark*> localPoints;
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
     bool drawEpipolarMatch = false;

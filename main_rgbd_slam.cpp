@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
                                 config->debugMessageSaveFolder, win.back()->id_,
                                 curF.id_, trans);
                 cv::imwrite(savePath, initer.debugMatchImg_);
-
+            
                 optimizer.AddOneKeyFeame(new KeyFrame(curF));
                 interaction->visualCurF = curF;  // 记录优化pose后的当前帧
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
@@ -183,6 +183,7 @@ int main(int argc, char** argv) {
                 cout << "\n******\nInitialized!\n******\n";
                 cv::imshow("init 2 KF", initer.debugMatchImg_);
                 cv::waitKey();
+                cv::destroyWindow("init 2 KF");
             } else if (findMatchRatio < 0.7 || findMatchNum < 200) {
                 cout << "Few match to initialize! Reset!" << endl;
                 ResetStatus(&optimizer, &isInitialized, &trackLostCount);

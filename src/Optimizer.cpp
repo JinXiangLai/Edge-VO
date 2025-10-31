@@ -1752,6 +1752,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     // 在滑窗优化前就把最新KF添加到滑窗之中
     window_.emplace_back(curKF);
     if (window_.size() < 2) {
+        optLandmark_.clear();
         return false;
     }
     cout << fmt::format(
@@ -2258,44 +2259,42 @@ void Optimizer::ShowLocalMap() {
         vTwc.push_back(kf->Twc_);
     }
 
-    set<Landmark*>*aPoints, *lPoints;
+    unordered_set<Landmark*> aPoints, lPoints;
     {
-        std::lock_guard<std::mutex> lockPoints(interaction->mutPoints);
-        aPoints = &interaction->activePoints;
-        lPoints = &interaction->localPoints;
-        aPoints->clear();
-        lPoints->clear();
+        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+        KeyFrame::kfOn3Dshow.clear();
+        // for (Landmark* p : optLandmark_) {
+        //     if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
+        //         p->ManySupport() && p->Converge()) {
+        //         aPoints.insert(p);
+        //     }
+        // }
 
-        {
-            lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
-            KeyFrame::kfOn3Dshow.clear();
-            for (Landmark* p : optLandmark_) {
-                if (p != nullptr && !aPoints->count(p) && !p->IsOutOfRange() &&
-                    p->ManySupport() && p->Converge()) {
-                    aPoints->insert(p);
+        for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
+            // for(int i = window_.size()-1; i < window_.size(); ++i) {
+            KeyFrame* kf = window_[i];
+            for (Landmark* p : kf->landmark_) {
+                if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
+                    !p->CanBeDelete() && p->initialized_) {
+                    lPoints.insert(p);
                 }
             }
 
-            for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
-                // for(int i = window_.size()-1; i < window_.size(); ++i) {
-                KeyFrame* kf = window_[i];
-                for (Landmark* p : kf->landmark_) {
-                    if (p != nullptr && !aPoints->count(p) &&
-                        !lPoints->count(p) && !p->CanBeDelete() &&
-                        p->initialized_) {
-                        lPoints->insert(p);
-                    }
-                }
-
-                KeyFrame::kfOn3Dshow.insert(kf);
-            }
+            KeyFrame::kfOn3Dshow.insert(kf);
         }
     }
-    if (!aPoints->empty() || !lPoints->empty()) {
+
+    if (!aPoints.empty() || !lPoints.empty()) {
+        {
+            std::lock_guard<std::mutex> lockPoints(interaction->mutPoints);
+            interaction->activePoints = aPoints;
+            interaction->localPoints = lPoints;
+        }
         ::ShowLocalMap(vTwc);
-        // cout << "show " << vTwc.size() << " KFs " << (aPoints.size()+lPoints.size()) << " map points" << endl;
+        cout << fmt::format("show {} KFs, aPoints size: {}, lPoints size: {}\n",
+                            vTwc.size(), aPoints.size(), lPoints.size());
     } else {
         cerr << "wait for local map..." << endl;
-        usleep(100 * 1e3);
+        usleep(1000 * 1e3);
     }
 }

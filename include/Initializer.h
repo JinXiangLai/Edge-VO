@@ -14,6 +14,9 @@ class Initializer {
     bool ConstructAndDecomposeEssentialMatrix(
         std::vector<Eigen::Vector4d>& uv2obv, Pose& result);
 
+    bool ConstructAndDecomposeEssentialMatrixOpenCV(
+        std::vector<Eigen::Vector4d>& uv2obv, Pose& result);
+
     bool CheckInitPose(const int selectNum, const Pose& T12,
                        std::vector<Eigen::Vector4d>& uv2obv);
 

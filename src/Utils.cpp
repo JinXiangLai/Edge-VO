@@ -1209,6 +1209,37 @@ Pose GetPredictPose(const KeyFrame& last1, const KeyFrame& last2) {
     return predictCurFpose;
 }
 
+Eigen::MatrixXd CVmat2Eigen(const cv::Mat& m) {
+    // Check if the input matrix is continuous and of type CV_64F
+    if (m.isContinuous() && m.type() == CV_64F) {
+        return Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                        Eigen::RowMajor>>(
+            reinterpret_cast<double*>(m.data), m.rows, m.cols);
+    } else {
+        // For non-continuous or non-double matrices, create a copy
+        cv::Mat temp;
+        if (m.type() != CV_64F) {
+            m.convertTo(temp, CV_64F);
+        } else {
+            temp = m.clone();  // Ensure continuity
+        }
+        return Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                        Eigen::RowMajor>>(
+            reinterpret_cast<double*>(temp.data), temp.rows, temp.cols);
+    }
+}
+
+cv::Mat Eigen2CVmat(const Eigen::MatrixXd& eigen_mat) {
+    cv::Mat cv_mat(eigen_mat.rows(), eigen_mat.cols(), CV_64F);
+
+    Eigen::Map<
+        Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
+        reinterpret_cast<double*>(cv_mat.data), eigen_mat.rows(),
+        eigen_mat.cols()) = eigen_mat;
+
+    return cv_mat;
+}
+
 char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
                                                  const Mat& dxImg,
                                                  const cv::Mat& dyImg) {
@@ -1373,7 +1404,7 @@ void ShowPointCloud(const vector<Landmark*>& ps1, const vector<Landmark*>& ps2,
     window.spin();
 }
 
-void ShowPointCloud(const set<Landmark*>& ps) {
+void ShowPointCloud(const unordered_set<Landmark*>& ps) {
     if (ps.empty()) {
         return;
     }
@@ -1404,10 +1435,15 @@ void ShowPointCloud(const set<Landmark*>& ps) {
 
 void ShowLocalMap(const vector<Pose>& vTwc) {
 
-    if (interaction->drawEpipolarMatch ||
-        interaction->visualCurF.grayImg_.empty() ||
+    if (interaction->visualCurF.grayImg_.empty() ||
         interaction->visualCurFinit.grayImg_.empty() ||
         interaction->visualLastKF.grayImg_.empty()) {
+        cout << fmt::format(
+            "gray img empty status: visualCurF: {}, visualCurFinit: {}, "
+            "visualLastKF: {}\n",
+            interaction->visualCurF.grayImg_.empty(),
+            interaction->visualCurFinit.grayImg_.empty(),
+            interaction->visualLastKF.grayImg_.empty());
         sleep(1);
         return;
     }
@@ -1433,7 +1469,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,
-                          &curKFimg](set<Landmark*>& ps, const cv::Vec3b& color,
+                          &curKFimg](unordered_set<Landmark*>& ps, const cv::Vec3b& color,
                                      vector<Point3d>& points,
                                      vector<cv::Vec3b>& colors) {
         points.reserve(10000);
@@ -1485,8 +1521,8 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     vector<Point3d> localPoints;
     vector<cv::Vec3b> localColors;
-    std::set<Landmark*> sactivePoints;
-    std::set<Landmark*> slocalPoints;
+    std::unordered_set<Landmark*> sactivePoints;
+    std::unordered_set<Landmark*> slocalPoints;
     {
         lock_guard<std::mutex> lockPointCloud(interaction->mutPoints);
         sactivePoints = interaction->activePoints;
@@ -1511,8 +1547,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     activeColors.reserve(localPoints.size());
     vector<cv::Vec3b> colors1;
     cv::Vec3b color2{0, 0, 255};
-    GenerateCloud(sactivePoints, color2, activePoints,
-                  activeColors);
+    GenerateCloud(sactivePoints, color2, activePoints, activeColors);
     if (!activePoints.empty()) {
         viz::WCloud activeCloud(activePoints, activeColors);
         if (activeColors.empty()) {
