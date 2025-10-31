@@ -54,9 +54,9 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-    // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
-    if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+        // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+        // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
         const Pose Tdiff = result * curF.Tcw_;
@@ -70,8 +70,10 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
     return false;
 }
 
-bool Initializer::ConstructAndDecomposeEssentialMatrix(
-    vector<Eigen::Vector4d>& uv2obv, Pose& result) {
+Eigen::MatrixXd Initializer::ConstructCoffeeMatrix(
+    const std::vector<Eigen::Vector2d>& ps1,
+    const std::vector<Eigen::Vector2d>& ps2, const Eigen::Matrix3d& normT1,
+    const Eigen::Matrix3d& normT2) {
     // 根据对极线约束，首帧为w系
     // s1 * pn1 = s2 * Rwc2 * pn2 + t_wc2
     // s1 * [t_wc2]x * pn1 = s2 * [t_wc2]x * Rwc2 * pn2
@@ -90,186 +92,268 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
     // [x1*x2, x1*y2, x1*z2, y1*x2, y1*y2, y1*z2, z1*x2, z1*y2, z1*z2] * e.T = 0 [1x1]标量
     // 由于z1=z2=1，故简化为：
     // [x1*x2, x1*y2, x1, y1*x2, y1*y2, y1, x2, y2, 1] * e.T = 0
+    auto GetNormPoint = [](const Eigen::Matrix3d& T,
+                           const Eigen::Vector2d& p) -> Eigen::Vector2d {
+        return T.block<2, 3>(0, 0) * Eigen::Vector3d(p.x(), p.y(), 1.0);
+    };
 
-    const KeyFrame::OpticalFlowStruct optFlw = KeyFrame::optFlw;
-    constexpr int kMaxIterateTime = 20;
-    for (size_t i = 0; i < kMaxIterateTime; ++i) {
-        random_device rd;
-        default_random_engine rng(rd());
-        shuffle(uv2obv.begin(), uv2obv.end(), rng);
+    // 构建A矩阵
+    Eigen::MatrixXd A(ps1.size(), 9);
+    for (size_t i = 0; i < ps1.size(); ++i) {
+        // 未对点集进行归一化，将导致SVD分解计算本质矩阵E时数值不稳定，难以计算成功，
+        // 归一化能够使得条件数显著降低，而误差放大与 cond(A)（条件数）成正比。
+        const Eigen::Vector2d np1 = GetNormPoint(normT1, ps1[i]);
+        const Eigen::Vector2d np2 = GetNormPoint(normT2, ps2[i]);
+        const double x1 = np1.x(), y1 = np1.y(), x2 = np2.x(), y2 = np2.y();
+        A.row(i) << x1 * x2, x1 * y2, x1, y1 * x2, y1 * y2, y1, x2, y2, 1.0;
+    }
+    return A;
+}
 
-        constexpr int kSelectNum = 8;  // 随机选取N个点求解本质矩阵E
-        Eigen::Matrix<double, kSelectNum, 9> A;
-        A.setZero();
-        const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
-        int useNum = 0;
-        GenerateDebugImage(optFlw.prevImg_);
-        vector<cv::Point2f> pts1, pts2;
-        // vector<Eigen::Vector2d> ps1, ps2;
-        for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
-            const Eigen::Vector2d& p1 = uv2obv[j].head(2);
-            const Eigen::Vector2d p2 = uv2obv[j].tail(2);
-            DrawMatchPoint(p1, p2);
+Eigen::Matrix3d Initializer::GetEssentialMatrix(
+    const Eigen::MatrixXd& coffeMatrix, const Eigen::Matrix3d& normT1,
+    const Eigen::Matrix3d& normT2) {
+
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+        coffeMatrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    const Eigen::Matrix<double, 9, 1> e = svd.matrixV().col(8);
+    Eigen::Matrix3d initE;
+    initE << e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8];
+    // 归一化坐标满足: x1' = T1 * x1，==> x1' = T1^{-1} * x1
+    // 使用归一化坐标时，实际是计算： x1'.T * E' * x2 = 0，即：
+    // x1.T * T1^{-1}.T * E * T2^{-1} * x2
+    // 而我们实际要的是： x1.T * E * x2 = 0
+    initE = normT1.transpose() * initE * normT2;
+
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd2(
+        initE, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d SingularMatrix = Eigen::Matrix3d::Zero();
+    const double sigma = 0.5 * (svd2.singularValues().head(2).sum());
+    SingularMatrix(0, 0) = sigma;  // 本质矩阵尺度不可观
+    SingularMatrix(1, 1) = sigma;
+    const Eigen::Matrix3d finalE =
+        svd2.matrixU() * SingularMatrix * svd2.matrixV().transpose();
+    return finalE;
+}
+
+double Initializer::ComputeEpipolarConstraintRmse(
+    const Eigen::Matrix3d& E, const std::vector<Eigen::Vector4d>& uv2obv) {
+    double sum = 0.;
+    for (size_t i = 0; i < uv2obv.size(); ++i) {
+        const Eigen::Vector2d& p1 = uv2obv[i].head(2);
+        const Eigen::Vector2d& p2 = uv2obv[i].tail(2);
+        const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
+        const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
+        sum += pn1.transpose() * E * pn2;
+    }
+
+    return sqrt(sum / uv2obv.size());
+}
+
+bool Initializer::FindEssentialMatrixRansac(
+    const std::vector<Eigen::Vector4d>& uv2obv, Eigen::Matrix3d& matrixE,
+    const double inlinerRatio, const double successProb) {
+    constexpr int kSampleNum = 8;  // 使用8点法
+    if (uv2obv.size() < kSampleNum) {
+        cout << fmt::format("match pair num: {}, min fit num: {}!!!\n",
+                            uv2obv.size(), kSampleNum);
+        return false;
+    }
+    // 成功概率为p，那么选择N个点都是内点的概率为 p^N,
+    // 失败的概率为q，那么q=1.0-p^N
+    // 迭代k次都失败的概率为 q^k，
+    // 要求概率为r能找到一对正确匹配，则 r=1-q^k，
+    // 由于 q^k = 1-r，则 ln(1-r) = k * ln(q)，
+    // k = ln(1-r) / ln(q)
+    const double failProbability = 1.0 - pow(inlinerRatio, kSampleNum);
+    int iterativeTime =
+        static_cast<int>(log(1 - successProb) / log(failProbability) + 0.5);
+    if (kSampleNum > 100) {
+        iterativeTime = 1;
+    }
+    cout << fmt::format(
+        "inlinerRatio: {:.3f}, successProb: {:.3f}, failProbability one "
+        "iterative time: {:.3f}, need iterative {} times!\n",
+        inlinerRatio, successProb, failProbability, iterativeTime);
+
+    // 避免选择重复结果
+    auto HashNumber = [](vector<int>& index) -> long long {
+        long long hash = 1.;
+        for (size_t i = 0; i < index.size(); ++i) {
+            hash *= (index[i] + 1);
+        }
+
+        return hash;
+    };
+
+    std::chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    unordered_set<long long> hasSelectSet;
+    vector<Eigen::Vector2d> ps1;
+    vector<Eigen::Vector2d> ps2;
+    vector<int> selectIndex;
+    ps1.reserve(kSampleNum);
+    ps2.reserve(kSampleNum);
+    selectIndex.reserve(kSampleNum);
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dist(0, uv2obv.size() - 1);
+    double minRmse = DBL_MAX;
+    for (int i = 0; i < iterativeTime; ++i) {
+        ps1.clear();
+        ps2.clear();
+        selectIndex.clear();
+        for (int j = 0; j < kSampleNum; ++j) {
+            size_t randomIndex = dist(gen);
+            const Eigen::Vector2d& p1 = uv2obv[randomIndex].head(2);
+            const Eigen::Vector2d& p2 = uv2obv[randomIndex].tail(2);
             const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
             const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
-            const double x1 = pn1.x(), y1 = pn1.y(), x2 = pn2.x(), y2 = pn2.y();
-            A.row(useNum) << x1 * x2, x1 * y2, x1, y1 * x2, y1 * y2, y1, x2, y2,
-                1.0;
-            ++useNum;
-            pts1.emplace_back(p1.x(), p1.y());
-            pts2.emplace_back(p2.x(), p2.y());
+            ps1.emplace_back(pn1.x(), pn1.y());
+            ps2.emplace_back(pn2.x(), pn2.y());
+            selectIndex.emplace_back(randomIndex);
         }
-        // cout << "matrixA[" << i << "]:\n" << A << "\n";
-
-        // SVD分解A，最小奇异值对应的特征向量即为e向量
-        // Eigen::JacobiSVD<Eigen::Matrix<double, kSelectNum, 9>> svd(
-        //     A, Eigen::ComputeThinU | Eigen::ComputeThinV);
-        Eigen::JacobiSVD<Eigen::Matrix<double, kSelectNum, 9>> svd(
-            A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        cv::Mat cvE = cv::findEssentialMat(pts2, pts1, Eigen2CVmat(cam_->K_[0]),
-                                           cv::LMEDS);
-        cout << "A matrix row: " << A.rows()
-             << ", singValue: " << svd.singularValues().transpose() << "\n";
-        Eigen::Matrix<double, 9, 1> e = svd.matrixV().col(8);
-        cout << "e: " << e.transpose() << "\n";
-        Eigen::Matrix<double, 3, 3> essentialMatrix;
-        essentialMatrix << e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8];
-        cout << "essentialMatrix:\n" << essentialMatrix << "\n";
-        cout << "essential matrix from cv:\n" << cvE << "\n";
-        // SVD分解E矩阵，并分解出旋转和平移
-        // Eigen::JacobiSVD<Eigen::Matrix3d> svd2(
-        //     essentialMatrix, Eigen::ComputeThinU | Eigen::ComputeThinV);
-        Eigen::JacobiSVD<Eigen::Matrix3d> svd2(
-            essentialMatrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        Eigen::Matrix<double, 3, 1> s2 = svd2.singularValues();
-        cout << "essentialMatrix singValue: " << s2.transpose() << "\n";
-
-        Eigen::Matrix3d S = Eigen::Matrix3d::Zero();
-        const double sigma = svd2.singularValues().head(2).sum() * 0.5;
-        S.diagonal().head(2) << sigma, sigma;
-        S.diagonal().head(2) << 1.0, 1.0;
-        const Eigen::Matrix3d refineE =
-            svd2.matrixU() * S * svd2.matrixV().transpose();
-        Eigen::JacobiSVD<Eigen::Matrix3d> svd3(
-            refineE, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        cout << "refineE:\n" << refineE << "\n";
-        cout << "refineE singValue: " << svd3.singularValues().transpose()
-             << "\n";
-
-        Eigen::Matrix3d Rpi_2, R_n_pi_2;
-        Rpi_2 << 0, -1, 0, 1, 0, 0, 0, 0, 1;
-        R_n_pi_2 << 0, 1, 0, -1, 0, 0, 0, 0, 1;
-        const Eigen::Matrix3d U2 = svd3.matrixU();
-        const Eigen::Matrix3d V2 = svd3.matrixV();
-        // 一共有四种组合，区别在于t可以取负号
-        // Eigen::Matrix3d R1 = U2 * Rpi_2.transpose() * V2.transpose();
-        // Eigen::Matrix3d R2 = U2 * R_n_pi_2.transpose() * V2.transpose();
-        // const Eigen::Vector3d t1 =
-        //     SkewSymmetric2Vector(U2 * Rpi_2 * S * U2.transpose());
-        // const Eigen::Vector3d t2 =
-        //     SkewSymmetric2Vector(U2 * R_n_pi_2 * S * U2.transpose());
-        Eigen::Matrix3d R1 = U2 * Rpi_2 * V2.transpose();
-        Eigen::Matrix3d R2 = U2 * R_n_pi_2 * V2.transpose();
-        const Eigen::Vector3d t1 = U2.col(2);
-        const Eigen::Vector3d t2 = -U2.col(2);
-        cout << fmt::format("det(R1): {:.1f}, det(R2):{:.1f}\n",
-                            R1.determinant(), R2.determinant());
-        // 修正反射矩阵
-        if (R1.determinant() < 0) {
-            R1 = -R1;
+        const long long hashNum = HashNumber(selectIndex);
+        if (hasSelectSet.count(hashNum)) {
+            cout << fmt::format("hash number: {} has existed, skip!\n",
+                                hashNum);
+            --i;
+            continue;
         }
-        if (R2.determinant() < 0) {
-            R2 = -R2;
-        }
-        // 2. 分解本质矩阵得到R,t
-        cv::Mat cvR, cv_t, mask;
-        int inliers = recoverPose(cvE, pts2, pts1, Eigen2CVmat(cam_->K_[0]),
-                                  cvR, cv_t, mask);
-        // opencv是计算T21，因此输入特征点要倒序
-        cout << "OpenCV recoverPose found " << inliers << " inliers" << endl;
-        cout << "cvR: " << cvR << endl;
-        cout << "cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+        hasSelectSet.insert(hashNum);
+        const Eigen::Matrix3d normT1 = ComputeNormalizationTransform(ps1);
+        const Eigen::Matrix3d normT2 = ComputeNormalizationTransform(ps2);
+        const Eigen::MatrixXd A =
+            ConstructCoffeeMatrix(ps1, ps2, normT1, normT2);
 
-        cout << "R1:\n"
-             << R1 << "\nR2:\n"
-             << R2 << "\nt1: " << t1.transpose() << ", norm: " << t1.norm()
-             << ", t2: " << t2.transpose() << ", norm: " << t2.norm() << "\n";
-        // const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
-        // Eigen::Quaterniond q(Rres);
-        // Pose initT12(q, CVmat2Eigen(cv_t));
-        // result = initT12;
-        // return true;
-
-        vector<Eigen::Matrix3d> Rs{R1, R1, R2, R2};
-        vector<Eigen::Vector3d> ts{t1, -t1, t2, -t2};
-        if (t1.head(2).norm() / t1.norm() < 0.9) {
-            cout << "Warning, horizontail move may small, trans: "
-                 << t1.transpose() << "\n";
-        }
-
-        // vector<int> usefulDepth(Rs.size(), 0);
-        vector<pair<int, int>> id2UsefulDepth{{0, 0}, {1, 0}, {2, 0}, {3, 0}};
-
-        // 找出正确的旋转和平移
-        useNum = 0;
-        for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
-            const Eigen::Vector2d& p1 = uv2obv[j].head(2);
-            const Eigen::Vector2d p2 = uv2obv[j].tail(2);
-
-            string depthInfo("depth result: ");
-            string poseInfo("4 pose info:\n");
-            for (size_t k = 0; k < 4; ++k) {
-                double idepth1 = -1.0;
-                double depth = -1.0;
-                Pose T12(Eigen::Quaterniond(Rs[k]), ts[k]);
-                stringstream ss;
-                ss << T12;
-                poseInfo.append(fmt::format("{}\n", ss.str()));
-                if (GetHostFrameObservationInvDepth(p1, p2, cam_->Kinv_[0], T12,
-                                                    idepth1)) {
-                    depth = 1.0 / idepth1;
-                }
-                depthInfo.append(fmt::format("{:.2f} ", depth));
-                if (depth > kMinSceneDepthInCamera) {
-                    // ++usefulDepth[k];
-                    ++id2UsefulDepth[k].second;
-                }
+        const Eigen::Matrix3d finalE = GetEssentialMatrix(A, normT1, normT2);
+        const double rmse = ComputeEpipolarConstraintRmse(finalE, uv2obv);
+        if (rmse < minRmse) {
+            minRmse = rmse;
+            matrixE = finalE;
+            GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+            for (size_t i = 0; i < kSampleNum; ++i) {
+                const int randomIndex = selectIndex[i];
+                const Eigen::Vector2d& p1 = uv2obv[randomIndex].head(2);
+                const Eigen::Vector2d& p2 = uv2obv[randomIndex].tail(2);
+                DrawMatchPoint(p1, p2);
             }
-            // cout << fmt::format("{}\n{}", depthInfo, poseInfo);
-            ++useNum;
         }
+    }
+    std::chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
-        cout << fmt::format("useful depth count: {}, {}, {}, {}\n",
-                            id2UsefulDepth[0].second, id2UsefulDepth[1].second,
-                            id2UsefulDepth[2].second, id2UsefulDepth[3].second);
-        // cout << fmt::format("useful depth count: {}, {}, {}, {}\n",
-        //                     id2UsefulDepth[0], id2UsefulDepth[1],
-        //                     id2UsefulDepth[2], id2UsefulDepth[3]);
-        sort(id2UsefulDepth.begin(), id2UsefulDepth.end(),
-             [](const pair<int, int>& p1, const pair<int, int>& p2) {
-                 return p1.second > p2.second;
-             });
+    cout << fmt::format("find matrixE spend: {}ms, rmse: {:.3f}\n",
+                        ChronoMillisecTimeDuration(t0, t1), minRmse);
+    return true;
+}
 
-        if (id2UsefulDepth[0].second > static_cast<int>(kSelectNum * 0.9) &&
-            id2UsefulDepth[1].second < static_cast<int>(kSelectNum * 0.5)) {
-            const int maxId = id2UsefulDepth[0].first;
-            cout << fmt::format(
-                "maxId: {}, maxNum: {}, second maxId: {}, second maxNum: {}\n",
-                maxId, id2UsefulDepth[0].second, id2UsefulDepth[1].first,
-                id2UsefulDepth[1].second);
+bool Initializer::ConstructAndDecomposeEssentialMatrix(
+    vector<Eigen::Vector4d>& uv2obv, Pose& result) {
 
-            Eigen::Quaterniond q(Rs[maxId]);
-            Pose initT12(q, ts[maxId]);
-            // initT12.t_wb_.normalize(); // 不能归一化？
-            if (CheckInitPose(kSelectNum, initT12, uv2obv)) {
-                result = initT12;
-                cout << "Initialize succeed, result: " << result << "\n";
-                return true;
+    const KeyFrame::OpticalFlowStruct optFlw = KeyFrame::optFlw;
+    Eigen::Matrix3d matrixE;
+    if (!FindEssentialMatrixRansac(uv2obv, matrixE)) {
+        return false;
+    }
+
+#if 1
+    vector<cv::Point2f> pts1, pts2;
+    pts1.reserve(uv2obv.size());
+    pts2.reserve(uv2obv.size());
+    for (size_t j = 0; j < uv2obv.size(); ++j) {
+        const Eigen::Vector2d& p1 = uv2obv[j].head(2);
+        const Eigen::Vector2d p2 = uv2obv[j].tail(2);
+        pts1.emplace_back(p1.x(), p1.y());
+        pts2.emplace_back(p2.x(), p2.y());
+    }
+
+    cv::Mat cvR, cv_t, mask;
+    // matrixE是计算T12的，所以传入点要反序
+    int inliers = recoverPose(Eigen2CVmat(matrixE), pts2, pts1,
+                              Eigen2CVmat(cam_->K_[0]), cvR, cv_t, mask);
+    const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
+    Eigen::Quaterniond q(Rres);
+    Pose initT12(q, CVmat2Eigen(cv_t));
+    result = initT12;
+
+    return inliers > 0.75 * pts1.size();
+#else
+    Eigen::Matrix3d R1, R2;
+    Eigen::Vector3d t1, t2;
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(
+        matrixE, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d mat_pi_2;
+    mat_pi_2 << 0, -1, 0, 1, 0, 0, 0, 0, 1;
+    R1 = svd.matrixU() * mat_pi_2 * svd.matrixV().transpose();
+    t1 = svd.matrixU().col(2);
+    if (R1.determinant() < 0) {
+        R1 *= -1;
+    }
+    R2 = svd.matrixU() * mat_pi_2.transpose() * svd.matrixV().transpose();
+    if (R2.determinant() < 0) {
+        R2 *= -1;
+    }
+    t2 = -t1;
+    vector<Eigen::Matrix3d> Rs{R1, R1, R2, R2};
+    vector<Eigen::Vector3d> ts{t1, -t1, t2, -t2};
+    if (t1.head(2).norm() / t1.norm() < 0.9) {
+        cout << "Warning, horizontail move may small, trans: " << t1.transpose()
+             << "\n";
+    }
+
+    vector<pair<int, int> > id2UsefulDepth{{0, 0}, {1, 0}, {2, 0}, {3, 0}};
+
+    // 找出正确的旋转和平移
+    for (size_t j = 0; j < uv2obv.size(); ++j) {
+        const Eigen::Vector2d& p1 = uv2obv[j].head(2);
+        const Eigen::Vector2d p2 = uv2obv[j].tail(2);
+
+        string poseInfo("4 pose info:\n");
+        for (size_t k = 0; k < 4; ++k) {
+            double idepth1 = -1.0;
+            double depth = -1.0;
+            Pose T12(Eigen::Quaterniond(Rs[k]), ts[k]);
+            stringstream ss;
+            ss << T12;
+            poseInfo.append(fmt::format("{}\n", ss.str()));
+            if (GetHostFrameObservationInvDepth(p1, p2, cam_->Kinv_[0], T12,
+                                                idepth1)) {
+                depth = 1.0 / idepth1;
+            }
+            if (depth > kMinSceneDepthInCamera) {
+                ++id2UsefulDepth[k].second;
             }
         }
     }
 
+    cout << fmt::format("useful depth count: {}, {}, {}, {}\n",
+                        id2UsefulDepth[0].second, id2UsefulDepth[1].second,
+                        id2UsefulDepth[2].second, id2UsefulDepth[3].second);
+
+    sort(id2UsefulDepth.begin(), id2UsefulDepth.end(),
+         [](const pair<int, int>& p1, const pair<int, int>& p2) {
+             return p1.second > p2.second;
+         });
+
+    if ((id2UsefulDepth[0].second > 100 ||
+         id2UsefulDepth[0].second > static_cast<int>(uv2obv.size() * 0.75)) &&
+        id2UsefulDepth[1].second < static_cast<int>(uv2obv.size() * 0.9)) {
+        const int maxId = id2UsefulDepth[0].first;
+        cout << fmt::format(
+            "maxId: {}, maxNum: {}, second maxId: {}, second maxNum: {}\n",
+            maxId, id2UsefulDepth[0].second, id2UsefulDepth[1].first,
+            id2UsefulDepth[1].second);
+
+        Eigen::Quaterniond q(Rs[maxId]);
+        Pose initT12(q, ts[maxId]);
+        // initT12.t_wb_.normalize(); // 不能归一化？
+        result = initT12;
+        cout << "Initialize succeed, result: " << result << "\n";
+        return true;
+    }
+
     return false;
+#endif
 }
 
 bool Initializer::ConstructAndDecomposeEssentialMatrixOpenCV(
@@ -404,7 +488,7 @@ vector<Eigen::Vector2d> Initializer::ApplyTransform(
     for (const auto& p : pts) {
         Eigen::Vector3d ph(p.x(), p.y(), 1.0);
         Eigen::Vector3d pn = T * ph;
-        out.push_back({pn(0) / pn(2), pn(1) / pn(2)});
+        out.emplace_back(pn(0), pn(1));
     }
     return out;
 }
@@ -483,8 +567,8 @@ bool Initializer::ConstructAndDecomposeEssentialMatrixNormPoint(
     default_random_engine rng(rd());
     shuffle(uv2obv.begin(), uv2obv.end(), rng);
 
-    const int kSelectNum = min(
-        200, static_cast<int>(uv2obv.size()));  // 随机选取N个点求解本质矩阵E
+    const int kSelectNum =
+        min(20, static_cast<int>(uv2obv.size()));  // 随机选取N个点求解本质矩阵E
     const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
     vector<Eigen::Vector2d> ps1, ps2;
     vector<cv::Point2f> pts1, pts2;

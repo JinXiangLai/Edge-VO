@@ -113,7 +113,7 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond& _q) {
 ostream& operator<<(ostream& cout, const Pose& T) {
     cout << setprecision(5)
          << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg << " deg"
-         << " | " << T.t_wb_.transpose() * 1000 << " mm";
+         << " | " << T.t_wb_.transpose() << " m";
     return cout;
 }
 
@@ -1469,7 +1469,8 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,
-                          &curKFimg](unordered_set<Landmark*>& ps, const cv::Vec3b& color,
+                          &curKFimg](unordered_set<Landmark*>& ps,
+                                     const cv::Vec3b& color,
                                      vector<Point3d>& points,
                                      vector<cv::Vec3b>& colors) {
         points.reserve(10000);

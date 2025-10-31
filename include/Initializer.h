@@ -14,6 +14,27 @@ class Initializer {
     bool ConstructAndDecomposeEssentialMatrix(
         std::vector<Eigen::Vector4d>& uv2obv, Pose& result);
 
+    bool FindEssentialMatrixRansac(const std::vector<Eigen::Vector4d>& uv2obv,
+                                   Eigen::Matrix3d& matrixE,
+                                   const double inlinerRatio = 0.75,
+                                   const double successProb = 0.95);
+
+    Eigen::MatrixXd ConstructCoffeeMatrix(
+        const std::vector<Eigen::Vector2d>& ps1,
+        const std::vector<Eigen::Vector2d>& ps2, const Eigen::Matrix3d& normT1,
+        const Eigen::Matrix3d& normT2);
+
+    Eigen::Matrix3d GetEssentialMatrix(const Eigen::MatrixXd& coffeMatrix,
+                                       const Eigen::Matrix3d& normT1,
+                                       const Eigen::Matrix3d& normT2);
+
+    double ComputeEpipolarConstraintRmse(
+        const Eigen::Matrix3d& E, const std::vector<Eigen::Vector4d>& uv2obv);
+
+    bool FindRotationAndTranslation(const Eigen::Matrix3d& matrixE,
+                                    const std::vector<Eigen::Vector4d>& uv2obv,
+                                    Eigen::Matrix3d& R, Eigen::Vector3d& t);
+
     bool ConstructAndDecomposeEssentialMatrixOpenCV(
         std::vector<Eigen::Vector4d>& uv2obv, Pose& result);
 
