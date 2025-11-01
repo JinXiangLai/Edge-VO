@@ -256,7 +256,7 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
         return false;
     }
 
-#if 1
+#if 0
     vector<cv::Point2f> pts1, pts2;
     pts1.reserve(uv2obv.size());
     pts2.reserve(uv2obv.size());
@@ -310,14 +310,14 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
 
         string poseInfo("4 pose info:\n");
         for (size_t k = 0; k < 4; ++k) {
-            double idepth1 = -1.0;
+            double idepth1 = -1.0, idepth2 = -1.0;
             double depth = -1.0;
             Pose T12(Eigen::Quaterniond(Rs[k]), ts[k]);
             stringstream ss;
             ss << T12;
             poseInfo.append(fmt::format("{}\n", ss.str()));
-            if (GetHostFrameObservationInvDepth(p1, p2, cam_->Kinv_[0], T12,
-                                                idepth1)) {
+            if (GetHostAndCurFrameObservationDepth(p1, p2, cam_->Kinv_[0], T12,
+                                                   idepth1, idepth2)) {
                 depth = 1.0 / idepth1;
             }
             if (depth > kMinSceneDepthInCamera) {
@@ -335,9 +335,11 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
              return p1.second > p2.second;
          });
 
-    if ((id2UsefulDepth[0].second > 100 ||
-         id2UsefulDepth[0].second > static_cast<int>(uv2obv.size() * 0.75)) &&
-        id2UsefulDepth[1].second < static_cast<int>(uv2obv.size() * 0.9)) {
+    const int maxTriNum = id2UsefulDepth[0].second;
+    const int secondMaxTriNum = id2UsefulDepth[1].second;
+    if ((maxTriNum > 100 ||
+         maxTriNum > static_cast<int>(uv2obv.size() * 0.75)) &&
+        secondMaxTriNum < static_cast<int>(maxTriNum * 0.1 + 0.5)) {
         const int maxId = id2UsefulDepth[0].first;
         cout << fmt::format(
             "maxId: {}, maxNum: {}, second maxId: {}, second maxNum: {}\n",
