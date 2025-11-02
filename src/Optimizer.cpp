@@ -310,6 +310,8 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     const Eigen::MatrixXd& H, const Eigen::VectorXd& b, const int poseNum,
     const int pointNum, const int poseDim, const int pointDim,
     const bool& logOut) {
+    chrono::steady_clock::time_point tStart = chrono::steady_clock::now();
+
     /***
     *     T   p...
     * T   A   B
@@ -338,6 +340,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
         H.block(poseSize, poseSize, pointSize, pointSize);
     Eigen::MatrixXd Dinv = Eigen::MatrixXd::Zero(D.rows(), D.cols());
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+#pragma omp parallel for
     for (int i = 0; i < pointSize; i += pointDim) {
         //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
         if (abs(D(i, i)) > 1e-9) {
@@ -370,7 +373,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
         for (int j = 0; j < B.cols(); ++j)
             E(i, j) = -B(i, j) * Dinv(j, j);
     }
-    chrono::steady_clock::time_point t1_1 = chrono::steady_clock::now();
+    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     // 这是个稀疏矩阵，可以优化掉
     //Eigen::MatrixXd leftMatrix(H.rows(), H.cols());
@@ -379,7 +382,6 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     //leftMatrix.block(0, poseSize, poseSize, pointSize).noalias() = E;
     //leftMatrix.block(poseSize, 0, pointSize, poseSize).setZero();
     //leftMatrix.block(poseSize, poseSize, pointSize, pointSize).setIdentity();
-    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     // 求pose增量
     Eigen::MatrixXd newA = A + E * C;
@@ -392,20 +394,6 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     new_b.head(poseSize) = b.head(poseSize) + E * b.tail(pointSize);
     Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-    if (logOut) {
-        cout << "A:\n"
-             << A << endl
-             << "B:\n"
-             << B << endl
-             << "C:" << C.diagonal().transpose() << endl
-             << "D:" << D.diagonal().transpose() << endl
-             << "Dinv:" << Dinv.diagonal().transpose() << endl
-             << "E:\n"
-             << E << endl
-             << "newA:\n"
-             << newA << endl
-             << "newb: " << new_b.transpose() << endl;
-    }
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
     // 求point增量
@@ -420,19 +408,22 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     deltaX.tail(pointSize) = deltaPoint;
     chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
 
-    // cout << setprecision(5) << "deltaPose: "
-    //      << deltaPose.head(poseNum * window_[0]->Tcw_.Size()).transpose()
-    //      << "\n";
-    // cout << setprecision(5) << "deltaPoint: " << deltaPoint.head(10).transpose()
-    //      << "\n";
+    if (logOut) {
+        cout << fmt::format(
+            "assign memory spend: {:.1f}ms, calculate D.inv spend: {:.1f}ms, "
+            "calculate E mat spend: {:.1f}ms, "
+            "calculate dPose spend: {:.1f}ms, "
+            "calculate dPoint spend: {:.1f}ms, construct dX spend: {:.1f}ms, "
+            "total spend: {:.1f}\n",
+            ChronoMillisecTimeDuration(tStart, t0),
+            ChronoMillisecTimeDuration(t0, t1),
+            ChronoMillisecTimeDuration(t1, t2),
+            ChronoMillisecTimeDuration(t2, t3),
+            ChronoMillisecTimeDuration(t3, t4),
+            ChronoMillisecTimeDuration(t4, t5),
+            ChronoMillisecTimeDuration(tStart, t5));
+    }
 
-    // fmt::format(
-    //     "calculate D.inv spend: {:.1f}, calculate E mat spend: {:.1f}, "
-    //     "calculate left mat spend:{:.1f}, calculate dPose spend: {:.1f}, "
-    //     "calculate dPoint spend: {:.1f}, construct dX spend: {:.1f}\n",
-    //     ChronoMillisecTimeDuration(t0, t1), ChronoMillisecTimeDuration(t1, t1_1),
-    //     ChronoMillisecTimeDuration(t1_1, t2), ChronoMillisecTimeDuration(t2, t3),
-    //     ChronoMillisecTimeDuration(t3, t4), ChronoMillisecTimeDuration(t4, t5));
     return deltaX;
 }
 
@@ -535,7 +526,7 @@ bool Optimizer::ExecuteWindowOptimize() {
             chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
             delta_x = SchurCompleteSolve(
                 H_, g_, window_.size(), lastCost.usefulLandmarkNum,
-                window_[0]->Twc_.Size(), optLandmark_[0]->Size());
+                window_[0]->Twc_.Size(), optLandmark_[0]->Size(), i % 20 == 0);
             chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
             if (i == 0) {
                 cout << fmt::format("SchurCompleteSolve spend: {:.3f}ms.\n",
@@ -629,12 +620,13 @@ bool Optimizer::ExecuteWindowOptimize() {
     const double spendTime = ChronoMillisecTimeDuration(time1, time2);
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
-        "last mean proj cost: {:.1f},\npriorConstraintChi2: {:.1f}, "
+        "last mean proj cost: {:.1f}, gradient norm: {:.3f}, "
+        "\npriorConstraintChi2: {:.1f}, "
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
         "spend: {:.3f}ms in window\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
-        lastCost.priorConstraintChi2,
+        g_.norm(), lastCost.priorConstraintChi2,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / optLandmark_.size() * 100,
         spendTime);
