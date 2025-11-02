@@ -54,8 +54,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-        // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    //if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
         // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
@@ -296,9 +296,10 @@ bool Initializer::ConstructAndDecomposeEssentialMatrix(
     t2 = -t1;
     vector<Eigen::Matrix3d> Rs{R1, R1, R2, R2};
     vector<Eigen::Vector3d> ts{t1, -t1, t2, -t2};
-    if (t1.head(2).norm() / t1.norm() < 0.9) {
+    if (t1.head(2).norm() / t1.norm() < 0.5) {
         cout << "Warning, horizontail move may small, trans: " << t1.transpose()
              << "\n";
+        return false;
     }
 
     vector<pair<int, int> > id2UsefulDepth{{0, 0}, {1, 0}, {2, 0}, {3, 0}};

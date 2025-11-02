@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
                                 config->debugMessageSaveFolder, win.back()->id_,
                                 curF.id_, trans);
                 cv::imwrite(savePath, initer.debugMatchImg_);
-            
+
                 optimizer.AddOneKeyFeame(new KeyFrame(curF));
                 interaction->visualCurF = curF;  // 记录优化pose后的当前帧
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
@@ -248,6 +248,11 @@ int main(int argc, char** argv) {
         const bool caseMoveBaselineLOng =
             meanDepth > 0 && horDist > meanDepth * 0.5;
 
+        // 未全部完成初始化时，快速插入KF
+        const bool caseFastInsertKF =
+            findMatchRatio < 0.9 &&
+            static_cast<int>(win.size()) < config->maxKFnumInWindow;
+
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -260,11 +265,12 @@ int main(int argc, char** argv) {
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
         if (((trackLocalMapLow || caseOptflowTrackLow) &&
              horDist > 0.05 * meanDepth) ||
-            caseMoveBaselineLOng) {
+            caseMoveBaselineLOng || caseFastInsertKF) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
-                "caseMoveBaselineLOng: {}\n",
-                trackLocalMapLow, caseOptflowTrackLow, caseMoveBaselineLOng);
+                "caseMoveBaselineLOng: {}, caseFastInsertKF: {}\n",
+                trackLocalMapLow, caseOptflowTrackLow, caseMoveBaselineLOng,
+                caseFastInsertKF);
             {
                 static bool first = true;
                 ofstream f;

@@ -103,7 +103,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
-    constexpr int kStepInfoOut = 300000;
+    const int kStepInfoOut = lk1s.size() / 10;
 
     // 计算最大相对残差
     const Camera& cam = *cam_;
@@ -201,14 +201,15 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
 
     cout << fmt::format(
-        "curF BA: maxChi2: {:.1f}, set opt tracking variable residual "
+        "curF BA: maxChi2: {:.1f}, canUse2TrackNum: {}, set opt tracking "
+        "variable residual "
         "info.all.cost: {:.1f}, "
         "useful landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}, spend time: "
         "{:.3f}ms\ndebug "
         "residual info: {}\n",
-        maxChi2, info.cost, info.usefulLandmarkNum, info.totalConstraintNum,
-        info.meanCost, spendTime, debugInfo);
+        maxChi2, canUseNum, info.cost, info.usefulLandmarkNum,
+        info.totalConstraintNum, info.meanCost, spendTime, debugInfo);
     if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         info.cost = DBL_MAX;
     } else {
@@ -491,8 +492,8 @@ bool Optimizer::ExecuteWindowOptimize() {
         if (i == 0) {
             AdaptSetInitLambda();
             // SetInitLambda(10.0);
-            cout << "window BA: H_.diag: " << H_.diagonal().transpose()
-                 << "\ng_: " << g_.transpose() << "\n";
+            cout << "window BA: H_.diag: " << H_.diagonal().head(12).transpose()
+                 << "\ng_: " << g_.head(12).transpose() << "\n";
         }
 
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
@@ -822,14 +823,17 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             }
 
             // 三角化
-            double idepth1 = 0;
+            double idepth1 = 0, idepth2 = 0;
             if (!kf2T12.count(lk->host_)) {
                 kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
             }
             const Pose& T12 = kf2T12.at(lk->host_);
+            //if (config->useDepthImage ||
+            //    !GetHostFrameObservationInvDepth(
+            //        lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
             if (config->useDepthImage ||
-                !GetHostFrameObservationInvDepth(
-                    lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
+                !GetHostAndCurFrameObservationDepth(
+                    lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1, idepth2)) {
                 ++lk->failInitializeNum_;
                 continue;
             }
@@ -1434,7 +1438,7 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
 bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
                             const double& costRelativeAbsDiff,
                             const Eigen::VectorXd& delta) {
-    const bool lambdaTestEnough = lambda_ > 1e6 || lambda_ < 1e-6;
+    const bool lambdaTestEnough = lambda_ > 1e12 || lambda_ < 1e-12;
     if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
         cout << fmt::format("LM cost diff: {} converge!\n",
                             costRelativeAbsDiff);
@@ -2127,7 +2131,12 @@ void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
             }
         }
         debugTrackLostStatusVideoWriter_.write(showImg);
+        cv::imshow(fmt::format("window[{}], useful lk num: {}", i,
+                               usefulMapPointEachKf[i].size()),
+                   showImg);
     }
+    cv::waitKey();
+    cv::destroyAllWindows();
 }
 
 void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
