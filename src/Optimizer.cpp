@@ -335,22 +335,27 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     const int poseSize = poseNum * poseDim;
     const int pointSize = H.cols() - poseSize;
 
-    const Eigen::MatrixXd& A = H.block(0, 0, poseSize, poseSize);
-    const Eigen::MatrixXd& D =
+    // 这里若使用Eigen::MatrixXd&，那么会产生临时对象，导致内存分配，对于2000个地图点可能需要10ms完成，浪费巨大！！！
+    const Eigen::Block<const Eigen::MatrixXd>& A =
+        H.block(0, 0, poseSize, poseSize);
+    const Eigen::Block<const Eigen::MatrixXd>& D =
         H.block(poseSize, poseSize, pointSize, pointSize);
-    Eigen::MatrixXd Dinv = Eigen::MatrixXd::Zero(D.rows(), D.cols());
+
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    SetEigenMatrixAll0(Dinv_);
+    chrono::steady_clock::time_point tAssian = chrono::steady_clock::now();
+
 #pragma omp parallel for
     for (int i = 0; i < pointSize; i += pointDim) {
         //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
         if (abs(D(i, i)) > 1e-9) {
-            Dinv(i, i) = 1.0 / D(i, i);
+            Dinv_(i, i) = 1.0 / D(i, i);
         }
     }
     Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
     if (A.isApproxToConstant(0)) {
         // 仅更新point
-        deltaX.tail(pointSize) = Dinv * b.tail(pointSize);
+        deltaX.tail(pointSize) = Dinv_ * b.tail(pointSize);
         //cout << "D:\n"
         //     << D << endl
         //     << "Dinv:\n"
@@ -361,17 +366,19 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
         //     << endl;
         return deltaX;
     }
-    const Eigen::MatrixXd& B = H.block(0, poseSize, poseSize, pointSize);
-    const Eigen::MatrixXd& C = H.block(poseSize, 0, pointSize, poseSize);
+    const Eigen::Block<const Eigen::MatrixXd>& B =
+        H.block(0, poseSize, poseSize, pointSize);
+    const Eigen::Block<const Eigen::MatrixXd>& C =
+        H.block(poseSize, 0, pointSize, poseSize);
     // cout << "B - C.T:\n" << B-C.transpose() <<endl;
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     //const Eigen::MatrixXd E = -B * Dinv;
     // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
-    Eigen::MatrixXd E = Eigen::MatrixXd::Zero(B.rows(), Dinv.cols());
+    SetEigenMatrixAll0(E_);
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
-            E(i, j) = -B(i, j) * Dinv(j, j);
+            E_(i, j) = -B(i, j) * Dinv_(j, j);
     }
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
@@ -384,15 +391,15 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     //leftMatrix.block(poseSize, poseSize, pointSize, pointSize).setIdentity();
 
     // 求pose增量
-    Eigen::MatrixXd newA = A + E * C;
+    newA_.noalias() = A + E_ * C;
     //cout << "newA:\n" << newA << endl;
     // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
     //Eigen::VectorXd new_b = leftMatrix * b;
     // | I  E|
     // | 0  I| * b
     Eigen::VectorXd new_b = b;
-    new_b.head(poseSize) = b.head(poseSize) + E * b.tail(pointSize);
-    Eigen::VectorXd deltaPose = newA.inverse() * (new_b).head(poseSize);
+    new_b.head(poseSize) = b.head(poseSize) + E_ * b.tail(pointSize);
+    Eigen::VectorXd deltaPose = newA_.inverse() * (new_b).head(poseSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
@@ -400,7 +407,8 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
-    Eigen::VectorXd deltaPoint = Dinv * (new_b.tail(pointSize) - C * deltaPose);
+    Eigen::VectorXd deltaPoint =
+        Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     // cout << setprecision(5) << "deltaPoint: "<< deltaPoint.transpose() << endl;
@@ -410,13 +418,15 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
 
     if (logOut) {
         cout << fmt::format(
-            "assign memory spend: {:.1f}ms, calculate D.inv spend: {:.1f}ms, "
+            "reference memory spend: {:.1f}ms, assign memory spend: {:.1f}, "
+            "calculate D.inv spend: {:.1f}ms, "
             "calculate E mat spend: {:.1f}ms, "
             "calculate dPose spend: {:.1f}ms, "
             "calculate dPoint spend: {:.1f}ms, construct dX spend: {:.1f}ms, "
             "total spend: {:.1f}\n",
             ChronoMillisecTimeDuration(tStart, t0),
-            ChronoMillisecTimeDuration(t0, t1),
+            ChronoMillisecTimeDuration(t0, tAssian),
+            ChronoMillisecTimeDuration(tAssian, t1),
             ChronoMillisecTimeDuration(t1, t2),
             ChronoMillisecTimeDuration(t2, t3),
             ChronoMillisecTimeDuration(t3, t4),
@@ -476,6 +486,7 @@ bool Optimizer::ExecuteWindowOptimize() {
     chrono::steady_clock::time_point time1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
     bool acceptNewVariableStatus = true;
+    WinBApreAssignMatrixMemory();
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
@@ -1478,26 +1489,13 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     const int depthDim = 1;
 
     // 或许我们不知道residual，Jacobian的行数，但是H矩阵以及g向量的维度是可知的
-    //const int variableDim =
-    //    window_.size() * poseDim + optLandmark_.size() * depthDim;
-    int variableDim = window_.size() * poseDim;
-    for (const Landmark* lk : optLandmark_) {
-        variableDim += lk->NoUsed() ? 0 : lk->Size();
-    }
-    if (logOut) {
-        cout << fmt::format("window_.size: {}, opt variable dim: {}\n",
-                            window_.size(), variableDim);
-    }
 
     const bool canFixSecondKF =
         window_.size() >
         static_cast<size_t>(config->maxKFnumInWindow / 2.0 + 0.5);
 
-    H_.resize(variableDim, variableDim);
-    H_.setZero();
-    g_.resize(variableDim);
+    SetEigenMatrixAll0(H_);
     g_.setZero();
-
     // clang-format off
     // 计算residual & jacobian
     /*********
@@ -2004,6 +2002,36 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
         }
     }
     return markCount;
+}
+
+void Optimizer::WinBApreAssignMatrixMemory() {
+    // 实验发现，执行BA优化时，内存分配操作占总耗时80%以上，真是惊人！！！
+    // 此外，不能使用 const Eigen::Matrix& a = A.block()，这样仍会造成临时对象内存分配，
+    // 要使用const auto& a = A.block(); 因为block()返回的是 Eigen::Block<const Eigen::MatrixXd>对象
+
+    // 为了避免内存重复分配，LM迭代过程中，不应该再改变状态量维度，若要剔除某个点，直接使其雅可比为0即可，此时该状态量梯度自然变为0
+    int poseDim = window_.size() * window_[0]->Twc_.Size();
+    int landmarkDim = 0;
+    for (const Landmark* lk : optLandmark_) {
+        landmarkDim += lk->NoUsed() ? 0 : lk->Size();
+    }
+    const int variableDim = poseDim + landmarkDim;
+    cout << fmt::format("window_.size: {}, opt variable dim: {}\n",
+                        window_.size(), variableDim);
+
+    // 分配求解信息矩阵和梯度的矩阵内存
+    H_.resize(variableDim, variableDim);
+    g_.resize(variableDim);
+
+    // 分配舒尔补求解所需矩阵内存
+    Dinv_.resize(landmarkDim, landmarkDim);
+    E_.resize(poseDim, landmarkDim);
+    newA_.resize(poseDim, landmarkDim);
+}
+
+void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat) {
+    // Eigen 大的matrix使用SetZero()函数仍然十分耗时，可能达10ms，这里需要找到一个快速置0的方法
+    std::memset(mat.data(), 0.0, mat.size() * sizeof(double));
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {
