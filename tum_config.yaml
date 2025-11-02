@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg1_desk
+dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg1_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -53,8 +53,8 @@ initLambda: 100.0 # LM优化算法lambda初值
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
 
-fastTh1: 20 # 角点，暂不启用，目标是仅利用边缘点
-fastTh2: 7
+fastTh1: 15 # 角点，暂不启用，目标是仅利用边缘点
+fastTh2: 5
 fastNum: 0 # 大于周边16个像素多少个
 extractFastNumEachFrame: 2000 # 每个帧提取的关键点数量，网格划分依据
 maxFlowTrackError: 10 # 光流跟踪最大的误差
