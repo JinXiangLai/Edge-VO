@@ -484,10 +484,14 @@ bool Optimizer::ExecuteWindowOptimize() {
     ResidualInfo firstCost = lastCost;
     chrono::steady_clock::time_point time1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
+    bool acceptNewVariableStatus = true;
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
-        ConstructJ_H_b_g(i == 0);
+        if (acceptNewVariableStatus) {
+            // 只在状态量更新时需要重新计算信息矩阵和梯度，以节省大量的计算时间
+            ConstructJ_H_b_g(i == 0);
+        }
 
         if (i == 0) {
             AdaptSetInitLambda();
@@ -593,14 +597,13 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
-        bool accept = false;
         double costRelativeAbsDiff = 100;
-
         const double predictReduction =
             ComputePredictionReduction(delta_x, g_, H_);
-        UpdateLMlambda(lastCost, newCost, predictReduction, accept,
-                       continousNoImprovementNum, costRelativeAbsDiff);
-        if (!accept) {
+        UpdateLMlambda(lastCost, newCost, predictReduction,
+                       acceptNewVariableStatus, continousNoImprovementNum,
+                       costRelativeAbsDiff);
+        if (!acceptNewVariableStatus) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
                 if (!optLandmark_[i]->NoUsed()) {
                     optLandmark_[i]->BackUpStatus();
@@ -716,8 +719,12 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
+    bool acceptNewVariableStatus = true;
     for (int i = 0; i < maxIte_; ++i) {
-        CalculateHandGradiantCurFrame(stableLks, stableObvs, Twc2, H_, g_);
+        if (acceptNewVariableStatus) {
+            // 只需要在状态量更新的时候重新线性化一次即可，以节省计算时间
+            CalculateHandGradiantCurFrame(stableLks, stableObvs, Twc2, H_, g_);
+        }
         if (lastCost.usefulLandmarkNum < 20) {
             cout << fmt::format("Error useful constrint num: {}\n",
                                 lastCost.usefulLandmarkNum);
@@ -765,14 +772,14 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                 lambda_);
         }
 
-        bool accept = false;
         double costRelativeAbsDiff = 100;
         const double predictReduction =
             ComputePredictionReduction(delta_x, g_, H_);
-        UpdateLMlambda(lastCost, newCost, predictReduction, accept,
-                       continousNoImprovementNum, costRelativeAbsDiff);
+        UpdateLMlambda(lastCost, newCost, predictReduction,
+                       acceptNewVariableStatus, continousNoImprovementNum,
+                       costRelativeAbsDiff);
         // LM 方法
-        if (!accept) {
+        if (!acceptNewVariableStatus) {
             Twc2 = poseBackup;
         } else {
             lastCost = newCost;
