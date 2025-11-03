@@ -570,44 +570,18 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
 
         // 状态更新
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
         UpdateStatusVariables(delta_x);
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow();
+        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+
         if (margKFstatus_) {
             // 需要考虑先验残差约束
             newCost.priorConstraintChi2 = CalculatePriorCost(delta_x);
         }
         newCost.cost += newCost.priorConstraintChi2;
-
-        if (newCost.usefulLandmarkNum != lastCost.usefulLandmarkNum && 0) {
-            // TODO：这里需要使用更新前的pose
-            cout << "[WARNING]: "
-                 << "recalculate last cost, last usefulNUm, new usefulNum: "
-                 << lastCost.cost << ", " << lastCost.usefulLandmarkNum << ", "
-                 << newCost.usefulLandmarkNum << endl;
-            // TODO: 重新计算时，需要使用旧的poses，旧的landmarks位置，以及新的landmarks的noUsed标志，比较麻烦
-            lastCost = CalculateResidualWindow(true);
-            cout << "new usefulNum: " << lastCost.usefulLandmarkNum << endl;
-        }
-
-        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
-            cout << fmt::format(
-                "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
-                "{:.1f}, useful lk num: {}, "
-                "lambda: {}.\n",
-                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
-                lambda_);
-
-            cout << fmt::format("ConstructJ_H_b_g spend: {:.3f}ms.\n",
-                                ChronoMillisecTimeDuration(t1, t2));
-
-            chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
-            cout << fmt::format("LM one iteration spend: {:.3f}ms.\n",
-                                ChronoMillisecTimeDuration(t1, t5));
-
-            cout << "the first two pose delta x: "
-                 << delta_x.head(12).transpose() << "\n";
-        }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
         double costRelativeAbsDiff = 100;
@@ -631,6 +605,27 @@ bool Optimizer::ExecuteWindowOptimize() {
             if (margKFstatus_) {
                 UpdatePriorDeltaX0(delta_x);
             }
+        }
+
+        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
+            cout << fmt::format(
+                "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
+                "{:.1f}, useful lk num: {}, "
+                "lambda: {}.\n",
+                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
+                lambda_);
+            chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
+            cout << fmt::format(
+                "ConstructJ_H_b_g spend: {:.3f}ms, UpdateStatusVariables "
+                "spend: {:.3f}ms, CalculateResidualWindow spend: {:.3f}ms, LM "
+                "one iteration spend: {:.3f}ms\n",
+                ChronoMillisecTimeDuration(t1, t2),
+                ChronoMillisecTimeDuration(t3, t4),
+                ChronoMillisecTimeDuration(t4, t5),
+                ChronoMillisecTimeDuration(t1, t6));
+
+            cout << "the first two pose delta x: "
+                 << delta_x.head(12).transpose() << "\n";
         }
 
         if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
