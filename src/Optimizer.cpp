@@ -349,8 +349,10 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
 #pragma omp parallel for
     for (int i = 0; i < pointSize; i += pointDim) {
         //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
-        if (abs(D(i, i)) > 1e-9) {
+        if (abs(D(i, i)) != 0.) {
             Dinv_(i, i) = 1.0 / D(i, i);
+        } else {
+            Dinv_(i, i) = 0.;  // 由于只reset一次
         }
     }
     Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
@@ -381,6 +383,10 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
         for (int j = 0; j < B.cols(); ++j)
             E_(i, j) = -B(i, j) * Dinv_(j, j);
     }
+    // E_.noalias() = -B;
+    // for (int j = 0; j < E_.cols(); ++j) {
+    //     E_.col(j) *= Dinv_(j, j);
+    // }
     chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
     // 这是个稀疏矩阵，可以优化掉
@@ -400,7 +406,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // | 0  I| * b
     Eigen::VectorXd new_b = b;
     new_b.head(poseSize) = b.head(poseSize) + E_ * b.tail(pointSize);
-    Eigen::VectorXd deltaPose = newA_.inverse() * new_b.head(poseSize);
+    Eigen::VectorXd deltaPose = newA_.llt().solve(new_b.head(poseSize));
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
@@ -408,9 +414,12 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
-    // 由于Dinv_是稀疏的对角线矩阵，避免不必要的加法
+    // 由于Dinv_是稀疏的对角线矩阵，避免不必要的加法，需注意使用array
+    // Eigen::VectorXd deltaPoint =
+    //     Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     Eigen::VectorXd deltaPoint =
-        Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
+        Dinv_.diagonal().array() *
+        (new_b.tail(pointSize) - C * deltaPose).array();
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     // cout << setprecision(5) << "deltaPoint: "<< deltaPoint.transpose() << endl;
@@ -1433,9 +1442,9 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
     const double rho = costRelativeAbsDiff / (predictReduction + 1e-12);
     if (rho > 0) {
         if (rho > 0.75) {
-            lambda_ = max(0.3 * lambda_, 1e-6);
+            lambda_ = max(0.3 * lambda_, 1e-9);
         } else {
-            lambda_ = max(0.99 * lambda_, 1e-6);
+            lambda_ = max(0.99 * lambda_, 1e-9);
         }
         accept = true;
         continousNoImprovementNum = 0;
