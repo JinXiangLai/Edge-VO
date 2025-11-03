@@ -1,6 +1,7 @@
 #ifndef CLASS_OPTIMIZER
 #define CLASS_OPTIMIZER
 
+#include <fmt/core.h>
 #include <memory>
 #include <vector>
 
@@ -146,7 +147,19 @@ class Optimizer {
 
     void WinBApreAssignMatrixMemory();
 
-    void SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat);
+    void SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
+                            const bool logOut = false);
+
+    template <int rows, int cols>
+    bool MatrixBlockReset(const int x, const int y, const uint64_t addr) {
+        // TODO：尝试使用指针地址
+        if (hasResetHessianblock_.count(addr)) {
+            return false;
+        }
+        H_.block<rows, cols>(x, y).setZero();
+        hasResetHessianblock_.insert(addr);
+        return true;
+    }
 
     void Reset() {
         window_.clear();
@@ -188,6 +201,8 @@ class Optimizer {
 
     cv::VideoWriter debugTrackLostStatusVideoWriter_;
     void WriteDebugTrackLostStatus(const KeyFrame& curF);
+
+    std::unordered_set<uint64_t> hasResetHessianblock_;
 };
 
 #endif

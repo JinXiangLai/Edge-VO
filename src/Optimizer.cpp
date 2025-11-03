@@ -342,7 +342,8 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
         H.block(poseSize, poseSize, pointSize, pointSize);
 
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-    SetEigenMatrixAll0(Dinv_);
+    // 只需在分配内存时置0即可，难点是信息矩阵的重置，因为H_矩阵是使用+=
+    // SetEigenMatrixAll0(Dinv_);
     chrono::steady_clock::time_point tAssian = chrono::steady_clock::now();
 
 #pragma omp parallel for
@@ -375,7 +376,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     //const Eigen::MatrixXd E = -B * Dinv;
     // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
-    SetEigenMatrixAll0(E_);
+    // SetEigenMatrixAll0(E_);
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
             E_(i, j) = -B(i, j) * Dinv_(j, j);
@@ -399,7 +400,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // | 0  I| * b
     Eigen::VectorXd new_b = b;
     new_b.head(poseSize) = b.head(poseSize) + E_ * b.tail(pointSize);
-    Eigen::VectorXd deltaPose = newA_.inverse() * (new_b).head(poseSize);
+    Eigen::VectorXd deltaPose = newA_.inverse() * new_b.head(poseSize);
     chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
@@ -407,6 +408,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
     // D*deltaX_point = b - C*deltaX_pose
     // deltaX_point = D.inv * (b - C*deltaX_pose)
+    // 由于Dinv_是稀疏的对角线矩阵，避免不必要的加法
     Eigen::VectorXd deltaPoint =
         Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
@@ -1494,7 +1496,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         window_.size() >
         static_cast<size_t>(config->maxKFnumInWindow / 2.0 + 0.5);
 
-    SetEigenMatrixAll0(H_);
+    // SetEigenMatrixAll0(H_, logOut);
     g_.setZero();
     // clang-format off
     // 计算residual & jacobian
@@ -1527,6 +1529,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     Eigen::Matrix<double, 2, 1> B;
     Eigen::Matrix<double, 1, 2> Bt;
 
+    hasResetHessianblock_.clear();
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         Landmark* p = optLandmark_[i];
         if (p->NoUsed()) {
@@ -1646,18 +1649,51 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             *******************************************************************/
             // clang-format on
             A1t = A1.transpose();
+            MatrixBlockReset<6, 6>(
+                a1j, a1j,
+                reinterpret_cast<uint64_t>(&H_.block<6, 6>(a1j, a1j)(0, 0)));
             H_.block<6, 6>(a1j, a1j) += (A1.transpose() * A1) * w;
+
+            MatrixBlockReset<6, 6>(
+                a1j, a2j,
+                reinterpret_cast<uint64_t>(&H_.block<6, 6>(a1j, a2j)(0, 0)));
             H_.block<6, 6>(a1j, a2j) += A1t * A2 * w;
+
+            MatrixBlockReset<6, 1>(
+                a1j, bj,
+                reinterpret_cast<uint64_t>(&H_.block<6, 1>(a1j, bj)(0, 0)));
             H_.block<6, 1>(a1j, bj) += A1t * B * w;
 
             A2t = A2.transpose();
+            MatrixBlockReset<6, 6>(
+                a2j, a1j,
+                reinterpret_cast<uint64_t>(&H_.block<6, 6>(a2j, a1j)(0, 0)));
             H_.block<6, 6>(a2j, a1j) += A2t * A1 * w;
+
+            MatrixBlockReset<6, 6>(
+                a2j, a2j,
+                reinterpret_cast<uint64_t>(&H_.block<6, 6>(a2j, a2j)(0, 0)));
             H_.block<6, 6>(a2j, a2j) += (A2.transpose() * A2) * w;
+
+            MatrixBlockReset<6, 1>(
+                a2j, bj,
+                reinterpret_cast<uint64_t>(&H_.block<6, 1>(a2j, bj)(0, 0)));
             H_.block<6, 1>(a2j, bj) += A2t * B * w;
 
             Bt = B.transpose();
+            MatrixBlockReset<1, 6>(
+                bj, a1j,
+                reinterpret_cast<uint64_t>(&H_.block<1, 6>(bj, a1j)(0, 0)));
             H_.block<1, 6>(bj, a1j) += Bt * A1 * w;
+
+            MatrixBlockReset<1, 6>(
+                bj, a2j,
+                reinterpret_cast<uint64_t>(&H_.block<1, 6>(bj, a2j)(0, 0)));
             H_.block<1, 6>(bj, a2j) += Bt * A2 * w;
+
+            MatrixBlockReset<1, 1>(
+                bj, bj,
+                reinterpret_cast<uint64_t>(&H_.block<1, 1>(bj, bj)(0, 0)));
             H_.block<1, 1>(bj, bj) += (B.transpose() * B) * w;
             // clang-format off
             /********************* 利用稀疏性计算g=-J'*b ****************************
@@ -2027,11 +2063,25 @@ void Optimizer::WinBApreAssignMatrixMemory() {
     Dinv_.resize(landmarkDim, landmarkDim);
     E_.resize(poseDim, landmarkDim);
     newA_.resize(poseDim, landmarkDim);
+
+    // 置0舒尔补矩阵，因为其运算是=，只需reset一次
+    SetEigenMatrixAll0(Dinv_);
+    SetEigenMatrixAll0(E_);
+    SetEigenMatrixAll0(newA_);
+    // 难点是信息矩阵H_，其运算是+=，采用延迟重置方案
+    SetEigenMatrixAll0(H_, true);
 }
 
-void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat) {
+void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
+                                   const bool logOut) {
     // Eigen 大的matrix使用SetZero()函数仍然十分耗时，可能达10ms，这里需要找到一个快速置0的方法
-    std::memset(mat.data(), 0.0, mat.size() * sizeof(double));
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    std::memset(mat.data(), 0, mat.size() * sizeof(double));
+    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    if (logOut) {
+        cout << fmt::format("Reset matrix[{}x{}] spend {:.3f}ms\n", mat.rows(),
+                            mat.cols(), ChronoMillisecTimeDuration(t0, t1));
+    }
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {
