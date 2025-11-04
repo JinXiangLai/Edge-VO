@@ -109,12 +109,15 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
     vector<double> errorVec(lk1s.size(), 0);
+    vector<double> usefulTrackDepth(lk1s.size(), 0.);
+    lastKFmeanDepth_ = 0.;
     for (size_t i = 0; i < lk1s.size(); ++i) {
         const Eigen::Vector3d pc = Tc2w * lk1s[i]->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
         const bool inRange = InRange(img, px.cast<int>());
         if (inRange && pc.z() > kMinSceneDepthInCamera) {
             errorVec[i] = (px - obvs[i]).squaredNorm();
+            usefulTrackDepth[i] = pc.z();
         } else {
             errorVec[i] = kMaxSetError;
         }
@@ -187,6 +190,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
             info.cost += idx2Chi2.second;
             ++info.totalConstraintNum;
             ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
+            lastKFmeanDepth_ += usefulTrackDepth[idx2Chi2.first];
             if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
                 break;
             }
@@ -200,21 +204,24 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
 
+    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
+        info.cost = DBL_MAX;
+        lastKFmeanDepth_ = 0.;
+    } else {
+        info.meanCost = info.cost / info.totalConstraintNum;
+        lastKFmeanDepth_ /= canUseNum;
+    }
     cout << fmt::format(
         "curF BA: maxChi2: {:.1f}, canUse2TrackNum: {}, set opt tracking "
         "variable residual "
         "info.all.cost: {:.1f}, "
         "useful landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}, spend time: "
-        "{:.3f}ms\ndebug "
+        "{:.3f}ms\nlastKFmeanDepth_: {:.3f}, debug "
         "residual info: {}\n",
         maxChi2, canUseNum, info.cost, info.usefulLandmarkNum,
-        info.totalConstraintNum, info.meanCost, spendTime, debugInfo);
-    if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
-        info.cost = DBL_MAX;
-    } else {
-        info.meanCost = info.cost / info.totalConstraintNum;
-    }
+        info.totalConstraintNum, info.meanCost, spendTime, lastKFmeanDepth_,
+        debugInfo);
     return info;
 }
 
@@ -1454,7 +1461,8 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
 bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
                             const double& costRelativeAbsDiff,
                             const Eigen::VectorXd& delta) {
-    const bool lambdaTestEnough = lambda_ > 1e12 || lambda_ < 1e-12;
+    const bool lambdaTestEnough = lambda_ > config->maxLambdaValueLM ||
+                                  lambda_ < (1.0 / config->maxLambdaValueLM);
     if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
         cout << fmt::format("LM cost diff: {} converge!\n",
                             costRelativeAbsDiff);
@@ -1491,8 +1499,8 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         Rcw.insert({window_[i], window_[i]->Tcw_.q_wb_.toRotationMatrix()});
         Rwc.insert({window_[i], window_[i]->Twc_.q_wb_.toRotationMatrix()});
     }
-    const int poseDim = window_[0]->Twc_.Size();
-    const int depthDim = 1;
+    constexpr int poseDim = 6;  // window_[0]->Twc_.Size();
+    constexpr int depthDim = 1;
 
     // 或许我们不知道residual，Jacobian的行数，但是H矩阵以及g向量的维度是可知的
 

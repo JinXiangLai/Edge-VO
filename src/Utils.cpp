@@ -1564,7 +1564,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     // 可视化相机pose
     vector<Point3d> startEndCameraPos(2);
     const double coordinateScale =
-        0.5 * (vTwc[0].t_wb_ - vTwc[1].t_wb_).head(2).norm();
+        0.5 * (vTwc[0].t_wb_ - vTwc[1].t_wb_).norm();
     for (size_t i = 0; i < vTwc.size(); ++i) {
         // Eigen默认列优先，这里先将其改为行优先以与Mat适配
         Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Twc =
