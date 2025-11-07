@@ -1,16 +1,16 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg1_desk
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
 Camera.model: "pinhole"
 
 ## fr1
-Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
-Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
+# Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
+# Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
-#Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
-#Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
+Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
+Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
 
 Qcg: [0, 0, 0, 1] # qx qy qz qw
 Pcg: [0, 0, 0] # tx ty tz
@@ -30,8 +30,8 @@ maxTrackProjectPixelError: 2.0 # 2.0 跟踪成功的条件是重投影dt残差�
 
 maxDepthConvergeStd: 0.01 # 深度收敛的标准差，由于逆深度与正深度是非线性关系，不能给正深度的收敛标准
 abnormalProjectResidual: 15 # 15个像素距离为异常残差值，不能参与优化步骤
-huberDelta: 6 # 胡伯核函数参数，sqrt(chi2)
-maxProjectError: 12 # 超过这个残差，意味着不能用于优化
+huberDelta: 9 # 胡伯核函数参数，sqrt(chi2)
+maxProjectError: 15 # 超过这个残差，意味着不能用于优化
 keepLastKFnumInWindow: 3 # 滑窗内KF数量控制
 maxKFnumInWindow: 7
 useMarginalization: false # 是否使用边缘化最老帧

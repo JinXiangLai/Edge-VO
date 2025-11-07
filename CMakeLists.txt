@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 # ROS 的g2o会污染现版本，需要把 source ros关闭
 project(edge_slam)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 
 # 默认构建类型
 if (NOT CMAKE_BUILD_TYPE)

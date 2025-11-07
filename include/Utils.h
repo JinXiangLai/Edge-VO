@@ -374,6 +374,8 @@ class InteractionParam {
     void ShowGlobalMapPoint();
     bool drawEpipolarMatch = false;
     std::vector<Eigen::Vector3d> trajectory;
+    std::string imgSaveFolderPath;
+    bool SetImgSaveFolderPath(const std::string& path);
 };
 extern InteractionParam* interaction;
 #endif

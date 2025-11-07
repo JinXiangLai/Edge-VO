@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <numeric>  // 用于 std::accumulate
 
@@ -1563,8 +1564,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化相机pose
     vector<Point3d> startEndCameraPos(2);
-    const double coordinateScale =
-        0.5 * (vTwc[0].t_wb_ - vTwc[1].t_wb_).norm();
+    const double coordinateScale = 0.5 * (vTwc[0].t_wb_ - vTwc[1].t_wb_).norm();
     for (size_t i = 0; i < vTwc.size(); ++i) {
         // Eigen默认列优先，这里先将其改为行优先以与Mat适配
         Eigen::Matrix<double, 4, 4, Eigen::RowMajor> _Twc =
@@ -1648,7 +1648,11 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     // 运行事件循环，使窗口响应用户输入
     while (!interaction->resetWindow && curId == interaction->visualCurF.id_ &&
            !interaction->drawEpipolarMatch) {
-        window.spinOnce(100);
+        window.spinOnce(50);
+        static int counter = 0;
+        const string imgSavePath =
+            fmt::format("{}/{}.png", interaction->imgSaveFolderPath, ++counter);
+        window.saveScreenshot(imgSavePath);
     }
     interaction->resetWindow = false;
     window.removeAllWidgets();
@@ -1753,4 +1757,13 @@ void InteractionParam::ShowGlobalMapPoint() {
 
     // 运行事件循环，使窗口响应用户输入
     window.spin();
+}
+
+bool InteractionParam::SetImgSaveFolderPath(const std::string& path) {
+    if (filesystem::exists(path)) {
+        filesystem::remove_all(path);
+    }
+    imgSaveFolderPath = path;
+    cout << "imgSaveFolderPath: " << imgSaveFolderPath << "\n";
+    return filesystem::create_directory(path);
 }

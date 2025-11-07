@@ -1,3 +1,20 @@
+## VO在数据集运行结果
+1. tum fr2_desk
+
+![tum fr2_desk结果](result_images/viz3d_screenshot_fr2_desk.gif)
+
+2. tum fr2_xyz
+
+![tum fr2_xyz结果](result_images/viz3d_screenshot_fr2_xyz.gif)
+
+3. tum fr1_desk
+
+![tum fr1_desk结果](result_images/viz3d_screenshot_fr1_desk.gif)
+
+4. tum fr1_xyz
+
+![tum fr1_xyz结果](result_images/viz3d_screenshot_fr1_xyz.gif)
+
 ## 剔除深度异常点(depth < 0.5 or depth very big)
   1. 一般而言，正确深度被观测到的次数会很多
 

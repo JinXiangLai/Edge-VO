@@ -47,6 +47,10 @@ int main(int argc, char** argv) {
     viz::Viz3d window("Local Map Viewer");
     window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
+    if (!interaction->SetImgSaveFolderPath(fmt::format(
+            "/home/ht/Pictures/viz3d_screenshot", config->debugMessageSaveFolder))) {
+        cout << "Create viz3d image folder failed!\n";
+    }
     InitColor();
 
     const int firstImgIdx = config->firstImgIdx;
