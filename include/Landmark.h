@@ -99,6 +99,7 @@ class Landmark {
     bool CanBeUseForOptimization() const {
         return initialized_ && !canBedelete_ && !noUsed_;
     }
+    void SetInvZvalue(const double& invZ) { invZ_ = invZback_ = invZ; }
 
     //void AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv);
     //std::mutex mute_;

@@ -775,7 +775,7 @@ size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
                 if (config->useDepthImage) {
                     landmark_[i]->invDepthCov_ = 0.005;
                     landmark_[i]->obvTime_ = 1e3;
-                    landmark_[i]->invZ_ = 1.0 / d;
+                    landmark_[i]->SetInvZvalue(1.0 / d);
                 }
             }
             // host帧也要增加与landmark的相互观测

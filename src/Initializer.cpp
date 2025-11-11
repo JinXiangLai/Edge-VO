@@ -54,8 +54,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    //if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
         // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
@@ -153,7 +153,7 @@ double Initializer::ComputeEpipolarConstraintRmse(
 bool Initializer::FindEssentialMatrixRansac(
     const std::vector<Eigen::Vector4d>& uv2obv, Eigen::Matrix3d& matrixE,
     const double inlinerRatio, const double successProb) {
-    constexpr int kSampleNum = 8;  // 使用8点法
+    constexpr int kSampleNum = 15;  // 使用8点法
     if (uv2obv.size() < kSampleNum) {
         cout << fmt::format("match pair num: {}, min fit num: {}!!!\n",
                             uv2obv.size(), kSampleNum);

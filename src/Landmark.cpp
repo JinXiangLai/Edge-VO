@@ -53,9 +53,9 @@ void Landmark::SetTriangulateResult(const double invZ) {
         // 使用真值深度来验证BA优化有效性
         return;
     }
-    invZ_ = 1.0 / trueDepth_; // invZ;
+    invZback_ = invZ_ = 1.0 / trueDepth_; // invZ;
 #else
-    invZ_ = invZ;
+    invZback_ = invZ_ = invZ;
 #endif
     obvTime_ = 1;
     failInitializeNum_ = 0;
@@ -127,7 +127,7 @@ bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
         if (pc2.z() < kMinSceneDepthInCamera) {
             return false;
         }
-        invZ_ = 1.0 / pc2.z();
+        invZback_ = invZ_ = 1.0 / pc2.z();
     }
 
     // 不在这里删除，因为构建边缘化信息需要

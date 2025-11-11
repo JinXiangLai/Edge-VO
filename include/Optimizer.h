@@ -10,6 +10,8 @@
 #include "Landmark.h"
 #include "Pose.h"
 
+constexpr int kPoseDim = 6;
+constexpr int kPointDim = 1;
 class Optimizer {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -38,13 +40,14 @@ class Optimizer {
     ResidualInfo SetOptimizeLandmarkForTracking(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
+        const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stablePws,
         std::vector<Eigen::Vector2d>& stableObvs);
 
-    void CalculateHandGradiantCurFrame(const std::vector<Landmark*>& lk1s,
-                                       const std::vector<Eigen::Vector2d>& obvs,
-                                       const Pose& Twc2, Eigen::MatrixXd& H,
-                                       Eigen::VectorXd& g);
+    void CalculateHandGradiantCurFrame(
+        const std::vector<Landmark*>& lk1s,
+        const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
+        Eigen::Matrix<double, kPoseDim, kPoseDim>& H,
+        Eigen::Matrix<double, kPoseDim, 1>& g);
 
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
                                        const Eigen::VectorXd& b,
@@ -125,14 +128,19 @@ class Optimizer {
                         const ResidualInfo& newCost,
                         const double predictReduction, bool& accept,
                         int& continousNoImprovementNum,
-                        double& costRelativeAbsDiff);
+                        double& costRelativeAbsDiff, double& lambda);
 
     double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
                                       const Eigen::VectorXd& g,
                                       const Eigen::MatrixXd& H);
 
+    double ComputePredictionReductionFrame(
+        const double lambda, const Eigen::Matrix<double, kPoseDim, 1>& deltaX,
+        const Eigen::Matrix<double, kPoseDim, 1>& g,
+        const Eigen::Matrix<double, kPoseDim, kPoseDim>& H);
+
     bool LMstopJudge(const int& continousNoImprovementNum,
-                     const double& costRelativeAbsDiff,
+                     const double& costRelativeAbsDiff, const double lambda,
                      const Eigen::VectorXd& delta);
 
     void PreSelectLandmarkForTracking(KeyFrame::OpticalFlowStruct& optFlw,

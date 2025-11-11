@@ -1649,10 +1649,10 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     while (!interaction->resetWindow && curId == interaction->visualCurF.id_ &&
            !interaction->drawEpipolarMatch) {
         window.spinOnce(50);
-        static int counter = 0;
-        const string imgSavePath =
-            fmt::format("{}/{}.png", interaction->imgSaveFolderPath, ++counter);
-        window.saveScreenshot(imgSavePath);
+        // static int counter = 0;
+        // const string imgSavePath =
+        //     fmt::format("{}/{}.png", interaction->imgSaveFolderPath, ++counter);
+        // window.saveScreenshot(imgSavePath);
     }
     interaction->resetWindow = false;
     window.removeAllWidgets();

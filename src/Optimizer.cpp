@@ -98,7 +98,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stableLks,
+    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stablePws,
     std::vector<Eigen::Vector2d>& stableObvs) {
 
     ResidualInfo info;
@@ -185,7 +185,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         for (const pair<int, double>& idx2Chi2 :
              resampleStableLkIndex2Chi2[i]) {
 
-            stableLks.emplace_back(lk1s[idx2Chi2.first]);
+            stablePws.emplace_back(lk1s[idx2Chi2.first]);
             stableObvs.emplace_back(obvs[idx2Chi2.first]);
             info.cost += idx2Chi2.second;
             ++info.totalConstraintNum;
@@ -228,18 +228,9 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
 void Optimizer::CalculateHandGradiantCurFrame(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    Eigen::MatrixXd& H, Eigen::VectorXd& g) {
+    Eigen::Matrix<double, 6, 6>& H, Eigen::Matrix<double, 6, 1>& g) {
     constexpr int resDim = 2;
-    int optVariableDim = -1;
-    if (!onlyPoseUpdate_) {
-        optVariableDim = Twc2.Size() + lk1s.size() * lk1s[0]->Size();
-    } else {
-        optVariableDim = Twc2.Size();
-    }
-
-    H.resize(optVariableDim, optVariableDim);
     H.setZero();
-    g.resize(optVariableDim);
     g.setZero();
 
     /******** 投影过程 ********
@@ -258,8 +249,7 @@ void Optimizer::CalculateHandGradiantCurFrame(
 
     // res w.r.t px2 [2x2]的单位矩阵
     // px2 w.r.t Pc2 [2x3]
-    Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm =
-        lk1s[0]->cam_->K_[0].block(0, 0, 2, 3);
+    Eigen::Matrix<double, 2, 3> J_px2_Pc2Norm = cam_->K_[0].block(0, 0, 2, 3);
     J_px2_Pc2Norm(0, 2) = 0.;
     J_px2_Pc2Norm(1, 2) = 0.;
 
@@ -273,12 +263,12 @@ void Optimizer::CalculateHandGradiantCurFrame(
 
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark& p = *lk1s[j];
-        if (p.NoUsed()) {
-            continue;
-        }
+        // if (p.NoUsed()) {
+        //     continue;
+        // }
         const Eigen::Vector3d Pw1 = p.GetPw();
         const Eigen::Vector3d Pc2 = Tc2w * Pw1;
-        const Eigen::Vector2d px2 = p.cam_->Project2PixelPlane(Pc2);
+        const Eigen::Vector2d px2 = cam_->Project2PixelPlane(Pc2);
 
         const Eigen::Vector2d r = px2 - obvs[j];
         double chi2 = r.squaredNorm();
@@ -299,7 +289,7 @@ void Optimizer::CalculateHandGradiantCurFrame(
         // H = J'*J, g = -J'*b;
         // 当前雅可比及梯度的行和列，用于构建上述H矩阵和g向量
         const int ai = j * resDim, aj = poseStartCol;
-        const int bi = j * resDim, bj = pointStartCol + j * p.Size();
+        const int bi = j * resDim, bj = pointStartCol + j * kPointDim;
         const Eigen::Matrix<double, 2, 6> A = J_px2_Pc2 * J_Pc2_Twc2;
         double w = 1.0;  // 1.0 / lk1s[i]->invDepthCov_;
         H.block<6, 6>(aj, aj) += (A.transpose() * A) * w;
@@ -596,7 +586,7 @@ bool Optimizer::ExecuteWindowOptimize() {
             ComputePredictionReduction(delta_x, g_, H_);
         UpdateLMlambda(lastCost, newCost, predictReduction,
                        acceptNewVariableStatus, continousNoImprovementNum,
-                       costRelativeAbsDiff);
+                       costRelativeAbsDiff, lambda_);
         if (!acceptNewVariableStatus) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
                 if (!optLandmark_[i]->NoUsed()) {
@@ -635,9 +625,15 @@ bool Optimizer::ExecuteWindowOptimize() {
                  << delta_x.head(12).transpose() << "\n";
         }
 
-        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
+        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff, lambda_,
                         delta_x)) {
             break;
+        }
+    }
+    // 同时更新地图点备份状态
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        if (!optLandmark_[i]->NoUsed() && optLandmark_[i]->initialized_) {
+            optLandmark_[i]->CopyStatus();
         }
     }
     chrono::steady_clock::time_point time2 = chrono::steady_clock::now();
@@ -671,7 +667,7 @@ void Optimizer::PreSelectLandmarkForTracking(
             // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
             Landmark* lk = trackLandmark[i];
             if (lk->CanBeUseForOptimization()) {
-                lk->ResetFEJ();
+                // lk->ResetFEJ();  // 分离线程时，避免同时修改内存
                 lk1s.emplace_back(lk);
                 const cv::Point2f& p = prevPts[i];
                 obvs.emplace_back(p.x, p.y);
@@ -714,16 +710,14 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     //WriteDebugTriangulateCase2Video(curFid);
 #endif
-    double initLambda = lambda_;
-    lambda_ = initLambda;
-    vector<Landmark*> stableLks;
+    vector<Landmark*> stablePws;
     vector<Eigen::Vector2d> stableObvs;
     ResidualInfo lastCost =
         SetOptimizeLandmarkForTracking(preLks, preObvs, Twc2, optFlw.prevImg_,
-                                       usefulPointNum, stableLks, stableObvs);
+                                       usefulPointNum, stablePws, stableObvs);
 
-    if (stableLks.size() < 100) {
-        cout << "use " << stableLks.size() << " landmarks to optimize!\n";
+    if (stablePws.size() < 100) {
+        cout << "use " << stablePws.size() << " landmarks to optimize!\n";
     }
 
     ResidualInfo firstCost = lastCost;
@@ -736,10 +730,14 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     int continousNoImprovementNum = 0;
     bool acceptNewVariableStatus = true;
+    Eigen::Matrix<double, 6, 6> hessianMatrix;
+    Eigen::Matrix<double, 6, 1> gradient;
+    double lambda = config->initLambda;
     for (int i = 0; i < maxIte_; ++i) {
         if (acceptNewVariableStatus) {
             // 只需要在状态量更新的时候重新线性化一次即可，以节省计算时间
-            CalculateHandGradiantCurFrame(stableLks, stableObvs, Twc2, H_, g_);
+            CalculateHandGradiantCurFrame(stablePws, stableObvs, Twc2,
+                                          hessianMatrix, gradient);
         }
         if (lastCost.usefulLandmarkNum < 20) {
             cout << fmt::format("Error useful constrint num: {}\n",
@@ -748,34 +746,30 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         }
 
         if (i == 0) {
-            AdaptSetInitLambda();
-            cout << "frame BA: H_.diag: " << H_.diagonal().transpose()
-                 << "\ng_: " << g_.transpose() << "\n";
+            cout << "frame BA: hessianMatrix.diag: "
+                 << hessianMatrix.diagonal().transpose()
+                 << "\ng: " << gradient.transpose() << "\n";
         }
 
-        Eigen::VectorXd _lambda(H_.rows());
-        _lambda.setConstant(lambda_);
-        if (H_.diagonal().head(6).isApproxToConstant(0)) {
+        Eigen::Matrix<double, 6, 1> _lambda;
+        _lambda.setConstant(lambda);
+        if (hessianMatrix.diagonal().head(6).isApproxToConstant(0)) {
             _lambda.head(6).setConstant(0);
         }
 
         // debug, 返回J, 判断H, g计算的正确性
-        H_.diagonal() += _lambda;
-        //cout << setprecision(5) << "H_:\n " << H_.diagonal().transpose()
-        //     << endl;
-        //cout << setprecision(5) << "g_:\n " << g_.transpose() << endl;
-        Eigen::VectorXd delta_x = H_.ldlt().solve(g_);
+        hessianMatrix.diagonal() += _lambda;
+        const Eigen::Matrix<double, 6, 1> delta_x =
+            hessianMatrix.ldlt().solve(gradient);
 
         const Pose poseBackup = Twc2;
 
         // 当前帧pose状态更新
-        const int startRow = 0;
-        Twc2.Update(delta_x.middleRows(startRow, 3),
-                    delta_x.middleRows(startRow + 3, 3));
+        Twc2.Update(delta_x.middleRows(0, 3), delta_x.middleRows(3, 3));
 
         // 判断当前更新是否有效
         ResidualInfo newCost =
-            CalculateResidualCurFrame(stableLks, stableObvs, Twc2);
+            CalculateResidualCurFrame(stablePws, stableObvs, Twc2);
 
         if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
             cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
@@ -785,15 +779,15 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
                 "useful landmark: {}, "
                 "lambda: {}.\n",
                 i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
-                lambda_);
+                lambda);
         }
 
         double costRelativeAbsDiff = 100;
-        const double predictReduction =
-            ComputePredictionReduction(delta_x, g_, H_);
+        const double predictReduction = ComputePredictionReductionFrame(
+            lambda, delta_x, gradient, hessianMatrix);
         UpdateLMlambda(lastCost, newCost, predictReduction,
                        acceptNewVariableStatus, continousNoImprovementNum,
-                       costRelativeAbsDiff);
+                       costRelativeAbsDiff, lambda);
         // LM 方法
         if (!acceptNewVariableStatus) {
             Twc2 = poseBackup;
@@ -801,7 +795,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             lastCost = newCost;
         }
 
-        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
+        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff, lambda,
                         delta_x)) {
             break;
         }
@@ -816,7 +810,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         "spend: {:.3f}ms.\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
-        double(lastCost.usefulLandmarkNum) / stableLks.size() * 100, spendTime);
+        double(lastCost.usefulLandmarkNum) / stablePws.size() * 100, spendTime);
 
     info = lastCost;
     return lastCost.cost < (firstCost.cost - 1.0);
@@ -1434,24 +1428,34 @@ double Optimizer::ComputePredictionReduction(const Eigen::VectorXd& deltaX,
            0.5 * lambda_ * deltaX.squaredNorm();
 }
 
+double Optimizer::ComputePredictionReductionFrame(
+    const double lambda, const Eigen::Matrix<double, 6, 1>& deltaX,
+    const Eigen::Matrix<double, 6, 1>& g,
+    const Eigen::Matrix<double, 6, 6>& H) {
+    // 实际下降值为： lastCost - newCost
+    // g = -J.T * r
+    return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
+           0.5 * lambda * deltaX.squaredNorm();
+}
+
 void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
                                const Optimizer::ResidualInfo& newCost,
                                const double predictReduction, bool& accept,
                                int& continousNoImprovementNum,
-                               double& costRelativeAbsDiff) {
+                               double& costRelativeAbsDiff, double& lambda) {
     // TODO: 使用更好的LM更新方式
     costRelativeAbsDiff = lastCost.cost - newCost.cost;
     const double rho = costRelativeAbsDiff / (predictReduction + 1e-12);
     if (rho > 0) {
         if (rho > 0.75) {
-            lambda_ = max(0.3 * lambda_, 1e-9);
+            lambda = max(0.3 * lambda, 1e-9);
         } else {
-            lambda_ = max(0.99 * lambda_, 1e-9);
+            lambda = max(0.99 * lambda, 1e-9);
         }
         accept = true;
         continousNoImprovementNum = 0;
     } else {
-        lambda_ *= 1.5 * (1 + 0.1 * continousNoImprovementNum);
+        lambda *= 1.5 * (1 + 0.1 * continousNoImprovementNum);
         accept = false;
         ++continousNoImprovementNum;
     }
@@ -1460,22 +1464,22 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
 
 bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
                             const double& costRelativeAbsDiff,
-                            const Eigen::VectorXd& delta) {
-    const bool lambdaTestEnough = lambda_ > config->maxLambdaValueLM ||
-                                  lambda_ < (1.0 / config->maxLambdaValueLM);
+                            const double lambda, const Eigen::VectorXd& delta) {
+    const bool lambdaTestEnough = lambda > config->maxLambdaValueLM ||
+                                  lambda < (1.0 / config->maxLambdaValueLM);
     if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
         cout << fmt::format("LM cost diff: {} converge!\n",
                             costRelativeAbsDiff);
         return true;
     }
-    if (lambda_ > config->maxLambdaValueLM) {
-        cout << fmt::format("lambad too large: {}\n", lambda_);
+    if (lambda > config->maxLambdaValueLM) {
+        cout << fmt::format("lambad too large: {}\n", lambda);
         return true;
     }
     if (continousNoImprovementNum > config->maxNoImprovementCountLM &&
         lambdaTestEnough) {
-        cout << fmt::format("continousNoImprovementNum: {}, lambda_: {}\n",
-                            continousNoImprovementNum, lambda_);
+        cout << fmt::format("continousNoImprovementNum: {}, lambda: {}\n",
+                            continousNoImprovementNum, lambda);
         return true;
     }
     if (delta.norm() < 1e-5 && lambdaTestEnough) {
