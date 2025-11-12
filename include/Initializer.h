@@ -17,7 +17,7 @@ class Initializer {
     bool FindEssentialMatrixRansac(const std::vector<Eigen::Vector4d>& uv2obv,
                                    Eigen::Matrix3d& matrixE,
                                    const double inlinerRatio = 0.75,
-                                   const double successProb = 0.95);
+                                   const double successProb = 0.999);
 
     Eigen::MatrixXd ConstructCoffeeMatrix(
         const std::vector<Eigen::Vector2d>& ps1,

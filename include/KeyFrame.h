@@ -34,7 +34,7 @@ class KeyFrame {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     KeyFrame(const cv::Mat& img, const Pose& Twc, std::shared_ptr<Camera> cam,
-             const int id, const int level = 1);
+             const int id, const double timestamp, const int level = 1);
     ~KeyFrame();
     KeyFrame() {}
     KeyFrame(const KeyFrame& f);
@@ -160,6 +160,8 @@ class KeyFrame {
     static cv::Ptr<cv::FastFeatureDetector> detectorTh1, detectorTh2;
     void CalculateEachGridForExtractFast();
     void InitFastDetector();
+
+    double timestamp_ = 0.;
 };
 
 #endif

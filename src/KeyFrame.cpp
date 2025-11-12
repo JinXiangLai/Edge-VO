@@ -32,13 +32,15 @@ cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
 class Landmark;
 
 KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
-                   std::shared_ptr<Camera> cam, const int id, const int level)
+                   std::shared_ptr<Camera> cam, const int id,
+                   const double timestamp, const int level)
     : id_(id),
       grayImg_(img),
       Twc_{Twc},
       Tcw_(Twc.Inverse()),
       priorTwc_(Twc),
-      level_(level) {
+      level_(level),
+      timestamp_(timestamp) {
     if (cam_ == nullptr) {
         cam_ = cam;
     }
@@ -58,7 +60,8 @@ KeyFrame::KeyFrame(const KeyFrame& f)
       level_(f.level_),
       unKeypoints_(f.unKeypoints_),
       outOfRange_(f.outOfRange_),
-      convergeEdgeNum_(f.convergeEdgeNum_) {
+      convergeEdgeNum_(f.convergeEdgeNum_),
+      timestamp_(f.timestamp_) {
     // vector内的堆内存需要先释放
     // 不能这样子，这是构造函数，默认的内存应该是干净的，
     // 否则你应该调用赋值构造
@@ -80,6 +83,7 @@ void KeyFrame::operator=(const KeyFrame& f) {
     level_ = f.level_;
     unKeypoints_ = f.unKeypoints_;
     convergeEdgeNum_ = f.convergeEdgeNum_;
+    timestamp_ = f.timestamp_;
 #else
     ReleaseMat();
     // 这样会导致cv::Mat等堆内存无法释放
@@ -353,9 +357,15 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<uchar> status;
     vector<float> error;
 
-    constexpr double kGoodMatchRatio = 0.99;
-    auto GetGoodMatchMaxResidual = [&error]() -> float {
-        vector<float> temp = error;
+    constexpr double kGoodMatchRatio = 0.9;
+    auto GetGoodMatchMaxResidual = [&error, &status]() -> float {
+        vector<float> temp;
+        temp.reserve(error.size());
+        for (size_t i = 0; i < error.size(); ++i) {
+            if (status[i] == 1) {
+                temp.emplace_back(error[i]);
+            }
+        }
         sort(temp.begin(), temp.end());
         const int index = static_cast<int>(kGoodMatchRatio * temp.size());
         cout << fmt::format(

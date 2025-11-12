@@ -153,7 +153,7 @@ double Initializer::ComputeEpipolarConstraintRmse(
 bool Initializer::FindEssentialMatrixRansac(
     const std::vector<Eigen::Vector4d>& uv2obv, Eigen::Matrix3d& matrixE,
     const double inlinerRatio, const double successProb) {
-    constexpr int kSampleNum = 15;  // 使用8点法
+    constexpr int kSampleNum = 8;  // 使用8点法
     if (uv2obv.size() < kSampleNum) {
         cout << fmt::format("match pair num: {}, min fit num: {}!!!\n",
                             uv2obv.size(), kSampleNum);
