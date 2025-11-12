@@ -57,9 +57,9 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const Pose Tc2w = Twc2.Inverse();
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark* lk1 = lk1s[j];
-        if (lk1->NoUsed()) {
-            continue;
-        }
+        // if (lk1->NoUsed()) {
+        //     continue;
+        // }
 
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
@@ -100,6 +100,10 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
     const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stablePws,
     std::vector<Eigen::Vector2d>& stableObvs) {
+    stablePws.clear();
+    stableObvs.clear();
+    stablePws.reserve(lk1s.size());
+    stableObvs.reserve(lk1s.size());
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
@@ -657,6 +661,8 @@ bool Optimizer::ExecuteWindowOptimize() {
 void Optimizer::PreSelectLandmarkForTracking(
     KeyFrame::OpticalFlowStruct& optFlw, std::vector<Landmark*>& lk1s,
     std::vector<Eigen::Vector2d>& obvs) {
+    lk1s.clear();
+    obvs.clear();
     lk1s.reserve(optFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
     constexpr int kDebugNum = 20000;
@@ -739,11 +745,6 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
             CalculateHandGradiantCurFrame(stablePws, stableObvs, Twc2,
                                           hessianMatrix, gradient);
         }
-        if (lastCost.usefulLandmarkNum < 20) {
-            cout << fmt::format("Error useful constrint num: {}\n",
-                                lastCost.usefulLandmarkNum);
-            return false;
-        }
 
         if (i == 0) {
             cout << "frame BA: hessianMatrix.diag: "
@@ -813,7 +814,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         double(lastCost.usefulLandmarkNum) / stablePws.size() * 100, spendTime);
 
     info = lastCost;
-    return lastCost.cost < (firstCost.cost - 1.0);
+    return true;
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
@@ -887,7 +888,8 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
     }
 
     CalculateLastKFmeanDepth();
-    cout << "add kf id: " << kf->id_ << "\n";
+    cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n", kf->id_,
+                        kf->timestamp_ - window_.back()->timestamp_);
     cout << fmt::format(
         "Triangulate by KF_{} report: new historyTriSucceedNum: {}, new "
         "prevTriSucceedNum: {}\n",
