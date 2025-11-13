@@ -93,6 +93,7 @@ int main(int argc, char** argv) {
     KeyFrame lastF, lastLastF;
 
     thread* viewerThread = nullptr;
+    thread* runWindowBAthread = nullptr;
 
     bool isInitialized = false;
     int trackLostCount = 0;
@@ -121,7 +122,7 @@ int main(int argc, char** argv) {
         cout << i << " th cur img timestamp: " << to_string(vTimeStamps[i])
              << endl;
 
-        KeyFrame curF(img, Twc, cam, i, config->pyrLevel);
+        KeyFrame curF(img, Twc, cam, i, vTimeStamps[i], config->pyrLevel);
         if (config->useDepthImage || config->debugWithTrueDepthImage) {
             curF.depthImage_ = depthImg;
         }
@@ -138,6 +139,11 @@ int main(int argc, char** argv) {
             if (config->debugShowOnlineResult3D && !viewerThread) {
                 viewerThread = new thread(Run, &optimizer);
             }
+            if (!runWindowBAthread) {
+                runWindowBAthread =
+                    new thread(&Optimizer::RunWindowBA, &optimizer);
+            }
+
             cout << "Set initFrame with frame id: " << i << endl;
             continue;  // 认为初始化完毕
         }
@@ -197,10 +203,11 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // Step: 利用当前帧更新深度图
-
-        // // TODO: 图像存在运动模糊时，会导致landmark, pose估计出异常值，
-        // // 导致sliding window optimization优化崩溃：可仅优化pose而不优化landmark
+        if (config->debugRunSerially) {
+            while (optimizer.newKF_ != nullptr) {
+                usleep(1 * 1000);
+            }
+        }
 
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
@@ -270,8 +277,9 @@ int main(int argc, char** argv) {
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
 
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
-        if ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
-            caseFastInsertKF || trackLocalMapLow) {
+        if (optimizer.CanAddNewKF() &&
+            ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
+             caseFastInsertKF || trackLocalMapLow)) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
                 "caseMoveBaselineLOng: {}, caseFastInsertKF: {}\n",
@@ -305,21 +313,41 @@ int main(int argc, char** argv) {
             // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
             cout << "Add new keyframe id: " << curF.id_ << "\n";
             interaction->visualLastKF = *win.back();
-
-        } else if (viewerThread != nullptr) {
-            // delete curF; // 释放非KF内存
-            usleep(10 * 1000);
         }
-
-        lastLastF = lastF;
-        lastF = curF;
         interaction->trajectory.push_back({curF.Twc_.t_wb_});
+
+        const double frameTimeGap =
+            (curF.timestamp_ - lastF.timestamp_) * 1e3;  // ms
 
         cout << fmt::format(
             "TrackWithOpticalFlow spend:{:.3f}ms, TrackLocalMap spend: "
             "{:.3f}ms\n\n",
             ChronoMillisecTimeDuration(t1, t2),
             ChronoMillisecTimeDuration(t2, t3));
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+        const double trackSpendTime = ChronoMillisecTimeDuration(t1, t4);
+        const double sleepTime = min((frameTimeGap - trackSpendTime), 20.0);
+        if (sleepTime > 0.) {
+            usleep(sleepTime * 1e3);
+        } else {
+            cout << fmt::format(
+                "Error tracking spend too much time! curF.timestamp_: {}s, "
+                "lastF.timestamp_: {}s, frameTimeGap: {:.1f}ms, "
+                "trackSpendTime: {:.1f}ms, sleepTime: {:.1f}.\n",
+                curF.timestamp_, lastF.timestamp_, frameTimeGap, trackSpendTime,
+                sleepTime);
+        }
+        if (i % 30 == 0) {
+            cout << fmt::format(
+                "Tracking spend time: curF.timestamp_: {}s, "
+                "lastF.timestamp_: {}s, frameTimeGap: {:.1f}ms, "
+                "trackSpendTime: {:.1f}ms, sleepTime: {:.1f}.\n",
+                curF.timestamp_, lastF.timestamp_, frameTimeGap, trackSpendTime,
+                sleepTime);
+        }
+
+        lastLastF = lastF;
+        lastF = curF;
 
         while (interaction->stepBystep) {
             // 当前循环跑完，不需要再修改i
@@ -329,12 +357,14 @@ int main(int argc, char** argv) {
 
     const chrono::steady_clock::time_point& tEnd = chrono::steady_clock::now();
     cout << fmt::format(
-        "process {} images of sequence {}, total spend:{:.3f}s, sequence "
-        "record duration: {:.3f}s\n",
-        vTimeStamps.size() - firstImgIdx,
-        config->dataDir.substr(config->dataDir.find_last_of('/') + 1),
-        ChronoMillisecTimeDuration(tStart, tEnd) * 1e-3,
-        vTimeStamps.back() - vTimeStamps[firstImgIdx]);
+                "process {} images of sequence {}, total spend:{:.3f}s, "
+                "sequence "
+                "record duration: {:.3f}s",
+                vTimeStamps.size() - firstImgIdx,
+                config->dataDir.substr(config->dataDir.find_last_of('/') + 1),
+                ChronoMillisecTimeDuration(tStart, tEnd) * 1e-3,
+                vTimeStamps.back() - vTimeStamps[firstImgIdx])
+         << endl;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     if (KeyFrame::debugVideoWriter.isOpened()) {
@@ -354,16 +384,23 @@ int main(int argc, char** argv) {
         initer.debugInitTrackWriter_.release();
     }
 
+    // 停止后端优化线程
+    optimizer.StopRunBA();
+    runWindowBAthread->join();
+    delete runWindowBAthread;
+    cout << "Window BA thread recycled!" << endl;
+
     if (config->debugShowOnlineResult3D) {
         viewerThread->join();
         delete viewerThread;
     }
+    cout << "Viwe 3D thread recycled!" << endl;
 
     return 0;
 }
 
 void Run(Optimizer* optimizer) {
-    while (1) {
+    while (!interaction->stopView) {
         if (config->debugShowGlobalMap) {
             interaction->ShowGlobalMapPoint();
         } else if (!optimizer->window_.empty()) {

@@ -49,6 +49,10 @@ class KeyFrame {
 
     void ReleaseMat();
     void GenerateKeyPoint();
+    void SetBackupPose() {
+        TcwBack_ = Tcw_;
+        TwcBack_ = Twc_;
+    }
 
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
@@ -92,9 +96,7 @@ class KeyFrame {
         size_t historyLandmarkNum_ = 0;  // 记录历史跟踪点的数量以区分上一KF的
         double meanParallax_ = 0.;
         int usefulParallaxNum_ = 0;
-        size_t GetTrackFeatureNum() {
-            return prevPts_.size();
-        }
+        size_t GetTrackFeatureNum() { return prevPts_.size(); }
         double GetTrackFeatureRatio() {
             return double(GetTrackFeatureNum()) / totalFeatureCreated_;
         }

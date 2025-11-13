@@ -373,8 +373,6 @@ inline double CalculateParallax(const Eigen::Vector2d& p1,
     return -1.0;
 }
 
-enum KeyboardEvent { Reset, StepByStep };
-
 class InteractionParam {
    public:
     bool stepBystep = false;
@@ -389,7 +387,7 @@ class InteractionParam {
     std::unordered_set<Landmark*> localPoints;
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
-    bool drawEpipolarMatch = false;
+    std::atomic<bool> stopView = false;
     std::vector<Eigen::Vector3d> trajectory;
     std::string imgSaveFolderPath;
     bool SetImgSaveFolderPath(const std::string& path);

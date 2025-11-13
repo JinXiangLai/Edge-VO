@@ -82,6 +82,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     //    debugInfo);
     if (isnan(info.cost) || isinf(info.cost) || info.totalConstraintNum == 0) {
         info.cost = DBL_MAX;
+        info.meanCost = DBL_MAX;
     } else {
         info.meanCost = info.cost / info.totalConstraintNum;
     }
@@ -109,7 +110,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     vector<double> usefulTrackDepth(lk1s.size(), 0.);
     lastKFmeanDepth_ = 0.;
     for (size_t i = 0; i < lk1s.size(); ++i) {
-        const Eigen::Vector3d pc = Tc2w * lk1s[i]->GetPw();
+        const Eigen::Vector3d pc = Tc2w * lk1s[i]->GetPw(true);
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
         const bool inRange = InRange(img, px.cast<int>());
         if (inRange && pc.z() > kMinSceneDepthInCamera) {
@@ -186,7 +187,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         for (const pair<int, double>& idx2Chi2 :
              resampleStableLkIndex2Chi2[i]) {
 
-            stablePws.emplace_back(lk1s[idx2Chi2.first]->GetPw());
+            stablePws.emplace_back(lk1s[idx2Chi2.first]->GetPw(true));
             stableObvs.emplace_back(obvs[idx2Chi2.first]);
             info.cost += idx2Chi2.second;
             ++info.totalConstraintNum;
@@ -633,6 +634,9 @@ bool Optimizer::ExecuteWindowOptimize() {
             optLandmark_[i]->CopyStatus();
         }
     }
+    for (size_t i = 0; i < window_.size(); ++i) {
+        window_[i]->CopyStatus();
+    }
     chrono::steady_clock::time_point time2 = chrono::steady_clock::now();
     const double spendTime = ChronoMillisecTimeDuration(time1, time2);
     cout << fmt::format(
@@ -806,7 +810,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         double(lastCost.usefulLandmarkNum) / stablePws.size() * 100, spendTime);
 
     info = lastCost;
-    return true;
+    return sqrt(info.meanCost) < config->maxMeanProjectResidual2CreateKF;
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
@@ -838,9 +842,6 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
             }
             const Pose& T12 = kf2T12.at(lk->host_);
-            //if (config->useDepthImage ||
-            //    !GetHostFrameObservationInvDepth(
-            //        lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1)) {
             if (config->useDepthImage ||
                 !GetHostAndCurFrameObservationDepth(
                     lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1, idepth2)) {
@@ -870,16 +871,15 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         WriteDebugTriangulateCase2Video(kf->id_);
 #endif
 
-        // 滑窗优化时，会将当前帧添加到滑窗中去
-        if (SlidingWindowOptimize(kf)) {
-        }
+        lock_guard<mutex> lock(newKFmutex_);
+        newKF_ = kf;
     } else {
         // 创建的是首帧关键帧，是否需要赋值prevHistoryPts_？
         // 应该是不需要的
         window_.push_back(kf);
     }
 
-    CalculateLastKFmeanDepth();
+    // CalculateLastKFmeanDepth();
     cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n", kf->id_,
                         kf->timestamp_ - window_.back()->timestamp_);
     cout << fmt::format(
@@ -2091,6 +2091,31 @@ void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
         cout << fmt::format("Reset matrix[{}x{}] spend {:.3f}ms\n", mat.rows(),
                             mat.cols(), ChronoMillisecTimeDuration(t0, t1));
     }
+}
+
+void Optimizer::RunWindowBA() {
+    while (keepRunWindowBA_) {
+        if (newKF_ == nullptr) {
+            usleep(10 * 1e3);  // 10ms
+            continue;
+        }
+
+        lock_guard<mutex> lock(newKFmutex_);
+        // 滑窗优化时，会将当前帧添加到滑窗中去
+        SlidingWindowOptimize(newKF_);
+        CalculateLastKFmeanDepth();
+        newKF_ = nullptr;
+    }
+}
+
+void Optimizer::StopRunBA() {
+    int tryCount = 0;
+    while (newKF_ != nullptr) {
+        usleep(10 * 1e3);
+        cout << fmt::format("try stop window BA count: {}\n", ++tryCount);
+    }
+    keepRunWindowBA_ = false;
+    cout << fmt::format("Window BA keepRunWindowBA_: {}.\n", keepRunWindowBA_);
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {

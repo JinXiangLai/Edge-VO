@@ -912,8 +912,10 @@ void VizInteraction(const cv::viz::KeyboardEvent& event, void* _b) {
              << endl;
 
     } else if (event.action == viz::KeyboardEvent::KEY_DOWN &&
-               (event.code == 'D' || event.code == 'd')) {
-        interaction->drawEpipolarMatch = !interaction->drawEpipolarMatch;
+               (event.code == 'e' || event.code == 'E')) {
+        interaction->stopView = !interaction->stopView;
+        cout << fmt::format("view 3D stopView: {}", interaction->stopView)
+             << endl;
     }
 }
 
@@ -1647,7 +1649,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     window.registerKeyboardCallback(VizInteraction);
     // 运行事件循环，使窗口响应用户输入
     while (!interaction->resetWindow && curId == interaction->visualCurF.id_ &&
-           !interaction->drawEpipolarMatch) {
+           !interaction->stopView) {
         window.spinOnce(50);
         // static int counter = 0;
         // const string imgSavePath =

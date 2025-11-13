@@ -49,6 +49,7 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
     debugGrayImg_ = grayImg_.clone();
     CalculateEachGridForExtractFast();
     InitFastDetector();
+    SetBackupPose();
 }
 
 KeyFrame::KeyFrame(const KeyFrame& f)
@@ -71,6 +72,7 @@ KeyFrame::KeyFrame(const KeyFrame& f)
 
     debugGrayImg_ = f.debugGrayImg_;
     depthImage_ = f.depthImage_;
+    SetBackupPose();
 }
 
 void KeyFrame::operator=(const KeyFrame& f) {
@@ -91,6 +93,7 @@ void KeyFrame::operator=(const KeyFrame& f) {
 #endif
     depthImage_ = f.depthImage_;
     debugGrayImg_ = f.debugGrayImg_;
+    SetBackupPose();
 }
 
 KeyFrame::~KeyFrame() {
@@ -837,6 +840,7 @@ void KeyFrame::SetTwc(const Pose& Twc, const bool printDiff) {
 
     Twc_ = Twc;
     Tcw_ = Twc.Inverse();
+    SetBackupPose();
     if (printDiff) {
         const Pose diff = (Tc0w * priorTwc_) * Tcw_;
         cout << "predict pose diff with prior: " << diff << "\n";

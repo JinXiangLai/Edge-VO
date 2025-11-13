@@ -35,7 +35,11 @@ Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
 }
 
 Eigen::Vector3d Landmark::GetPw(const bool useBackUpStatus) const {
-    return host_->Twc_ * GetPc(useBackUpStatus);
+    if (useBackUpStatus) {
+        return host_->TwcBack_ * GetPc(true);
+    } else {
+        return host_->Twc_ * GetPc(false);
+    }
 }
 
 int Landmark::Size() const {

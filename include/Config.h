@@ -61,7 +61,8 @@ class Config {
     int keepLastKFnumInWindow, maxKFnumInWindow;
     bool useMarginalization;
     double imgTimeOffset;
-    double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio, maxMeanProjectResidual2CreateKF;
+    double needNewKFtrans, needNewKFrot, needNewKFMaxMatchEdgeRatio,
+        maxMeanProjectResidual2CreateKF;
     double filterPixelError;
     int messageLevel;
     int maxIterationLM;
@@ -113,6 +114,7 @@ class Config {
     bool debugShowGlobalMap;
     bool debugRunOnDesktop;
     bool debugShowOnlineResult3D;
+    bool debugRunSerially;
     double matchNoise;
     bool useAvgDiff;
     double maxProjectError;

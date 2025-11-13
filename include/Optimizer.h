@@ -212,6 +212,14 @@ class Optimizer {
     void WriteDebugTrackLostStatus(const KeyFrame& curF);
 
     std::unordered_set<uint64_t> hasResetHessianblock_;
+
+    // 分离滑窗优化线程
+    bool keepRunWindowBA_ = true;
+    KeyFrame* newKF_ = nullptr;
+    std::mutex newKFmutex_;
+    void RunWindowBA();
+    void StopRunBA();
+    bool CanAddNewKF() { return keepRunWindowBA_ && !newKF_; }
 };
 
 #endif
