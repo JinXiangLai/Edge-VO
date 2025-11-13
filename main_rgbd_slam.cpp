@@ -47,8 +47,9 @@ int main(int argc, char** argv) {
     viz::Viz3d window("Local Map Viewer");
     window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
-    if (!interaction->SetImgSaveFolderPath(fmt::format(
-            "/home/ht/Pictures/viz3d_screenshot", config->debugMessageSaveFolder))) {
+    if (!interaction->SetImgSaveFolderPath(
+            fmt::format("/home/ht/Pictures/viz3d_screenshot",
+                        config->debugMessageSaveFolder))) {
         cout << "Create viz3d image folder failed!\n";
     }
     InitColor();
@@ -257,6 +258,8 @@ int main(int argc, char** argv) {
             findMatchRatio < 0.9 &&
             static_cast<int>(win.size()) < config->maxKFnumInWindow;
 
+        const bool hasHorMove = (horDist > 0.05 * meanDepth);
+
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -267,9 +270,8 @@ int main(int argc, char** argv) {
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
 
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
-        if (((trackLocalMapLow || caseOptflowTrackLow) &&
-             horDist > 0.05 * meanDepth) ||
-            caseMoveBaselineLOng || caseFastInsertKF) {
+        if ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
+            caseFastInsertKF || trackLocalMapLow) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
                 "caseMoveBaselineLOng: {}, caseFastInsertKF: {}\n",

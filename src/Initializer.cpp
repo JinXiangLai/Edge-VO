@@ -18,27 +18,20 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
                                                const double findMatchRatio,
                                                KeyFrame& curF) {
     constexpr int kMinMatchFeatureNum = 100;
-    constexpr double kMinParallax = 3;
+    constexpr double kMinParallax = 5;
     if (findMatchNum < kMinMatchFeatureNum) {
         return false;
     }
 
-    const KeyFrame::OpticalFlowStruct optFlw = KeyFrame::optFlw;
-    Eigen::Vector2d sumParallax(0, 0);  // 沿z轴时，理论上视差会抵消
-    for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-        const Eigen::Vector2d& p1 = optFlw.trackLandmark_[i]->uv_;
-        const cv::Point2f& p2 = optFlw.prevPts_[i];
-        const Eigen::Vector2d parallax(p1.x() - p2.x, p1.y() - p2.y);
-        sumParallax += parallax;
-    }
-    const double meanParallax =
-        sumParallax.norm() / optFlw.trackLandmark_.size();
-    if (meanParallax < kMinParallax) {
-        cout << fmt::format("parallax: {:.1f} too small\n", meanParallax);
+    const KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
+
+    if (optFlw.meanParallax_ < kMinParallax) {
+        cout << fmt::format("parallax: {:.1f} too small\n",
+                            optFlw.meanParallax_);
         return false;
     } else {
         cout << fmt::format("parallax: {:.1f} can used for initializing\n",
-                            meanParallax);
+                            optFlw.meanParallax_);
     }
 
     vector<Eigen::Vector4d> uv2obv;
@@ -54,8 +47,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-    // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
         // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
@@ -153,7 +146,7 @@ double Initializer::ComputeEpipolarConstraintRmse(
 bool Initializer::FindEssentialMatrixRansac(
     const std::vector<Eigen::Vector4d>& uv2obv, Eigen::Matrix3d& matrixE,
     const double inlinerRatio, const double successProb) {
-    constexpr int kSampleNum = 8;  // 使用8点法
+    constexpr int kSampleNum = 15;  // 使用8点法
     if (uv2obv.size() < kSampleNum) {
         cout << fmt::format("match pair num: {}, min fit num: {}!!!\n",
                             uv2obv.size(), kSampleNum);

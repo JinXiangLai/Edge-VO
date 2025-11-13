@@ -20,7 +20,7 @@ using namespace cv;
 constexpr int kMinUsefulObvNum = 2;  // 扣除host的观测
 constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
 constexpr double kMaxSetError = 1e12;
-constexpr double kMaxErrorRatio = 0.95;
+constexpr double kMaxErrorRatio = 0.5;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
@@ -57,9 +57,6 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const Pose Tc2w = Twc2.Inverse();
     for (size_t j = 0; j < lk1s.size(); ++j) {
         Landmark* lk1 = lk1s[j];
-        // if (lk1->NoUsed()) {
-        //     continue;
-        // }
 
         const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
@@ -151,7 +148,6 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         Landmark* lk1 = lk1s[j];
         const double& chi2 = errorCopy[j];
         if (chi2 > maxChi2) {
-            lk1->SetNoUsed();
             continue;
         }
 
@@ -168,6 +164,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         const int id = lk1->target_.size();
         switch (id) {
             case 2:
+                // 观测数最少
                 resampleStableLkIndex2Chi2[0].emplace_back(j, rho[0]);
                 break;
             case 3:
@@ -180,8 +177,12 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     }
 
     // 由观测数量由高到低进行采样
-    constexpr int kMaxSampleLandmarkNum = 20000;
-    canUseNum = 0;
+    const int stableLandmarkNum = resampleStableLkIndex2Chi2[1].size() +
+                                  resampleStableLkIndex2Chi2[2].size();
+    const int maxSampleLandmarkNum =
+        stableLandmarkNum > 200 ? int(stableLandmarkNum * 0.7) : 200;
+
+    canUseNum = 0;  // 理论上有效的地图点数量，但不需要全部使用
     for (const auto& vec : resampleStableLkIndex2Chi2) {
         canUseNum += vec.size();
     }
@@ -195,12 +196,12 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
             ++info.totalConstraintNum;
             ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
             lastKFmeanDepth_ += usefulTrackDepth[idx2Chi2.first];
-            if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+            if (info.totalConstraintNum > maxSampleLandmarkNum) {
                 break;
             }
         }
 
-        if (info.totalConstraintNum > kMaxSampleLandmarkNum) {
+        if (info.totalConstraintNum > maxSampleLandmarkNum) {
             break;
         }
     }
@@ -672,8 +673,7 @@ void Optimizer::PreSelectLandmarkForTracking(
         for (size_t i = 0; i < trackLandmark.size(); ++i) {
             // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
             Landmark* lk = trackLandmark[i];
-            if (lk->CanBeUseForOptimization()) {
-                // lk->ResetFEJ();  // 分离线程时，避免同时修改内存
+            if (lk->initialized_ && !lk->CanBeDelete()) {
                 lk1s.emplace_back(lk);
                 const cv::Point2f& p = prevPts[i];
                 obvs.emplace_back(p.x, p.y);
@@ -1968,8 +1968,7 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
         "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}, "
         "mean residual: {}\n",
         totalPointNum, usefulPointNum, usefulRatio, info.meanCost);
-    trackLocalMapLow = usefulRatio < 0.7 || usefulPointNum < 99 ||
-                       info.meanCost > config->maxMeanProjectResidual2CreateKF;
+    trackLocalMapLow = usefulPointNum < 30;
 
     Pose beforeTwc2 = kf2->Twc_;
     if (optSuccess) {

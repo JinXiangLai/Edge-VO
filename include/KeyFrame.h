@@ -90,6 +90,8 @@ class KeyFrame {
         std::vector<Landmark*> trackLandmark_;
         size_t totalFeatureCreated_ = 0;
         size_t historyLandmarkNum_ = 0;  // 记录历史跟踪点的数量以区分上一KF的
+        double meanParallax_ = 0.;
+        int usefulParallaxNum_ = 0;
         size_t GetTrackFeatureNum() {
             return prevPts_.size();
         }

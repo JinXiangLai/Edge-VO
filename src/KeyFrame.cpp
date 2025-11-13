@@ -396,6 +396,9 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     optFlw.prevPts_.clear();
     vector<Landmark*> trackLandmark;
     size_t historyLandmarkTrackSuccessNum = 0;
+    vector<double> parallaxVec;
+    parallaxVec.reserve(500);
+    const Eigen::Vector2d mainPoint(cam_->cx_, cam_->cy_);
     for (size_t i = 0; i < status.size(); ++i) {
         if (status[i] == 1 && error[i] < maxError) {
             // 重新赋值landmark在当前帧上的观测
@@ -403,6 +406,13 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
             trackLandmark.emplace_back(optFlw.trackLandmark_[i]);
             if (i < optFlw.historyLandmarkNum_) {
                 ++historyLandmarkTrackSuccessNum;
+            } else {
+                const double parallax =
+                    CalculateParallax(optFlw.trackLandmark_[i]->uv_,
+                                      {nextPts[i].x, nextPts[i].y}, mainPoint);
+                if (parallax > 0.) {
+                    parallaxVec.emplace_back(parallax);
+                }
             }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
@@ -416,12 +426,18 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     optFlw.historyLandmarkNum_ = historyLandmarkTrackSuccessNum;
     optFlw.trackLandmark_ = std::move(trackLandmark);
 
+    sort(parallaxVec.begin(), parallaxVec.end());
+    optFlw.meanParallax_ =
+        parallaxVec[static_cast<int>(parallaxVec.size() * 0.1)];
+
     // 跟踪成功后，重新赋值
     cout << fmt::format(
         "optical flow tracked info: track last KF landmark num: {}, "
-        "track history landmark num: {}\n",
+        "track history landmark num: {}, parallax since last KF: {:.1f}, "
+        "usefulParallaxNum: {}\n",
         optFlw.trackLandmark_.size() - historyLandmarkTrackSuccessNum,
-        historyLandmarkTrackSuccessNum);
+        historyLandmarkTrackSuccessNum, optFlw.meanParallax_,
+        parallaxVec.size());
 }
 
 void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {

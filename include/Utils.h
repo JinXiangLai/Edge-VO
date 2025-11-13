@@ -26,7 +26,9 @@
 #define Undistort  // 进行特征匹配时，需要在未去畸变的图像上进行，但是当三角化时，需要在归一化平面上去畸变
 #define USE_INV_DEPTH
 
-constexpr double kMinSceneDepthInCamera = 0.01;  // meter
+constexpr double kMinSceneDepthInCamera = 0.01;      // meter
+constexpr double kMinParallaxAng = 30.0 * kDeg2Rad;  // rad
+const double kMaxCosValue = cos(kMinParallaxAng);
 
 inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
     {"red", {0, 0, 255}},       {"green", {0, 255, 0}},
@@ -354,6 +356,21 @@ inline double ChronoMillisecTimeDuration(
     const std::chrono::steady_clock::time_point& t1,
     const std::chrono::steady_clock::time_point& t2) {
     return std::chrono::duration<double>(t2 - t1).count() * 1e3;
+}
+
+inline double CalculateParallax(const Eigen::Vector2d& p1,
+                                const Eigen::Vector2d& p2,
+                                const Eigen::Vector2d& c) {
+    const Eigen::Vector2d dp = p2 - p1;
+    const double parallax = dp.norm();
+    const Eigen::Vector2d dir1 = dp.normalized();
+    const Eigen::Vector2d dir2 = (p2 - c).normalized();
+    const double cosValue = dir1.dot(dir2);
+    if (abs(cosValue) < kMaxCosValue) {
+        return parallax;
+    }
+
+    return -1.0;
 }
 
 enum KeyboardEvent { Reset, StepByStep };

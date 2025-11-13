@@ -1,16 +1,16 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_desk
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
 Camera.model: "pinhole"
 
 ## fr1
-Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
-Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
+# Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
+# Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
-# Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
-# Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
+Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
+Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
 
 Qcg: [0, 0, 0, 1] # qx qy qz qw
 Pcg: [0, 0, 0] # tx ty tz
@@ -45,10 +45,10 @@ filterPixelError: 10 # 按1个像素误差推导深度三角化不确定度
 
 maxIterationLM: 130 # LM算法迭代次数
 convergeCostDiffLM: 1e-14
-maxLambdaValueLM: 1e12
-maxNoImprovementCountLM: 5 # 没有下降的最大次数
+maxLambdaValueLM: 1e14
+maxNoImprovementCountLM: 25 # 没有下降的最大次数
 iterateLogFreqLM: 30 # 迭代输出频率
-initLambda: 100.0 # LM优化算法lambda初值
+initLambda: 1.0 # LM优化算法lambda初值
 
 messageLevel: 1 # 0-debug, 1-info, 2-error
 maxActiveLandmarkEachKF: 500
