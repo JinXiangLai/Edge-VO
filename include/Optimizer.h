@@ -34,17 +34,18 @@ class Optimizer {
                           int& usefulPointNum, ResidualInfo& info);
 
     ResidualInfo CalculateResidualCurFrame(
-        const std::vector<Landmark*>& lk1s,
+        const std::vector<Eigen::Vector3d>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2);
 
     ResidualInfo SetOptimizeLandmarkForTracking(
         const std::vector<Landmark*>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-        const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stablePws,
+        const cv::Mat& img, int& canUseNum,
+        std::vector<Eigen::Vector3d>& stablePws,
         std::vector<Eigen::Vector2d>& stableObvs);
 
     void CalculateHandGradiantCurFrame(
-        const std::vector<Landmark*>& lk1s,
+        const std::vector<Eigen::Vector3d>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
         Eigen::Matrix<double, kPoseDim, kPoseDim>& H,
         Eigen::Matrix<double, kPoseDim, 1>& g);

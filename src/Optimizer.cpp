@@ -46,7 +46,7 @@ Optimizer::~Optimizer() {
 }
 
 Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
-    const std::vector<Landmark*>& lk1s,
+    const std::vector<Eigen::Vector3d>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2) {
 
     ResidualInfo info;
@@ -56,9 +56,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
     for (size_t j = 0; j < lk1s.size(); ++j) {
-        Landmark* lk1 = lk1s[j];
-
-        const Eigen::Vector3d pc = Tc2w * lk1->GetPw();
+        const Eigen::Vector3d pc = Tc2w * lk1s[j];
         const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
 
         // 必须与计算Jacobian的残差计算方式一致
@@ -71,10 +69,8 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
         ++info.totalConstraintNum;
         ++info.usefulLandmarkNum;  // 这里每个地图点只会投影一次到当前帧
         if (j % kStepInfoOut == 0) {
-            debugInfo.append(fmt::format(
-                "chi2: {:.1f}-rho[0]: {:.1f}-kf id: {}-kp1:({:.0f}, "
-                "{:.0f}); ",
-                chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+            debugInfo.append(
+                fmt::format("chi2: {:.1f}-rho[0]: {:.1f}; ", chi2, rho[0]));
         }
     }
 
@@ -95,7 +91,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     const std::vector<Landmark*>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img, int& canUseNum, std::vector<Landmark*>& stablePws,
+    const cv::Mat& img, int& canUseNum, std::vector<Eigen::Vector3d>& stablePws,
     std::vector<Eigen::Vector2d>& stableObvs) {
     stablePws.clear();
     stableObvs.clear();
@@ -190,7 +186,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
         for (const pair<int, double>& idx2Chi2 :
              resampleStableLkIndex2Chi2[i]) {
 
-            stablePws.emplace_back(lk1s[idx2Chi2.first]);
+            stablePws.emplace_back(lk1s[idx2Chi2.first]->GetPw());
             stableObvs.emplace_back(obvs[idx2Chi2.first]);
             info.cost += idx2Chi2.second;
             ++info.totalConstraintNum;
@@ -231,7 +227,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
 }
 
 void Optimizer::CalculateHandGradiantCurFrame(
-    const std::vector<Landmark*>& lk1s,
+    const std::vector<Eigen::Vector3d>& lk1s,
     const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
     Eigen::Matrix<double, 6, 6>& H, Eigen::Matrix<double, 6, 1>& g) {
     constexpr int resDim = 2;
@@ -267,11 +263,7 @@ void Optimizer::CalculateHandGradiantCurFrame(
     Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
 
     for (size_t j = 0; j < lk1s.size(); ++j) {
-        Landmark& p = *lk1s[j];
-        // if (p.NoUsed()) {
-        //     continue;
-        // }
-        const Eigen::Vector3d Pw1 = p.GetPw();
+        const Eigen::Vector3d& Pw1 = lk1s[j];
         const Eigen::Vector3d Pc2 = Tc2w * Pw1;
         const Eigen::Vector2d px2 = cam_->Project2PixelPlane(Pc2);
 
@@ -716,7 +708,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     //WriteDebugTriangulateCase2Video(curFid);
 #endif
-    vector<Landmark*> stablePws;
+    vector<Eigen::Vector3d> stablePws;
     vector<Eigen::Vector2d> stableObvs;
     ResidualInfo lastCost =
         SetOptimizeLandmarkForTracking(preLks, preObvs, Twc2, optFlw.prevImg_,
