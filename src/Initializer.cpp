@@ -47,8 +47,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+        // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
         // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
@@ -131,22 +131,25 @@ Eigen::Matrix3d Initializer::GetEssentialMatrix(
 
 double Initializer::ComputeEpipolarConstraintRmse(
     const Eigen::Matrix3d& E, const std::vector<Eigen::Vector4d>& uv2obv) {
-    double sum = 0.;
+    vector<double> errors;
+    errors.reserve(uv2obv.size());
     for (size_t i = 0; i < uv2obv.size(); ++i) {
         const Eigen::Vector2d& p1 = uv2obv[i].head(2);
         const Eigen::Vector2d& p2 = uv2obv[i].tail(2);
         const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
         const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
-        sum += pn1.transpose() * E * pn2;
+        errors.emplace_back(pn1.transpose() * E * pn2);
     }
-
-    return sqrt(sum / uv2obv.size());
+    sort(errors.begin(), errors.end());
+    constexpr double kReliableRatio = 0.75;
+    const int num = static_cast<int>(uv2obv.size() * kReliableRatio);
+    return sqrt(accumulate(errors.begin(), errors.begin() + num, 0.0) / num);
 }
 
 bool Initializer::FindEssentialMatrixRansac(
     const std::vector<Eigen::Vector4d>& uv2obv, Eigen::Matrix3d& matrixE,
     const double inlinerRatio, const double successProb) {
-    constexpr int kSampleNum = 15;  // 使用8点法
+    constexpr int kSampleNum = 8;  // 使用8点法
     if (uv2obv.size() < kSampleNum) {
         cout << fmt::format("match pair num: {}, min fit num: {}!!!\n",
                             uv2obv.size(), kSampleNum);
