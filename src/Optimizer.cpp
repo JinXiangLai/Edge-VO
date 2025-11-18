@@ -1941,6 +1941,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
     KeyFrame* oldest = window_[smallId];
     window_.erase(window_.begin() + smallId);
     window_.insert(window_.begin(), oldest);
+    KeyFrame::WritePoseMessage2File(*oldest);
     return smallId;
 }
 

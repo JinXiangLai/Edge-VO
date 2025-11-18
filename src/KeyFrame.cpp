@@ -28,6 +28,9 @@ std::unordered_set<KeyFrame*> KeyFrame::kfOn3Dshow;
 std::shared_ptr<Camera> KeyFrame::cam_;
 cv::Size KeyFrame::eachGridSize(0, 0);
 cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
+std::ofstream KeyFrame::poseFile;
+std::ofstream KeyFrame::kfPoseFile;
+std::vector<std::pair<double, std::string>> KeyFrame::vecTime2Pose;
 
 class Landmark;
 
@@ -354,6 +357,13 @@ void KeyFrame::ResetDebugMessage() {
     matchResultStatiscs_.clear();
 }
 
+string KeyFrame::OutputPoseMessage() const {
+    const Eigen::Vector3d& p = Twc_.t_wb_;
+    const Eigen::Quaterniond& q = Twc_.q_wb_;
+    return fmt::format("{:.6f} {} {} {} {} {} {} {}", timestamp_, p.x(), p.y(),
+                       p.z(), q.x(), q.y(), q.z(), q.w());
+}
+
 void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
                                        const cv::Mat& curImg) {
     vector<cv::Point2f> nextPts;
@@ -488,6 +498,55 @@ void KeyFrame::ReportMatchResult() {
         cout << p.first << ": num=" << p.second << ", ratio: " << ratio << endl;
     }
     cout << endl << endl;
+}
+
+void KeyFrame::InitPoseFileMessage() {
+    if (poseFile.is_open()) {
+        poseFile.close();
+    }
+    if (kfPoseFile.is_open()) {
+        kfPoseFile.close();
+    }
+    const string poseFilePath(fmt::format(
+        "{}/{}.txt", config->debugMessageSaveFolder,
+        config->dataDir.substr(config->dataDir.find_last_of('/') + 1)));
+    const string kfPoseFilePath(fmt::format(
+        "{}/{}_kf.txt", config->debugMessageSaveFolder,
+        config->dataDir.substr(config->dataDir.find_last_of('/') + 1)));
+    poseFile.open(poseFilePath.c_str(), ios::out);
+    kfPoseFile.open(kfPoseFilePath.c_str(), ios::out);
+    if (!poseFile.is_open()) {
+        cerr << fmt::format("Open {} file failed!\n", poseFilePath);
+        exit(-1);
+    }
+    if (!kfPoseFile.is_open()) {
+        cerr << fmt::format("Open {} file failed!\n", kfPoseFilePath);
+        exit(-1);
+    }
+    vecTime2Pose.clear();
+    vecTime2Pose.reserve(500);
+}
+
+void KeyFrame::WritePoseMessage2File(const KeyFrame& f) {
+    if (!f.landmark_.empty()) {
+        vecTime2Pose.emplace_back(f.timestamp_, f.OutputPoseMessage());
+    } else {
+        poseFile << f.OutputPoseMessage() << endl;
+    }
+}
+
+void KeyFrame::ProcessPoseFile() {
+    if (poseFile.is_open()) {
+        poseFile.close();
+    }
+    sort(vecTime2Pose.begin(), vecTime2Pose.end(),
+         [](const pair<double, std::string>& kf1,
+            const pair<double, std::string>& kf2) {
+             return kf1.first < kf2.first;
+         });
+    for (const auto& time2PoseStr : vecTime2Pose) {
+        kfPoseFile << time2PoseStr.second << endl;
+    }
 }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)

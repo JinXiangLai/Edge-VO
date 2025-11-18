@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
                 runWindowBAthread =
                     new thread(&Optimizer::RunWindowBA, &optimizer);
             }
-
+            KeyFrame::InitPoseFileMessage();
             cout << "Set initFrame with frame id: " << i << endl;
             continue;  // 认为初始化完毕
         }
@@ -346,6 +346,7 @@ int main(int argc, char** argv) {
                 sleepTime);
         }
 
+        KeyFrame::WritePoseMessage2File(curF);
         lastLastF = lastF;
         lastF = curF;
 
@@ -389,6 +390,11 @@ int main(int argc, char** argv) {
     runWindowBAthread->join();
     delete runWindowBAthread;
     cout << "Window BA thread recycled!" << endl;
+
+    for(const KeyFrame* kf : win) {
+        KeyFrame::WritePoseMessage2File(*kf);
+    }
+    KeyFrame::ProcessPoseFile();
 
     if (config->debugShowOnlineResult3D) {
         viewerThread->join();

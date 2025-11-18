@@ -1,6 +1,7 @@
 #ifndef CLASS_KEYFRAME
 #define CLASS_KEYFRAME
 
+#include <fmt/core.h>
 #include <fstream>
 #include <memory>
 
@@ -81,6 +82,7 @@ class KeyFrame {
     void ReportMatchResult();
     void AddReportElement(const std::string& key);
     void ResetDebugMessage();
+    std::string OutputPoseMessage() const;
 
     void OpticalFlowTrackExecute(const cv::Mat& prevImg, const cv::Mat& curImg);
 
@@ -166,6 +168,14 @@ class KeyFrame {
     void InitFastDetector();
 
     double timestamp_ = 0.;
+
+    // 保留位姿信息
+    static std::ofstream poseFile;
+    static std::ofstream kfPoseFile;
+    static std::vector<std::pair<double, std::string>> vecTime2Pose;
+    static void InitPoseFileMessage();
+    static void WritePoseMessage2File(const KeyFrame& f);
+    static void ProcessPoseFile();
 };
 
 #endif
