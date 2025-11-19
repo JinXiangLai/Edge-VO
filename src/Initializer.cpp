@@ -47,8 +47,8 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
             .t_wb_.head(2)
             .norm();
     Pose result;
-    if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
-        // if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
+    // if (ConstructAndDecomposeEssentialMatrix(uv2obv, result)) {
+    if (ConstructAndDecomposeEssentialMatrixOpenCV(uv2obv, result)) {
         // if (ConstructAndDecomposeEssentialMatrixNormPoint(uv2obv, result)) {
         result.t_wb_ =
             result.t_wb_.normalized() * curF.Tcw_.t_wb_.norm();  // 仅做debug
@@ -131,14 +131,31 @@ Eigen::Matrix3d Initializer::GetEssentialMatrix(
 
 double Initializer::ComputeEpipolarConstraintRmse(
     const Eigen::Matrix3d& E, const std::vector<Eigen::Vector4d>& uv2obv) {
+    const Eigen::Matrix3d Et = E.transpose();
+
+    auto SampsonDistanceSquared_E = [&E, &Et, &uv2obv,
+                                     this](int index) -> double {
+        const Eigen::Vector2d& p1 = uv2obv[index].head(2);
+        const Eigen::Vector2d& p2 = uv2obv[index].tail(2);
+        const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
+        const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
+        const double rSquare = pn1.transpose() * E * pn2;
+
+        const Eigen::Vector3d E_x1 = E * pn1;
+        const Eigen::Vector3d Et_x2 = Et * pn2;
+        double denom = E_x1[0] * E_x1[0] + E_x1[1] * E_x1[1] +
+                       Et_x2[0] * Et_x2[0] + Et_x2[1] * Et_x2[1];
+        if (denom < 1e-12) {
+            return DBL_MAX;
+        }
+        // SampsonDistanceSquared
+        return rSquare / denom;
+    };
+
     vector<double> errors;
     errors.reserve(uv2obv.size());
     for (size_t i = 0; i < uv2obv.size(); ++i) {
-        const Eigen::Vector2d& p1 = uv2obv[i].head(2);
-        const Eigen::Vector2d& p2 = uv2obv[i].tail(2);
-        const Eigen::Vector3d pn1 = cam_->InverseProject(p1);
-        const Eigen::Vector3d pn2 = cam_->InverseProject(p2);
-        errors.emplace_back(pn1.transpose() * E * pn2);
+        errors.emplace_back(SampsonDistanceSquared_E(i));
     }
     sort(errors.begin(), errors.end());
     constexpr double kReliableRatio = 0.75;
@@ -238,7 +255,7 @@ bool Initializer::FindEssentialMatrixRansac(
     }
     std::chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
-    cout << fmt::format("find matrixE spend: {}ms, rmse: {:.3f}\n",
+    cout << fmt::format("find matrixE spend: {:.1}ms, rmse: {:.3f}\n",
                         ChronoMillisecTimeDuration(t0, t1), minRmse);
     return true;
 }

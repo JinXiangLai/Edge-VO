@@ -301,6 +301,60 @@ void Optimizer::CalculateHandGradiantCurFrame(
     }
 }
 
+Optimizer::ResidualInfo Optimizer::ResampleStablePwAndObvCurFrame(
+    const double sampleRatio, const Pose& Twc2,
+    std::vector<Eigen::Vector3d>& stablePws,
+    std::vector<Eigen::Vector2d>& stableObvs) {
+    const Camera& cam = *cam_;
+    const Pose Tc2w = Twc2.Inverse();
+
+    vector<pair<int, double>> idx2Chi2(stablePws.size());
+    for (size_t j = 0; j < stablePws.size(); ++j) {
+        const Eigen::Vector3d pc = Tc2w * stablePws[j];
+        const Eigen::Vector2d px = cam.Project2PixelPlane(pc);
+
+        // 必须与计算Jacobian的残差计算方式一致
+        // 注意： cost = p.T * p = [1x1]向量，我们是对cost进行线性化，因此求导的对象是r^2，
+        // 而胡伯核函数的自变量是r^2
+        idx2Chi2[j] = pair(j, (px - stableObvs[j]).squaredNorm());
+    }
+    sort(idx2Chi2.begin(), idx2Chi2.end(),
+         [](const pair<int, double>& p1, pair<int, double>& p2) {
+             return p1.second < p2.second;
+         });
+    const size_t maxUsefulId =
+        static_cast<size_t>(idx2Chi2.size() * sampleRatio);
+
+    std::vector<Eigen::Vector3d> samplePws;
+    std::vector<Eigen::Vector2d> sampleObvs;
+    samplePws.reserve(stablePws.size());
+    sampleObvs.reserve(stablePws.size());
+    ResidualInfo info;
+    for (size_t i = 0; i < maxUsefulId; ++i) {
+        const int id = idx2Chi2[i].first;
+        samplePws.emplace_back(stablePws[id]);
+        sampleObvs.emplace_back(stableObvs[id]);
+        Eigen::Vector2d rho;  // 残差值和核函数关于残差的导数
+        HuberLoss(idx2Chi2[i].second, rho);
+        info.cost += rho[0];
+        ++info.totalConstraintNum;
+        ++info.usefulLandmarkNum;
+    }
+
+    info.meanCost = info.cost / info.totalConstraintNum;
+    stablePws.swap(samplePws);
+    stableObvs.swap(sampleObvs);
+
+    cout << fmt::format(
+        "stable Pws size:{}, resample ratio: {:.3f}, max resample id: {}, max "
+        "resample chi2: {:.1f}, resample num: {}, constraint num: {}, mean "
+        "reproj cost: {:.1f}.\n",
+        samplePws.size(), sampleRatio, maxUsefulId,
+        idx2Chi2[maxUsefulId].second, stablePws.size(), info.totalConstraintNum,
+        info.meanCost);
+    return info;
+}
+
 Eigen::VectorXd Optimizer::SchurCompleteSolve(
     const Eigen::MatrixXd& H, const Eigen::VectorXd& b, const int poseNum,
     const int pointNum, const int poseDim, const int pointDim,
@@ -729,87 +783,114 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
         return false;
     }
 
-    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-    int continousNoImprovementNum = 0;
-    bool acceptNewVariableStatus = true;
-    Eigen::Matrix<double, 6, 6> hessianMatrix;
-    Eigen::Matrix<double, 6, 1> gradient;
     double lambda = config->initLambda;
-    for (int i = 0; i < maxIte_; ++i) {
-        if (acceptNewVariableStatus) {
-            // 只需要在状态量更新的时候重新线性化一次即可，以节省计算时间
-            CalculateHandGradiantCurFrame(stablePws, stableObvs, Twc2,
-                                          hessianMatrix, gradient);
+    const vector<double> iterativeUsefulResidualRatio{0.75};
+    for (size_t ite = 0; ite <= iterativeUsefulResidualRatio.size(); ++ite) {
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+
+        if (ite > 0) {
+            const ResidualInfo temp = ResampleStablePwAndObvCurFrame(
+                iterativeUsefulResidualRatio[ite - 1], Twc2, stablePws,
+                stableObvs);
+            if (stablePws.size() < 50) {
+                info = lastCost;
+                return sqrt(info.meanCost) <
+                       config->maxMeanProjectResidual2CreateKF;
+            }
+            firstCost = lastCost = temp;
+            lambda = 100.0;
         }
 
-        if (i == 0) {
-            cout << "frame BA: hessianMatrix.diag: "
-                 << hessianMatrix.diagonal().transpose()
-                 << "\ng: " << gradient.transpose() << "\n";
+        // 执行迭代优化
+        int continousNoImprovementNum = 0;
+        bool acceptNewVariableStatus = true;
+        Eigen::Matrix<double, 6, 6> hessianMatrix;
+        Eigen::Matrix<double, 6, 1> gradient;
+        for (int i = 0; i < maxIte_; ++i) {
+            if (acceptNewVariableStatus) {
+                // 只需要在状态量更新的时候重新线性化一次即可，以节省计算时间
+                CalculateHandGradiantCurFrame(stablePws, stableObvs, Twc2,
+                                              hessianMatrix, gradient);
+            }
+            if (i == 0) {
+                cout << "frame BA: hessianMatrix.diag: "
+                     << hessianMatrix.diagonal().transpose()
+                     << "\ng: " << gradient.transpose() << "\n";
+            }
+
+            Eigen::Matrix<double, 6, 1> _lambda;
+            _lambda.setConstant(lambda);
+            if (hessianMatrix.diagonal().head(6).isApproxToConstant(0)) {
+                _lambda.head(6).setConstant(0);
+            }
+
+            // debug, 返回J, 判断H, g计算的正确性
+            hessianMatrix.diagonal() += _lambda;
+            const Eigen::Matrix<double, 6, 1> delta_x =
+                hessianMatrix.ldlt().solve(gradient);
+
+            const Pose poseBackup = Twc2;
+
+            // 当前帧pose状态更新
+            Twc2.Update(delta_x.middleRows(0, 3), delta_x.middleRows(3, 3));
+
+            // 判断当前更新是否有效
+            ResidualInfo newCost =
+                CalculateResidualCurFrame(stablePws, stableObvs, Twc2);
+
+            if (config->iterateLogFreqLM > 0 &&
+                i % config->iterateLogFreqLM == 0) {
+                cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
+                     << ", norm: " << delta_x.norm() << "\n";
+                cout << fmt::format(
+                    "CurF BA iterate {} times, firstCost: {:.1f}, lastCost: "
+                    "{:.1f}, newCost: "
+                    "{:.1f}, "
+                    "useful landmark: {}, "
+                    "lambda: {}.\n",
+                    i, firstCost.cost, lastCost.cost, newCost.cost,
+                    newCost.usefulLandmarkNum, lambda);
+            }
+
+            double costRelativeAbsDiff = 100;
+            const double predictReduction = ComputePredictionReductionFrame(
+                lambda, delta_x, gradient, hessianMatrix);
+            UpdateLMlambda(lastCost, newCost, predictReduction,
+                           acceptNewVariableStatus, continousNoImprovementNum,
+                           costRelativeAbsDiff, lambda);
+            // LM 方法
+            if (!acceptNewVariableStatus) {
+                Twc2 = poseBackup;
+            } else {
+                lastCost = newCost;
+            }
+
+            if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
+                            lambda, delta_x)) {
+                cout << fmt::format(
+                    "frame BA iterative info: ite: {}, stop i: {}\n", ite, i);
+                break;
+            }
         }
 
-        Eigen::Matrix<double, 6, 1> _lambda;
-        _lambda.setConstant(lambda);
-        if (hessianMatrix.diagonal().head(6).isApproxToConstant(0)) {
-            _lambda.head(6).setConstant(0);
-        }
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+        const double spendTime = ChronoMillisecTimeDuration(t1, t2);
+        cout << fmt::format(
+            "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: "
+            "{:.1f}, "
+            "last mean proj cost: {:.1f}, \n"
+            "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
+            "optimize "
+            "spend: {:.3f}ms.\n",
+            firstCost.cost, lastCost.cost, firstCost.meanCost,
+            lastCost.meanCost,
+            ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
+            double(lastCost.usefulLandmarkNum) / stablePws.size() * 100,
+            spendTime);
 
-        // debug, 返回J, 判断H, g计算的正确性
-        hessianMatrix.diagonal() += _lambda;
-        const Eigen::Matrix<double, 6, 1> delta_x =
-            hessianMatrix.ldlt().solve(gradient);
-
-        const Pose poseBackup = Twc2;
-
-        // 当前帧pose状态更新
-        Twc2.Update(delta_x.middleRows(0, 3), delta_x.middleRows(3, 3));
-
-        // 判断当前更新是否有效
-        ResidualInfo newCost =
-            CalculateResidualCurFrame(stablePws, stableObvs, Twc2);
-
-        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
-            cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
-                 << ", norm: " << delta_x.norm() << "\n";
-            cout << fmt::format(
-                "CurF BA iterate {} times, lastCost: {:.1f}, newCost: {:.1f}, "
-                "useful landmark: {}, "
-                "lambda: {}.\n",
-                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
-                lambda);
-        }
-
-        double costRelativeAbsDiff = 100;
-        const double predictReduction = ComputePredictionReductionFrame(
-            lambda, delta_x, gradient, hessianMatrix);
-        UpdateLMlambda(lastCost, newCost, predictReduction,
-                       acceptNewVariableStatus, continousNoImprovementNum,
-                       costRelativeAbsDiff, lambda);
-        // LM 方法
-        if (!acceptNewVariableStatus) {
-            Twc2 = poseBackup;
-        } else {
-            lastCost = newCost;
-        }
-
-        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff, lambda,
-                        delta_x)) {
-            break;
-        }
+        info = lastCost;
     }
-    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-    const double spendTime = ChronoMillisecTimeDuration(t1, t2);
-    cout << fmt::format(
-        "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
-        "last mean proj cost: {:.1f}, \n"
-        "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
-        "optimize "
-        "spend: {:.3f}ms.\n",
-        firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
-        ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
-        double(lastCost.usefulLandmarkNum) / stablePws.size() * 100, spendTime);
 
-    info = lastCost;
     return sqrt(info.meanCost) < config->maxMeanProjectResidual2CreateKF;
 }
 
@@ -1919,6 +2000,16 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
             }
         }
 
+        // 决定移除跟踪最少帧还是上一次添加的新KF
+        constexpr int kMinTrackFeatureNum = 200;
+        if (smallId != static_cast<int>(window_.size() - 1) &&
+            minTrackFeatureNum > kMinTrackFeatureNum) {
+            smallId = static_cast<int>(window_.size() - 1);
+            cout << fmt::format(
+                "will remove the last kf, for minTrackFeatureNum: {} > {}.\n",
+                minTrackFeatureNum, kMinTrackFeatureNum);
+        }
+
         // 打印统计结果
         string logInfo(
             "track feature num of each kf in window by newest kf:\n");
@@ -1938,11 +2029,15 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
     }
 
     // 将待删除的最老帧移到滑窗开头
-    KeyFrame* oldest = window_[smallId];
-    window_.erase(window_.begin() + smallId);
+    MoveMargKF2FirstPosInWindow(smallId);
+    return smallId;
+}
+
+void Optimizer::MoveMargKF2FirstPosInWindow(const int margId) {
+    KeyFrame* oldest = window_[margId];
+    window_.erase(window_.begin() + margId);
     window_.insert(window_.begin(), oldest);
     KeyFrame::WritePoseMessage2File(*oldest);
-    return smallId;
 }
 
 bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
@@ -2101,10 +2196,15 @@ void Optimizer::RunWindowBA() {
             continue;
         }
 
+        chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
         lock_guard<mutex> lock(newKFmutex_);
         // 滑窗优化时，会将当前帧添加到滑窗中去
         SlidingWindowOptimize(newKF_);
         CalculateLastKFmeanDepth();
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+        lastWinBAspendTime_ = ChronoMillisecTimeDuration(t0, t1);
+        cout << fmt::format("RunWindowBA spend: {:.1f}ms.\n",
+                            lastWinBAspendTime_);
         newKF_ = nullptr;
     }
 }

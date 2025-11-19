@@ -1650,7 +1650,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     // 运行事件循环，使窗口响应用户输入
     while (!interaction->resetWindow && curId == interaction->visualCurF.id_ &&
            !interaction->stopView) {
-        window.spinOnce(50);
+        window.spinOnce(100);
         // static int counter = 0;
         // const string imgSavePath =
         //     fmt::format("{}/{}.png", interaction->imgSaveFolderPath, ++counter);

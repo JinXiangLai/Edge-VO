@@ -370,7 +370,7 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     vector<uchar> status;
     vector<float> error;
 
-    constexpr double kGoodMatchRatio = 0.9;
+    constexpr double kGoodMatchRatio = 0.75;
     auto GetGoodMatchMaxResidual = [&error, &status]() -> float {
         vector<float> temp;
         temp.reserve(error.size());

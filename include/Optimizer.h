@@ -50,6 +50,11 @@ class Optimizer {
         Eigen::Matrix<double, kPoseDim, kPoseDim>& H,
         Eigen::Matrix<double, kPoseDim, 1>& g);
 
+    ResidualInfo ResampleStablePwAndObvCurFrame(
+        const double sampleRatio, const Pose& Twc2,
+        std::vector<Eigen::Vector3d>& stablePws,
+        std::vector<Eigen::Vector2d>& stableObvs);
+
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
                                        const Eigen::VectorXd& b,
                                        const int poseNum, const int pointNum,
@@ -159,6 +164,8 @@ class Optimizer {
     void SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
                             const bool logOut = false);
 
+    void MoveMargKF2FirstPosInWindow(const int margId);
+
     template <int rows, int cols>
     bool MatrixBlockReset(const int x, const int y, const uint64_t addr) {
         // TODO：尝试使用指针地址
@@ -220,6 +227,7 @@ class Optimizer {
     void RunWindowBA();
     void StopRunBA();
     bool CanAddNewKF() { return keepRunWindowBA_ && !newKF_; }
+    double lastWinBAspendTime_ = 1e12; // ms
 };
 
 #endif

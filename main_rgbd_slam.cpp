@@ -267,6 +267,12 @@ int main(int argc, char** argv) {
 
         const bool hasHorMove = (horDist > 0.05 * meanDepth);
 
+        const double frameDuration =
+            (curF.timestamp_ - win.back()->timestamp_) * 1e3;  // ms
+        const bool longTimeNoInsertKF =
+            frameDuration > 2.0 * optimizer.lastWinBAspendTime_ &&
+            findMatchRatio < 0.8;
+
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -279,35 +285,13 @@ int main(int argc, char** argv) {
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
         if (optimizer.CanAddNewKF() &&
             ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
-             caseFastInsertKF || trackLocalMapLow)) {
+             caseFastInsertKF || trackLocalMapLow || longTimeNoInsertKF)) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
-                "caseMoveBaselineLOng: {}, caseFastInsertKF: {}\n",
+                "caseMoveBaselineLOng: {}, caseFastInsertKF: {}, "
+                "longTimeNoInsertKF: {}\n",
                 trackLocalMapLow, caseOptflowTrackLow, caseMoveBaselineLOng,
-                caseFastInsertKF);
-            {
-                static bool first = true;
-                ofstream f;
-                const string name = "generate_KF_case.csv";
-                if (first) {
-                    f.open(name.c_str(), ios::out);
-                    first = false;
-                    f << "#timestamp, qw, qx, qy, qz, x, y, z" << endl;
-                    f.close();
-                }
-                f.open(name.c_str(), ios::app);
-                //f << "(" <<case1 << " || " << case3 << " || " << case4 << " || " << case5 << ") && " << case2 << endl;
-                const Eigen::Quaterniond& q = curF.priorTwc_.q_wb_;
-                const Eigen::Vector3d& p = curF.priorTwc_.t_wb_;
-                f << to_string(vTimeStamps[i]) << ", " << q.w() << ", " << q.x()
-                  << ", " << q.y() << ", " << q.z() << ", " << p.x() << ", "
-                  << p.y() << ", " << p.z() << endl;
-                f.close();
-            }
-
-            // 可视化滑窗内点云
-            // ShowPointCloud(curF.landmark_);
-            // optimizer.ShowLocalMap(nullptr);
+                caseFastInsertKF, longTimeNoInsertKF);
 
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
             // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
@@ -326,7 +310,7 @@ int main(int argc, char** argv) {
             ChronoMillisecTimeDuration(t2, t3));
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
         const double trackSpendTime = ChronoMillisecTimeDuration(t1, t4);
-        const double sleepTime = min((frameTimeGap - trackSpendTime), 20.0);
+        const double sleepTime = min((frameTimeGap - trackSpendTime), 28.0);
         if (sleepTime > 0.) {
             usleep(sleepTime * 1e3);
         } else {
@@ -391,7 +375,7 @@ int main(int argc, char** argv) {
     delete runWindowBAthread;
     cout << "Window BA thread recycled!" << endl;
 
-    for(const KeyFrame* kf : win) {
+    for (const KeyFrame* kf : win) {
         KeyFrame::WritePoseMessage2File(*kf);
     }
     KeyFrame::ProcessPoseFile();
