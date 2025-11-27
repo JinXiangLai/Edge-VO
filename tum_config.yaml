@@ -120,3 +120,8 @@ debugShowGlobalMap: false # 默认显示局部地图
 debugRunOnDesktop: false # 是否运行在台式机上，台式机无法显示过多的元素
 debugShowOnlineResult3D: true # 是否显示viz3d窗口
 debugRunSerially: false
+
+superpoint.onnxFilePath: /home/ht/Opencv_Ceres_Eigen_example/Edge-VO/src/onnx_weights/superpoint_480x640.onnx
+superpoint.engineFilePath: /home/ht/Opencv_Ceres_Eigen_example/superpoint_480x640.engine
+lightglue.onnxFilePath: /home/ht/Opencv_Ceres_Eigen_example/Edge-VO/src/onnx_weights/superpoint_lightglue.onnx
+lightglue.engineFilePath: /home/ht/Opencv_Ceres_Eigen_example/superpoint_lightglue.engine

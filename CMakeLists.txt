@@ -33,16 +33,21 @@ endif()
 
 add_compile_options(-Werror=return-type)
 
+add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/tensorrtbuffer)
+
 # 添加一些debug 宏配置
 # add_definitions(-DWRITE_MATCH_PAIR_IMAGE)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV 4 REQUIRED)
+find_package(CUDA REQUIRED)
 
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIR}
     ${OpenCV_INCLUDE_DIRS}
+    ${CUDA_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/3rdparty/tensorrtbuffer/include
 )
 
 add_library(edge_slam SHARED
@@ -55,24 +60,31 @@ add_library(edge_slam SHARED
     src/KeyFrame.cpp
     src/Optimizer.cpp
     src/Initializer.cpp
+    src/SuperPoint.cpp
+    src/LightGlue.cpp
 )
 target_link_libraries(edge_slam
     ${OpenCV_LIBS}
     ${EIGEN3_LIBS}
     -lyaml-cpp
     -lfmt
+    
+    ${CUDA_LIBRARIES}
+    nvinfer
+    nvonnxparser
+    tensorrtbuffer
 )
-
-
-# add_executable(edge_slam_main main_edge_slam.cpp)
-# target_link_libraries(edge_slam_main
-#     edge_slam
-#     -lpthread
-#     -lyaml-cpp
-# )
 
 add_executable(rgbd_slam main_rgbd_slam.cpp)
 target_link_libraries(rgbd_slam
+    edge_slam
+    -lpthread
+    -lyaml-cpp
+    -lfmt
+)
+
+add_executable(sp_lg_sequence sp_lg_sequence.cpp)
+target_link_libraries(sp_lg_sequence
     edge_slam
     -lpthread
     -lyaml-cpp
@@ -83,17 +95,6 @@ target_link_libraries(rgbd_slam
 # target_link_libraries(ut 
 #     edge_slam
 #     -lpthread
-#     -lyaml-cpp
-# )
-
-# add_executable(main main_loop_closure_confirm.cpp)
-# target_link_libraries(main 
-#     edge_slam
-# )
-
-# add_executable(ut_main ut_loop_closure_confirm.cpp)
-# target_link_libraries(ut_main 
-#     edge_slam
 #     -lyaml-cpp
 # )
 

@@ -47,7 +47,8 @@ Config::Config(const std::string& yamlFilePath) {
 
     needNewKFtrans = f["needNewKFtrans"].as<double>();
     needNewKFrot = f["needNewKFrot"].as<double>();
-    maxMeanProjectResidual2CreateKF = f["maxMeanProjectResidual2CreateKF"].as<double>();
+    maxMeanProjectResidual2CreateKF =
+        f["maxMeanProjectResidual2CreateKF"].as<double>();
     needNewKFMaxMatchEdgeRatio = f["needNewKFMaxMatchEdgeRatio"].as<double>();
     filterPixelError = f["filterPixelError"].as<double>();
 
@@ -124,6 +125,11 @@ Config::Config(const std::string& yamlFilePath) {
     matchNoise = f["matchNoise"].as<double>();
     useAvgDiff = f["useAvgDiff"].as<bool>();
     maxProjectError = f["maxProjectError"].as<double>();
+
+    superpointOnnxFilePath = f["superpoint.onnxFilePath"].as<string>();
+    lightglueOnnxFilePath = f["lightglue.onnxFilePath"].as<string>();
+    superpointEngineFilePath = f["superpoint.engineFilePath"].as<string>();
+    lightglueEngineFilePath = f["lightglue.engineFilePath"].as<string>();
 }
 
 Config* config = nullptr;
