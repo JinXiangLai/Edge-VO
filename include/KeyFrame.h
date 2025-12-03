@@ -187,6 +187,7 @@ class KeyFrame {
     // 保留位姿信息
     static std::ofstream poseFile;
     static std::ofstream kfPoseFile;
+    static std::string poseFilePath, kfPoseFilePath;
     static std::vector<std::pair<double, std::string>> vecTime2Pose;
     static void InitPoseFileMessage();
     static void WritePoseMessage2File(const KeyFrame& f);

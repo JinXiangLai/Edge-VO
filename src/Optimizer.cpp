@@ -785,7 +785,7 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
     }
 
     double lambda = config->initLambda;
-    const vector<double> iterativeUsefulResidualRatio{0.75};
+    const vector<double> iterativeUsefulResidualRatio{0.95};
     for (size_t ite = 0; ite <= iterativeUsefulResidualRatio.size(); ++ite) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
@@ -904,13 +904,14 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                         kf->id_, totalTrackLandmarkNum);
     int historyTriSucceedNum = 0;
     int prevTriSucceedNum = 0;
+    int failTriNum = 0;
 
     KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
     if (!window_.empty()) {
         unordered_map<KeyFrame*, Pose> kf2T12;
         for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
             Landmark* lk = optFlw.trackLandmark_[i];
-            if (lk->initialized_) {
+            if (lk == nullptr || lk->initialized_) {
                 continue;
             }
 
@@ -926,11 +927,11 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
                 kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
             }
             const Pose& T12 = kf2T12.at(lk->host_);
-            if (config->useDepthImage ||
-                !GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(),
+            if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(),
                                                     curObv, cam_->Kinv_[0], T12,
                                                     idepth1, idepth2)) {
                 ++lk->failInitializeNum_;
+                ++failTriNum;
                 continue;
             }
             lk->SetTriangulateResult(idepth1);
@@ -949,8 +950,8 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
         cout << fmt::format(
             "prevTriSucceedNum: {}, historyTriSucceedNum: {}, remove long time "
-            "fail initialize feature num: {}\n",
-            prevTriSucceedNum, historyTriSucceedNum, removeFeatNum);
+            "fail initialize feature num: {}, failTriNum: {}.\n",
+            prevTriSucceedNum, historyTriSucceedNum, removeFeatNum, failTriNum);
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
         WriteDebugTriangulateCase2Video(kf->id_);

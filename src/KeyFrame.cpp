@@ -30,6 +30,7 @@ cv::Size KeyFrame::eachGridSize(0, 0);
 cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
 std::ofstream KeyFrame::poseFile;
 std::ofstream KeyFrame::kfPoseFile;
+std::string KeyFrame::poseFilePath, KeyFrame::kfPoseFilePath;
 std::vector<std::pair<double, std::string>> KeyFrame::vecTime2Pose;
 std::shared_ptr<SuperPoint> KeyFrame::superpointPtr;
 std::shared_ptr<LightGlue> KeyFrame::lightgluePtr;
@@ -218,8 +219,9 @@ int KeyFrame::RemoveNoInitializeLongFeature() {
     vector<Landmark*>::iterator it1 = optFlw.trackLandmark_.begin();
     vector<cv::Point2f>::iterator it2 = optFlw.prevPts_.begin();
     int removeFeatNum = 0;
+    constexpr int kMaxNotInitSuccessNum = 10;
     while (it1 != optFlw.trackLandmark_.begin() + optFlw.historyLandmarkNum_) {
-        if ((*it1)->failInitializeNum_ > 1) {
+        if ((*it1)->failInitializeNum_ >= kMaxNotInitSuccessNum) {
             (*it1)->SetCanDelete();
             it1 = optFlw.trackLandmark_.erase(it1);
             it2 = optFlw.prevPts_.erase(it2);
@@ -290,8 +292,9 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     vector<cv::DMatch> lightglueMatches;
     const int matchPairNum = lightgluePtr->matching_points(
         kpts_, lastKf->kpts_, desc_, lastKf->desc_, mscores, lightglueMatches);
-    cout << fmt::format("kf id: {}, last_kf id: {}, matchPairNum: {}.\n", id_,
-                        lastKf->id_, matchPairNum);
+    cout << fmt::format(
+        "kf id: {}, last_kf id: {}, matchPairNum: {}, match ratio: {:.1f}.\n",
+        id_, lastKf->id_, matchPairNum, double(matchPairNum) / kpts_.rows());
 
     // 可视化匹配结果
     if (0) {
@@ -546,12 +549,12 @@ void KeyFrame::InitPoseFileMessage() {
     if (kfPoseFile.is_open()) {
         kfPoseFile.close();
     }
-    const string poseFilePath(fmt::format(
+    poseFilePath = fmt::format(
         "{}/{}.txt", config->debugMessageSaveFolder,
-        config->dataDir.substr(config->dataDir.find_last_of('/') + 1)));
-    const string kfPoseFilePath(fmt::format(
+        config->dataDir.substr(config->dataDir.find_last_of('/') + 1));
+    kfPoseFilePath = fmt::format(
         "{}/{}_kf.txt", config->debugMessageSaveFolder,
-        config->dataDir.substr(config->dataDir.find_last_of('/') + 1)));
+        config->dataDir.substr(config->dataDir.find_last_of('/') + 1));
     poseFile.open(poseFilePath.c_str(), ios::out);
     kfPoseFile.open(kfPoseFilePath.c_str(), ios::out);
     if (!poseFile.is_open()) {

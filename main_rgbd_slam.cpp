@@ -379,12 +379,18 @@ int main(int argc, char** argv) {
     }
     KeyFrame::ProcessPoseFile();
 
+    // 调用ls命令，列出当前目录下的文件
+    cout << "Run evo evaluate kf traj precision!";
+    system(fmt::format("evo_ape tum {}/groundtruth.txt {} -a -s",
+                       config->dataDir, KeyFrame::kfPoseFilePath)
+               .c_str());
+
     if (config->debugShowOnlineResult3D) {
         viewerThread->join();
         delete viewerThread;
     }
     cout << "Viwe 3D thread recycled!" << endl;
-
+    
     return 0;
 }
 
