@@ -575,7 +575,7 @@ int LightGlue::matching_points(
     int num_match = 0;
     vector<cv::Point2f> points0, points1;
     vector<int> point_indexes;
-    for (size_t i = 0; i < indices0.size(); i++) {
+    for (int i = 0; i < indices0.rows(); i++) {
         if (indices0(i) < indices1.size() && indices0(i) >= 0 &&
             indices1(indices0(i)) == i) {
             const float d = mscores(i);
@@ -592,7 +592,7 @@ int LightGlue::matching_points(
                                inliers);
         int j = 0;
         // 内存复用
-        for (int i = 0; i < matches.size(); i++) {
+        for (int i = 0; i < static_cast<int>(matches.size()); i++) {
             if (inliers[i]) {
                 matches[j++] = matches[i];
             }

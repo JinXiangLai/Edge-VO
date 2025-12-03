@@ -118,7 +118,6 @@ Config::Config(const std::string& yamlFilePath) {
     //}
 
     debugShowGlobalMap = f["debugShowGlobalMap"].as<bool>();
-    debugRunOnDesktop = f["debugRunOnDesktop"].as<bool>();
     debugShowOnlineResult3D = f["debugShowOnlineResult3D"].as<bool>();
     debugRunSerially = f["debugRunSerially"].as<bool>();
 

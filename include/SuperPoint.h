@@ -26,7 +26,7 @@ constexpr const char* kOutputTensorNames[2] = {"scores", "descriptors"};
 
 // 可调试配置
 constexpr int kMaxKeypoints = 1024;
-constexpr double kKeypointThreshold = 0.015;
+constexpr double kKeypointThreshold = 0.005;
 constexpr int kRemoveBorder = 4;  // 排除边缘位置的高得分点
 };                                // namespace SuperPointConfig
 

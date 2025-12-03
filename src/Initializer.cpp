@@ -37,7 +37,7 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
     vector<Eigen::Vector4d> uv2obv;
     uv2obv.reserve(optFlw.trackLandmark_.size());
     for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-        const Eigen::Vector2d& uv = optFlw.trackLandmark_[i]->uv_;
+        const Eigen::Vector2d& uv = optFlw.trackLandmark_[i]->GetHostFrameObv();
         const cv::Point2f obv = optFlw.prevPts_[i];
         uv2obv.emplace_back(uv.x(), uv.y(), obv.x, obv.y);
     }

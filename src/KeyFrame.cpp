@@ -31,6 +31,8 @@ cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
 std::ofstream KeyFrame::poseFile;
 std::ofstream KeyFrame::kfPoseFile;
 std::vector<std::pair<double, std::string>> KeyFrame::vecTime2Pose;
+std::shared_ptr<SuperPoint> KeyFrame::superpointPtr;
+std::shared_ptr<LightGlue> KeyFrame::lightgluePtr;
 
 class Landmark;
 
@@ -62,7 +64,6 @@ KeyFrame::KeyFrame(const KeyFrame& f)
       Tcw_(f.Tcw_),
       priorTwc_(f.priorTwc_),
       level_(f.level_),
-      unKeypoints_(f.unKeypoints_),
       outOfRange_(f.outOfRange_),
       convergeEdgeNum_(f.convergeEdgeNum_),
       timestamp_(f.timestamp_) {
@@ -86,7 +87,6 @@ void KeyFrame::operator=(const KeyFrame& f) {
     Tcw_ = f.Tcw_;
     priorTwc_ = f.priorTwc_;
     level_ = f.level_;
-    unKeypoints_ = f.unKeypoints_;
     convergeEdgeNum_ = f.convergeEdgeNum_;
     timestamp_ = f.timestamp_;
 #else
@@ -104,6 +104,11 @@ KeyFrame::~KeyFrame() {
     int deleteLKnum = 0;
     for (Landmark*& lk : landmark_) {
         if (lk != nullptr && lk->CanBeDelete() && lk->host_ == this) {
+            // 同步将其余观测的指针置空，避免悬空，
+            // 因为滑窗内其余观测到该Landmark*的Keyframe*中的landmar_数组，也会存储该Landmark*
+            for (auto& p : lk->target_) {
+                p.first->landmark_[p.second] = nullptr;
+            }
             delete lk;
             ++deleteLKnum;
             lk = nullptr;
@@ -125,7 +130,7 @@ void KeyFrame::SetOpticalFlowStructCurFrame() {
     optFlw.prevImg_ = grayImg_;
     for (const auto& p : landmark_) {
         // 添加landmark对跟踪成功点的相互观测
-        optFlw.prevPts_.emplace_back(cv::Point2f(p->uv_.x(), p->uv_.y()));
+        optFlw.prevPts_.emplace_back(p->GetHostFrameObvCV());
         optFlw.trackLandmark_.push_back(p);
     }
     cout << fmt::format("kf id: {}, SetOpticalFlowStructCurFrame num: {}\n",
@@ -185,14 +190,28 @@ void KeyFrame::CalculateEachGridForExtractFast() {
 }
 
 void KeyFrame::InitFastDetector() {
-    if (detectorTh1 != nullptr) {
+    if (superpointPtr != nullptr && lightgluePtr != nullptr) {
         return;
     }
-    detectorTh1 = cv::FastFeatureDetector::create(
-        config->fastTh1, true, cv::FastFeatureDetector::TYPE_9_16);
 
-    detectorTh2 = cv::FastFeatureDetector::create(
-        config->fastTh2, true, cv::FastFeatureDetector::TYPE_9_16);
+    superpointPtr = make_shared<SuperPoint>(config->superpointOnnxFilePath,
+                                            config->superpointEngineFilePath);
+    if (!superpointPtr->Build()) {
+        cerr << "Error in SuperPoint building engine. Please check your "
+                "onnx model path."
+             << endl;
+    }
+
+    lightgluePtr = make_shared<LightGlue>(config->lightglueOnnxFilePath,
+                                          config->lightglueEngineFilePath);
+    if (!lightgluePtr->Build()) {
+        cerr << "Error in lightglue building engine. Please check your "
+                "onnx model path."
+             << endl;
+    }
+    lightgluePtr->SetThreshold(0.5);
+    cout << "SuperPoint and lightglue inference engine build success." << endl;
+    lightgluePtr->ValidateFP16();
 }
 
 int KeyFrame::RemoveNoInitializeLongFeature() {
@@ -214,48 +233,12 @@ int KeyFrame::RemoveNoInitializeLongFeature() {
     return removeFeatNum;
 }
 
-vector<cv::Point2f> KeyFrame::ExtractFastPointEachImage() {
-    vector<cv::Point2f> res;
-    res.reserve(config->extractFastNumEachFrame);
-    for (int i = 0; i < grayImg_.rows; i += eachGridSize.height) {
-        for (int j = 0; j < grayImg_.cols; j += eachGridSize.width) {
-#if 0
-            cv::Point2f fast(0, 0);
-            if (ExtractFastPointEachGrid(i, j, config->fastTh1, fast)) {
-                res.emplace_back(fast);
-            } else if (ExtractFastPointEachGrid(i, j, config->fastTh2, fast)) {
-                res.emplace_back(fast);
-            }
-#else
-            const int w = min(eachGridSize.width, grayImg_.cols - j);
-            const int h = min(eachGridSize.height, grayImg_.rows - i);
-            const cv::Mat& gridImg = grayImg_(cv::Rect2i(j, i, w, h));
-            vector<cv::KeyPoint> pts;
-            detectorTh1->detect(gridImg, pts);
-            if (pts.empty()) {
-                detectorTh2->detect(gridImg, pts);
-            }
-            if (pts.empty()) {
-                continue;
-            }
-            if (pts.size() > 1) {
-                sort(pts.begin(), pts.end(),
-                     [](const cv::KeyPoint& p1, const cv::KeyPoint& p2) {
-                         return p1.response > p2.response;
-                     });
-            }
-            // 只添加响应值最大的，但由于已经进行了极大值抑制，
-            // res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
-            // 故可以全部添加，影响不大
-            for (const auto& p : pts) {
-                res.emplace_back(j + p.pt.x, i + p.pt.y);
-            }
-
-#endif
-        }
+void KeyFrame::ExtractFastPointEachImage() {
+    if (!superpointPtr->Infer(grayImg_, kpts_, desc_)) {
+        cerr << "Failed when extracting features from first image." << endl;
+    } else {
+        cout << fmt::format("Superpoint extract {} points!\n", kpts_.rows());
     }
-
-    return res;
 }
 
 bool KeyFrame::ExtractFastPointEachGrid(const int diffRow, const int diffCol,
@@ -276,73 +259,123 @@ bool KeyFrame::ExtractFastPointEachGrid(const int diffRow, const int diffCol,
     return maxResponse > 0;
 }
 
-void KeyFrame::ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw) {
-    cv::Mat search;
-    if (!lastKFoptFlw.prevImg_.empty()) {
-        search = cv::Mat::zeros(lastKFoptFlw.prevImg_.size(), CV_8UC1);
-        // 当前关键帧追踪到当前帧的特征点，不要重复创建
-        // 遍历当前帧被跟踪到的特征点
+void KeyFrame::ExtractFastPoints() {
+    ExtractFastPointEachImage();
 
-        auto SetNoGenerateKeypointArea = [&search](const cv::Point2f& p) {
-            constexpr int windowLen = 10;
-            constexpr int halfLen = windowLen / 2;
-            constexpr int edgeLen = 2;
-            const int tempTopY = static_cast<int>(p.y - halfLen);
-            const int tempTopX = static_cast<int>(p.x - halfLen);
-            const int topX = tempTopX < 0 ? edgeLen : tempTopX;
-            const int topY = tempTopY < 0 ? edgeLen : tempTopY;
-            const int downX = topX + windowLen > search.cols - 1
-                                  ? search.cols - edgeLen
-                                  : topX + windowLen;
-            const int downY = topY + windowLen > search.rows - 1
-                                  ? search.rows - edgeLen
-                                  : topY + windowLen;
-            if (downX <= topX || downY <= topY) {
-                return;
-            }
-            search(cv::Rect(cv::Point(topX, topY), cv::Point(downX, downY)))
-                .setTo(255);
+    // 为每个提取到的角点生成一个Landmark对象
+    landmark_.resize(kpts_.rows());
+    for (int i = 0; i < kpts_.rows(); ++i) {
+        // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
+        // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
+        // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
+
+        landmark_[i] = new Landmark(i, this, cam_, kInitInvDepth);
+    }
+}
+
+int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
+    if (lastKf == nullptr) {
+        // 初始化世界帧
+        for (int i = 0; i < kpts_.rows(); ++i) {
+            optFlw.trackLandmark_.emplace_back(landmark_[i]);
+            optFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
+        }
+        optFlw.totalFeatureCreated_ = optFlw.trackLandmark_.size();
+        optFlw.prevImg_ = grayImg_;
+        return optFlw.prevPts_.size();
+    }
+
+    // 当前帧反追踪上一帧
+    Eigen::VectorXf mscores;
+    vector<cv::DMatch> lightglueMatches;
+    const int matchPairNum = lightgluePtr->matching_points(
+        kpts_, lastKf->kpts_, desc_, lastKf->desc_, mscores, lightglueMatches);
+    cout << fmt::format("kf id: {}, last_kf id: {}, matchPairNum: {}.\n", id_,
+                        lastKf->id_, matchPairNum);
+
+    // 可视化匹配结果
+    if (0) {
+        const cv::Mat& image0 = grayImg_;
+        const cv::Mat& image1 = lastKf->grayImg_;
+        const auto &kpts0 = kpts_, &kpts1 = lastKf->kpts_;
+        cv::Mat matchImage = cv::Mat(image0.rows, image0.cols * 2, CV_8UC1);
+        cv::Mat matchImgColor = cv::Mat(image0.rows, image0.cols * 2, CV_8UC3);
+        auto GetRandColor = []() -> cv::Scalar_<int> {
+            return {abs(rand()) % 256, abs(rand()) % 256, abs(rand()) % 256};
         };
-        for (const cv::Point2f& p : lastKFoptFlw.prevPts_) {
-            SetNoGenerateKeypointArea(p);
+
+        image0.copyTo(matchImage(cv::Rect(0, 0, image0.cols, image0.rows)));
+        image1.copyTo(
+            matchImage(cv::Rect(image0.cols, 0, image0.cols, image0.rows)));
+        cv::cvtColor(matchImage, matchImgColor, cv::COLOR_GRAY2BGR);
+        // lightglueMatches指示了哪些点应该有连线
+        for (const cv::DMatch m : lightglueMatches) {
+            const cv::Scalar bgr = GetRandColor();
+            const int i = m.queryIdx;
+            const int j = m.trainIdx;
+            const cv::Point2f p1(kpts0(i, 0), kpts0(i, 1));
+            const cv::Point2f p2(kpts1(j, 0) + image0.cols, kpts1(j, 1));
+            cv::circle(matchImgColor, p1, 2, bgr);
+            cv::circle(matchImgColor, p2, 2, bgr);
+            cv::line(matchImgColor, p1, p2, bgr);
         }
+
+        cv::putText(matchImgColor, fmt::format("match num: {}", matchPairNum),
+                    cv::Point(10, 30), cv::FONT_ITALIC, 0.80, {0, 0, 255}, 2);
+
+        // cv::imwrite("matchImage.png", matchImage);
+        //  visualize
+        cv::imshow("matchImgColor", matchImgColor);
+        cv::waitKey(0);
     }
 
-    auto CanGenerateKeypoint = [&search](const cv::Point2f& p) -> bool {
-        return search.empty() || search.ptr<uchar>(static_cast<int>(
-                                     p.y))[static_cast<int>(p.x)] == 0;
-    };
-
-#if 0
-    // 创建FAST检测器
-    vector<cv::KeyPoint> pts;
-    detectorTh1->detect(grayImg_, pts);
-    pts.reserve(5000);
-    unKeypoints_.reserve(pts.size());
-    for (const cv::KeyPoint& p : pts) {
-        // 注意：需要把上一KF的optFlw一直保留而不能重置
-        if (search.empty() || CanGenerateKeypoint(p.pt)) {
-            cv::circle(debugGrayImg_, p.pt, 2, kColor.at("white"));
-            unKeypoints_.emplace_back(p.pt.x, p.pt.y);
+    // 清除上一KF的光流跟踪结果，使用lightglue匹配的结果替换，未匹配上的直接丢弃
+    // Landmark*将会保留历史跟踪结果target，这里直接对optflw进行重新赋值，然后用于三角化即可
+    OpticalFlowStruct glueMatch;
+    vector<bool> trackedKpId(kpts_.rows(), false);
+    for (const cv::DMatch m : lightglueMatches) {
+        const int curId = m.queryIdx;
+        const int lastId = m.trainIdx;
+        if (lastKf->landmark_[lastId] != nullptr &&
+            !lastKf->landmark_[lastId]->CanBeDelete()) {
+            // 与上一帧匹配的，直接使用上一帧有效的Landmark*修改当前帧的landmark*，
+            // 不将其转换到当前帧的landmark，主要是出于精度考虑，当然，这种做法会让
+            // Landmark*的管理变得复杂
+            landmark_[curId] = lastKf->landmark_[lastId];
+            // 添加新的相互观测
+            landmark_[curId]->target_.insert({this, curId});
+            trackedKpId[curId] = true;
         }
-    }
 
-#else
-    vector<cv::Point2f> pts = ExtractFastPointEachImage();
-    unKeypoints_.reserve(pts.size());
-    for (const cv::Point2f& p : pts) {
-        // 注意：需要把上一KF的optFlw一直保留而不能重置
-        if (search.empty() || CanGenerateKeypoint(p)) {
-            cv::circle(debugGrayImg_, p, 2, kColor.at("white"));
-            unKeypoints_.emplace_back(p.x, p.y);
-        }
+        // 光流跟踪使用，需要记录该landmark*对应当前帧的关键点位置
+        glueMatch.trackLandmark_.emplace_back(landmark_[curId]);
+        glueMatch.prevPts_.emplace_back(kpts_(curId, 0), kpts_(curId, 1));
     }
+    glueMatch.historyLandmarkNum_ = glueMatch.trackLandmark_.size();
+    cout << fmt::format("kf id: {}, track history landmark num: {}\n", id_,
+                        glueMatch.historyLandmarkNum_);
+
+    // 当前关键帧新增关键点也加入光流跟踪，虽不能三角化，但可用于判断视角变化
+    for (size_t i = 0; i < trackedKpId.size(); ++i) {
+        if (trackedKpId[i]) {
+            continue;
+        }
+        glueMatch.trackLandmark_.emplace_back(landmark_[i]);
+        glueMatch.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
+    }
+    glueMatch.totalFeatureCreated_ = glueMatch.trackLandmark_.size();
+    const int newAddLandmarkNum =
+        glueMatch.totalFeatureCreated_ - glueMatch.historyLandmarkNum_;
     cout << fmt::format(
-        "self extract fast num: {}, current frame add kp num: {}, new create "
-        "ratio: {:.2f}\n",
-        pts.size(), unKeypoints_.size(),
-        static_cast<double>(unKeypoints_.size()) / pts.size());
-#endif
+        "cur kf id: {}, track history landmark num: {}, new add landmark num: "
+        "{}, add landmark ratio: {:.1f}\n",
+        id_, glueMatch.historyLandmarkNum_, newAddLandmarkNum,
+        double(newAddLandmarkNum) / glueMatch.totalFeatureCreated_);
+
+    optFlw = std::move(glueMatch);
+    optFlw.prevImg_ = grayImg_;
+
+    return matchPairNum;
 }
 
 void KeyFrame::AddReportElement(const std::string& key) {
@@ -392,6 +425,12 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     };
 
     const int winLen = config->optflowWinSize;
+    cout << fmt::format(
+                "debug prevImg size: [{}x{}], curImg size: [{}x{}], "
+                "optFlw.prevPts_.size: {}, nextPts.size: {}",
+                prevImg.rows, prevImg.cols, curImg.rows, curImg.cols,
+                optFlw.prevPts_.size(), nextPts.size())
+         << endl;
     cv::calcOpticalFlowPyrLK(prevImg, curImg, optFlw.prevPts_, nextPts, status,
                              error, cv::Size(winLen, winLen),
                              config->optflowLayer);
@@ -420,9 +459,9 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
             if (i < optFlw.historyLandmarkNum_) {
                 ++historyLandmarkTrackSuccessNum;
             } else {
-                const double parallax =
-                    CalculateParallax(optFlw.trackLandmark_[i]->uv_,
-                                      {nextPts[i].x, nextPts[i].y}, mainPoint);
+                const double parallax = CalculateParallax(
+                    optFlw.trackLandmark_[i]->GetHostFrameObv(),
+                    {nextPts[i].x, nextPts[i].y}, mainPoint);
                 if (parallax > 0.) {
                     parallaxVec.emplace_back(parallax);
                 }
@@ -822,64 +861,11 @@ void KeyFrame::DrawTriangulateCase(
 }
 #endif
 
-size_t KeyFrame::InitializeLandmark(const KeyFrame* lastKf) {
-    // TODO：需要考虑由三角化前、后帧生成地图点而创建的landmark？
+size_t KeyFrame::InitializeLandmark(KeyFrame* lastKf) {
     const OpticalFlowStruct lastKFoptFlw =
         lastKf == nullptr ? OpticalFlowStruct() : optFlw;
-    if (landmark_.empty()) {
-        ExtractFastPoints(lastKFoptFlw);
-        // initialKF会有该种情况
-        landmark_.resize(unKeypoints_.size(), nullptr);
-    }
-
-    for (size_t i = 0; i < unKeypoints_.size(); ++i) {
-        if (landmark_[i] != nullptr && !config->useDepthImage &&
-            !config->debugWithTrueDepthImage) {
-            continue;
-        }
-        const int x = int(unKeypoints_[i].x() + 0.5);
-        const int y = int(unKeypoints_[i].y() + 0.5);
-        // shared_ptr<KeyFrame>(this)会导致多源智能指针，它会释放多次KeyFrame导致报错
-        // 若需要使用智能指针，必须保证this在此前已经由一个智能指针管理，然后使用shared_from_this()来获取，否则只能使用原始指针
-        // landmark_.push_back(make_shared<Landmark>(upx, make_shared<KeyFrame>(this), cam_, 1.0) ); [ERROR double free]
-
-        const uint64_t descriptor = 0;
-        if (!config->useDepthImage && !config->debugWithTrueDepthImage &&
-            depthImage_.empty()) {
-            landmark_[i] = new Landmark(unKeypoints_[i], this, cam_, descriptor,
-                                        kInitInvDepth);
-        } else {
-            // double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
-            double d = static_cast<double>(depthImage_.at<ushort>(y, x));
-            if (d == 0) {
-                landmark_[i] = new Landmark(unKeypoints_[i], this, cam_,
-                                            descriptor, kInitInvDepth);
-
-            } else {
-                d /= config->depthFactor;
-                landmark_[i] = new Landmark(unKeypoints_[i], this, cam_,
-                                            descriptor, kInitInvDepth);
-                landmark_[i]->trueDepth_ = d;
-                if (config->useDepthImage) {
-                    landmark_[i]->invDepthCov_ = 0.005;
-                    landmark_[i]->obvTime_ = 1e3;
-                    landmark_[i]->SetInvZvalue(1.0 / d);
-                }
-            }
-            // host帧也要增加与landmark的相互观测
-            landmark_[i]->target_.insert({this, unKeypoints_[i]});
-        }
-    }
-
-    //把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
-    if (lastKf != nullptr) {
-        optFlw.historyLandmarkNum_ = optFlw.prevPts_.size();
-    }
-
-    // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
-    SetOpticalFlowStructCurFrame();
-
-    optFlw.SetTotalFeatureCreated();
+    ExtractFastPoints();
+    LightglueMatchAndRefineTrackResult(lastKf);
 
     // 历史关键帧和当前关键帧在当前灰度图上提取到的关键点数量
     return optFlw.GetTrackFeatureNum();

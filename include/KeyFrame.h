@@ -9,9 +9,13 @@
 
 #include "Camera.h"
 #include "Landmark.h"
+#include "LightGlue.h"
 #include "Pose.h"
+#include "SuperPoint.h"
 
 #define USE_POINT_MAP_ID 0
+
+#define SUPER_POINT_EXTRACTOR 1
 
 class Landmark;
 constexpr double expandRatio = 1.1 * 1.1;
@@ -42,7 +46,7 @@ class KeyFrame {
     void operator=(const KeyFrame& f);
 
     // 可能需要corase2fine的配准
-    size_t InitializeLandmark(const KeyFrame* lastKf);
+    size_t InitializeLandmark(KeyFrame* lastKf);
     void SetOutOfRange() { outOfRange_ = true; }
     bool IsOutOfRange() const { return outOfRange_; }
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
@@ -55,6 +59,8 @@ class KeyFrame {
         TwcBack_ = Twc_;
     }
 
+    int LightglueMatchAndRefineTrackResult(KeyFrame* lastKf);
+
     unsigned int id_;
     cv::Mat grayImg_, debugGrayImg_;
 
@@ -63,7 +69,6 @@ class KeyFrame {
     Pose Tcw_, TcwBack_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<Eigen::Vector2d> unKeypoints_;  // 像素平面上的去畸变点
     std::vector<Landmark*>
         landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
 
@@ -113,15 +118,24 @@ class KeyFrame {
             totalFeatureCreated_ = 0;
             historyLandmarkNum_ = 0;
         }
+        void Set(const cv::Mat& img, const std::vector<cv::Point2f>& prevPts,
+                 const std::vector<Landmark*>& landmark,
+                 const int totalFeatureCreated, const int historyLandmarkNum);
     };
     void SetOpticalFlowStructCurFrame();
     double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
-    void ExtractFastPoints(const OpticalFlowStruct& lastKFoptFlw);
+    void ExtractFastPoints();
     void GenerateUndistordMap();
     int RemoveNoInitializeLongFeature();
     bool ExtractFastPointEachGrid(const int diffRow, const int diffCol,
                                   const int fastTh1, cv::Point2f& fast);
-    std::vector<cv::Point2f> ExtractFastPointEachImage();
+    void ExtractFastPointEachImage();
+
+    Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> kpts_;
+    Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor> desc_;
+    Eigen::Vector2d GetObv(const int kpRow) const {
+        return {kpts_(kpRow, 0), kpts_(kpRow, 1)};
+    }
 
     static OpticalFlowStruct optFlw;
 
@@ -165,6 +179,7 @@ class KeyFrame {
     static cv::Size eachGridSize;
     static cv::Ptr<cv::FastFeatureDetector> detectorTh1, detectorTh2;
     void CalculateEachGridForExtractFast();
+
     void InitFastDetector();
 
     double timestamp_ = 0.;
@@ -176,6 +191,10 @@ class KeyFrame {
     static void InitPoseFileMessage();
     static void WritePoseMessage2File(const KeyFrame& f);
     static void ProcessPoseFile();
+
+    // superpoint和lightglue
+    static std::shared_ptr<SuperPoint> superpointPtr;
+    static std::shared_ptr<LightGlue> lightgluePtr;
 };
 
 #endif

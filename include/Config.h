@@ -112,7 +112,6 @@ class Config {
     std::unordered_set<Eigen::Vector2i, RobustVector2iHash, Vector2iEqual>
         pixelCount;
     bool debugShowGlobalMap;
-    bool debugRunOnDesktop;
     bool debugShowOnlineResult3D;
     bool debugRunSerially;
     double matchNoise;

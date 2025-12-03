@@ -155,7 +155,8 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
                 "curF set opt landmark chi2: {:.1f}-rho[0]: {:.1f}-kf id: "
                 "{}-kp1:({:.0f}, "
                 "{:.0f}); ",
-                chi2, rho[0], lk1->host_->id_, lk1->uv_.x(), lk1->uv_.y()));
+                chi2, rho[0], lk1->host_->id_, lk1->GetHostFrameObv().x(),
+                lk1->GetHostFrameObv().y()));
         }
 
         const int id = lk1->target_.size();
@@ -909,13 +910,15 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         unordered_map<KeyFrame*, Pose> kf2T12;
         for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
             Landmark* lk = optFlw.trackLandmark_[i];
-            // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
-            const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
-            const Eigen::Vector2d curObv(p.x, p.y);
-            lk->target_.insert({kf, curObv});
             if (lk->initialized_) {
                 continue;
             }
+
+            // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
+            const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
+            const Eigen::Vector2d curObv(p.x, p.y);
+            // lk->target_.insert(
+            //     {kf, curObv});  // TODO：这里改为lightglue匹配时就添加
 
             // 三角化
             double idepth1 = 0, idepth2 = 0;
@@ -924,8 +927,9 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
             }
             const Pose& T12 = kf2T12.at(lk->host_);
             if (config->useDepthImage ||
-                !GetHostAndCurFrameObservationDepth(
-                    lk->uv_, curObv, cam_->Kinv_[0], T12, idepth1, idepth2)) {
+                !GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(),
+                                                    curObv, cam_->Kinv_[0], T12,
+                                                    idepth1, idepth2)) {
                 ++lk->failInitializeNum_;
                 continue;
             }
@@ -1035,33 +1039,30 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
     cout << fmt::format("window size: {}, begin remove kf id: {}\n",
                         window_.size(), oldest->id_);
 
-    KeyFrame* nextKF = window_[margKFid + 1];
     int transformLandmarkNum = 0;
     int newAddOptimizeLandmarkNum = 0;
     for (Landmark* lk : oldest->landmark_) {
-        bool transformSucceed = false;
-        for (auto kf2lk : lk->target_) {
-            const KeyFrame* kf = kf2lk.first;
-            if (nextKF != kf) {
-                continue;
-            }
-
-            // 把地图点的所有权转移到最新KF，其余的不要
-            // 这里需要将lk从oldestKF中删除，并将其添加到下一个KF，且需要保持地址不变
-            if (lk->TransformHost2OtherKF(nextKF)) {
-                ++transformLandmarkNum;
-                transformSucceed = true;
-                // 由于先前没有添加待删除关键帧的地图点至优化变量，
-                // 这里将被保留下来的地图点添加进来以进行滑窗BA
-                // 后续会删除关于oldest KF的观测
-                if (lk->initialized_ &&
-                    lk->target_.size() > kMinUsefulObvNumWithHost) {
-                    optLandmark_.emplace_back(lk);
-                    ++newAddOptimizeLandmarkNum;
-                }
-            }
-            break;
+        if (lk == nullptr || lk->host_ != oldest) {
+            continue;
         }
+        bool transformSucceed = false;
+
+        // 把地图点的所有权转移到最新KF，其余的不要
+        // 这里需要将lk从oldestKF中删除，并将其添加到下一个KF，且需要保持地址不变
+        // if (lk->TransformHost2OtherKF(nextKF)) {
+        if (lk->TransformHost2NewestKeyframe(window_)) {
+            ++transformLandmarkNum;
+            transformSucceed = true;
+            // 由于先前没有添加待删除关键帧的地图点至优化变量，
+            // 这里将被保留下来的地图点添加进来以进行滑窗BA
+            // 后续会删除关于oldest KF的观测
+            if (lk->initialized_ &&
+                lk->target_.size() > kMinUsefulObvNumWithHost) {
+                optLandmark_.emplace_back(lk);
+                ++newAddOptimizeLandmarkNum;
+            }
+        }
+
         if (!transformSucceed) {
             lk->SetCanDelete();
         }
@@ -1085,7 +1086,13 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     // 注意：此时应该已经完成边缘化时的先验信息构建操作
     // 移除掉边缘化帧对地图点的观测
     for (const KeyFrame* kf : window_) {
+
         for (Landmark* lk : kf->landmark_) {
+            if (lk == nullptr) {
+                // TODO：需要完美处理SetCanDelete的情况，这里只是跳过了被置为不合法的情况，
+                // 优化Landmark*的管理
+                continue;
+            }
             if (lk->target_.count(oldest)) {
                 lk->target_.erase(oldest);
             }
@@ -1132,7 +1139,8 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
         for (Landmark* p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
-            if (!p->initialized_ || p->IsOutOfRange() || p->CanBeDelete() ||
+            if (p == nullptr || !p->initialized_ || p->IsOutOfRange() ||
+                p->CanBeDelete() ||
                 static_cast<int>(p->target_.size()) < minObvNum) {
                 continue;
             }
@@ -1173,7 +1181,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
                 useBackUpStatus ? target->TcwBack_ * pw : target->Tcw_ * pw;
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
-            Eigen::Vector2d r = px2 - kf2obv.second;
+            Eigen::Vector2d r = px2 - target->GetObv(kf2obv.second);
             double chi2 = r.squaredNorm();
             Eigen::Vector2d rho;
             HuberLoss(chi2, rho);
@@ -1243,7 +1251,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
                 break;
             }
 
-            Eigen::Vector2d r = px2 - kf2obv.second;
+            Eigen::Vector2d r = px2 - target->GetObv(kf2obv.second);
             tempInfo.cost = max(tempInfo.cost, r.squaredNorm());
             ++tempInfo.totalConstraintNum;
             ++totalSelectConstraintNum;
@@ -1647,7 +1655,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
             // 经过校验，可以构建residual和jacobian
-            const Eigen::Vector2d r = px2 - kf2obv.second;
+            const Eigen::Vector2d r = px2 - target->GetObv(kf2obv.second);
 
             // 使用胡伯核函数剔除异常残差值
             double chi2 = r.squaredNorm();
@@ -2132,7 +2140,7 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
             }
             const Eigen::Vector2d px2 = cam_->Project2PixelPlane(pc2);
 
-            Eigen::Vector2d r = px2 - kf2obv.second;
+            Eigen::Vector2d r = px2 - tar->GetObv(kf2obv.second);
             const double chi2 = r.squaredNorm();
             maxChi2 = chi2 > maxChi2 ? chi2 : maxChi2;
         }
@@ -2231,7 +2239,8 @@ void Optimizer::CalculateLastKFmeanDepth() {
     // 只有历史跟踪点才可能三角化成功
     for (size_t i = 0; i < KeyFrame::optFlw.historyLandmarkNum_; ++i) {
         Landmark* lk = KeyFrame::optFlw.trackLandmark_[i];
-        if (!lk->CanBeUseForOptimization() || !lk->target_.count(last)) {
+        if (!lk->CanBeUseForOptimization() ||
+            !lk->target_.count(const_cast<KeyFrame*>(last))) {
             continue;
         }
 
@@ -2321,7 +2330,7 @@ void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
         // 绘制匹配点
         for (size_t j = 0; j < usefulMapPointEachKf[i].size(); ++j) {
             Landmark* const lk = usefulMapPointEachKf[i][j];
-            const cv::Point2f p1(lk->uv_.x(), lk->uv_.y());
+            const cv::Point2f& p1 = lk->GetHostFrameObvCV();
             const cv::Point2f& p2 = usefulObservationCurF[i][j] + pointDiff;
             const Vec3b& color = kColor.at(colorKey[rand() % kColor.size()]);
             // 画极线以查看匹配是否准确
@@ -2385,7 +2394,7 @@ void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
     cv::Vec3b nearColor(0, 255, 0);
     cv::Vec3b farColor(0, 0, 255);
     const cv::Point pointDiff(debugGrayImg_.cols, 0);
-    const Eigen::Vector2i& kp1 = lk1.uv_.cast<int>();
+    const Eigen::Vector2i& kp1 = lk1.GetHostFrameObvInt();
     cv::Point p1(kp1.x(), kp1.y());
     cv::Point p2(matchKp2.x(), matchKp2.y());
     constexpr double kTextRatio = 0.5;
@@ -2404,7 +2413,8 @@ void Optimizer::DrawTriangulateCase(const double estD1, const Landmark& lk1,
     cv::circle(showImg, p1, radius, matchColor, 1);
     cv::circle(showImg, p2 + pointDiff, radius, matchColor, 1);
 
-    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+    const auto& _p = lk1.GetHostFrameObvInt();
+    const string debugImgName = fmt::format("{}_{}", _p.x(), _p.y());
     triPointMapDebugImage_[debugImgName].emplace_back(showImg);
 }
 
@@ -2447,7 +2457,7 @@ void Optimizer::DrawProjectCase(const Landmark& lk1,
 
     int radius = 3;
 
-    const Eigen::Vector2d& kp1 = lk1.uv_;
+    const Eigen::Vector2d& kp1 = lk1.GetHostFrameObv();
     cv::Point p1i(int(kp1.x()), int(kp1.y()));
     constexpr double kTextRatio = 0.5;
     // 写必要信息
@@ -2465,7 +2475,8 @@ void Optimizer::DrawProjectCase(const Landmark& lk1,
     cv::circle(showImg, kp2i + pointDiff, radius, matchColor, 1);
     cv::circle(showImg, pxi + pointDiff, radius, kColor.at("red"), 1);
 
-    const string debugImgName = fmt::format("{}_{}", lk1.uv_.x(), lk1.uv_.y());
+    const auto& _p = lk1.GetHostFrameObvInt();
+    const string debugImgName = fmt::format("{}_{}", _p.x(), _p.y());
     triPointMapDebugImage_[debugImgName].emplace_back(showImg);
 }
 

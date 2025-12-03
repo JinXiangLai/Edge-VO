@@ -1138,7 +1138,8 @@ bool LandmarkTransformHost(const Landmark& lk1, const Pose& T21,
     const double& variance1 = lk1.invDepthCov_;
     const Eigen::Matrix3d Rc2_c1 = T21.q_wb_.toRotationMatrix();
     const Eigen::Vector3d Pn1 =
-        invK * Eigen::Vector3d(lk1.uv_.x(), lk1.uv_.y(), 1.0);
+        invK * Eigen::Vector3d(lk1.GetHostFrameObv().x(),
+                               lk1.GetHostFrameObv().y(), 1.0);
 
     const double J_rho2_d2 = -1.0 / (depth2 * depth2);
     const double J_d2_rho1 = -(Rc2_c1 * Pn1).z() / (idepth1 * idepth1);
@@ -1589,18 +1590,16 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     }
 
     // 创建一个球体表示起点和终点
-    if (!config->debugRunOnDesktop) {
-        constexpr double radius = 0.001;
-        cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
-        cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
-        window.showWidget("S0", s0);
-        window.showWidget("S1", s1);
-    }
+    constexpr double radius = 0.001;
+    cv::viz::WSphere s0(startEndCameraPos[0], radius, 1, {255, 255, 255});
+    cv::viz::WSphere s1(startEndCameraPos[1], radius, 1, {0, 255, 255});
+    window.showWidget("S0", s0);
+    window.showWidget("S1", s1);
 
     // 实时显示当前帧投影情况
     constexpr double ratio = 0.5;
     const int w = curImg.cols * ratio, h = curImg.rows * ratio;
-    if (curf != nullptr && !config->debugRunOnDesktop) {
+    if (curf != nullptr) {
         cv::putText(curInitImg, "curInitImage", Point(10, curInitImg.rows - 10),
                     cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
         window.showWidget(
@@ -1612,13 +1611,11 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
                                           curImg, cv::Rect(w + 10, 0, w, h)));
     }
 
-    if (!config->debugRunOnDesktop) {
-        cv::putText(curKFimg, "curKFimg", Point(10, curInitImg.rows - 10),
-                    cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
-        window.showWidget(
-            "lastKFimg",
-            cv::viz::WImageOverlay(curKFimg, cv::Rect(2 * w + 20, 0, w, h)));
-    }
+    cv::putText(curKFimg, "curKFimg", Point(10, curInitImg.rows - 10),
+                cv::FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
+    window.showWidget(
+        "lastKFimg",
+        cv::viz::WImageOverlay(curKFimg, cv::Rect(2 * w + 20, 0, w, h)));
 
     // 显示轨迹
     vector<cv::Point3d> traj;

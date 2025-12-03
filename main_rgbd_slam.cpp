@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
 
     Config _config(configFilePath);
     config = &_config;
+
     InteractionParam _visualizeParam;
     interaction = &_visualizeParam;
     viz::Viz3d window("Local Map Viewer");
@@ -208,13 +209,11 @@ int main(int argc, char** argv) {
                 usleep(1 * 1000);
             }
         }
-
         // step2: 利用当前帧更新landmark depth，depth与host frame绑定
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         const double findMatchRatio =
             win.back()->TrackWithOpticalFlow(curF, findMatchNum);
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-
         // step1: 优化当前帧pose
         Pose Ttemp = GetPredictPose(lastF, lastLastF);
         curF.SetTwc(Ttemp, true);
@@ -252,7 +251,7 @@ int main(int argc, char** argv) {
         // step2：为剩余的edge point产生的landmark
         // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
         const bool caseOptflowTrackLow =
-            (findMatchRatio < 0.7 || findMatchNum < 500);
+            (findMatchRatio < 0.5 || findMatchNum < 100);
 
         const Pose T12 = win.back()->Tcw_ * curF.Twc_;
         const double horDist = T12.t_wb_.head(2).norm();

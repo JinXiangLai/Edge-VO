@@ -17,8 +17,7 @@ class Landmark {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Landmark(const Eigen::Vector2d& px, KeyFrame* host,
-             const std::shared_ptr<Camera> cam, const uint64_t desc,
+    Landmark(const int kpRow, KeyFrame* host, const std::shared_ptr<Camera> cam,
              const double invZ);
     Landmark() {}
     ~Landmark() {}
@@ -38,7 +37,6 @@ class Landmark {
     double invDepthCov_ = kInitCov;
     double trueDepth_ = 0.;
 
-    uint64_t descriptor_ = 0;
     // TODO: 结合光度残差分布给定优化的权重值
     int obvTime_ = 0;      // 路标点被看的次数可以反映其可信度
     int failObvTime_ = 0;  // 遮挡或者重复纹理导致失败
@@ -49,10 +47,13 @@ class Landmark {
     int failInitializeNum_ = 0;
 
     //std::shared_ptr<KeyFrame> host_; 需确保host已经由智能指针管理，然后调用shared_from_this()来获取才行，不方便
-    KeyFrame* host_;      // cnchor frame
-    Eigen::Vector2d uv_;  // host帧下的像素坐标z
+    KeyFrame* host_;  // cnchor frame
+    int kpRow_ = -1;  // host帧下的像素坐标索引
+    Eigen::Vector2d GetHostFrameObv() const;
+    Eigen::Vector2i GetHostFrameObvInt() const;
+    cv::Point2f GetHostFrameObvCV() const;
 
-    std::unordered_map<const KeyFrame*, Eigen::Vector2d> target_;
+    std::unordered_map<KeyFrame*, int> target_;  // host帧映射host帧下的像素索引
     static std::shared_ptr<Camera> cam_;
 
     // keep FEJ
@@ -72,7 +73,8 @@ class Landmark {
     Eigen::Vector2d matchNextPixel_ = Eigen::Vector2d::Zero();
 
     bool IsDebugPoint() {
-        return config->pixelCount.count(uv_.cast<int>()) && trueDepth_ != 0;
+        return config->pixelCount.count(GetHostFrameObvInt()) &&
+               trueDepth_ != 0;
     }
 
     bool ObvUpdate(const double invDepth, const double variance);
@@ -83,10 +85,11 @@ class Landmark {
 
     bool AbnormalConvergeLandmark();
 
-    // bool CheckInvDepthQualityByProject(const KeyFrame& lastLastFrame);
     bool CheckInvDepthQualitySuccessByProject();
 
     bool TransformHost2OtherKF(KeyFrame* kf2);
+
+    bool TransformHost2NewestKeyframe(std::vector<KeyFrame*>& window);
 
     void BackUpStatus();
 

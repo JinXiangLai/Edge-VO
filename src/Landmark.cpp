@@ -11,17 +11,18 @@ std::shared_ptr<Camera> Landmark::cam_;
 
 class KeyFrame;
 
-Landmark::Landmark(const Eigen::Vector2d& px, KeyFrame* host,
-                   const shared_ptr<Camera> cam, const uint64_t desc,
-                   const double invZ)
-    : invZ_(invZ), descriptor_(desc), host_(host), uv_(px) {
+Landmark::Landmark(const int kpRow, KeyFrame* host,
+                   const shared_ptr<Camera> cam, const double invZ)
+    : invZ_(invZ), host_(host), kpRow_(kpRow) {
     if (cam_ == nullptr) {
         cam_ = cam;
     }
+    // 添加与其初始化帧的相互观测
+    target_.insert({host, kpRow});
 }
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
-    return cam_->InverseProject(uv_, 1.0);
+    return cam_->InverseProject(GetHostFrameObv(), 1.0);
 }
 
 Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
@@ -29,9 +30,9 @@ Eigen::Vector3d Landmark::GetPc(const bool useBackUpStatus) const {
         cout << this << " cam_ is nullptr!" << endl;
     }
     if (!useBackUpStatus)
-        return cam_->InverseProject(uv_, GetPositiveDepth(invZ_));
+        return cam_->InverseProject(GetHostFrameObv(), GetPositiveDepth(invZ_));
 
-    return cam_->InverseProject(uv_, GetPositiveDepth(invZback_));
+    return cam_->InverseProject(GetHostFrameObv(), GetPositiveDepth(invZback_));
 }
 
 Eigen::Vector3d Landmark::GetPw(const bool useBackUpStatus) const {
@@ -139,10 +140,28 @@ bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
     //    target_.erase(host_);
     //}
     host_ = kf2;
-    uv_ = target_.at(kf2);
+    kpRow_ = target_.at(kf2);
     // TODO：暂不使用首次雅可比
-    kf2->landmark_.emplace_back(this);
+    // kf2->landmark_.emplace_back(this); // kf2已经将所有关键点初始化，这里不能再添加新的landmark
     return true;
+}
+
+bool Landmark::TransformHost2NewestKeyframe(std::vector<KeyFrame*>& window) {
+    // 这里，我们将被边缘化帧的landmark转移到观测到它，且是最新的KF上，
+    // 因为对Landmark*进行了传递，所以，直接删除的话，将导致其余KF的core dump
+    if (target_.size() < 2) {
+        return false;
+    }
+
+    // window[0]是待移除的kf
+    for (int i = static_cast<int>(window.size() - 1); i > 0; --i) {
+        KeyFrame* nextKF = window[i];
+        if (target_.count(nextKF)) {
+            return TransformHost2OtherKF(nextKF);
+        }
+    }
+
+    return false;
 }
 
 void Landmark::CopyStatus() {
@@ -151,6 +170,17 @@ void Landmark::CopyStatus() {
 
 void Landmark::BackUpStatus() {
     invZ_ = invZback_;
+}
+
+Eigen::Vector2d Landmark::GetHostFrameObv() const {
+    return {host_->kpts_(kpRow_, 0), host_->kpts_(kpRow_, 1)};
+}
+Eigen::Vector2i Landmark::GetHostFrameObvInt() const {
+    return {static_cast<int>(host_->kpts_(kpRow_, 0)),
+            static_cast<int>(host_->kpts_(kpRow_, 1))};
+}
+cv::Point2f Landmark::GetHostFrameObvCV() const {
+    return {host_->kpts_(kpRow_, 0), host_->kpts_(kpRow_, 1)};
 }
 
 //void Landmark::AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv) {
