@@ -146,15 +146,15 @@ bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
     return true;
 }
 
-bool Landmark::TransformHost2NewestKeyframe(std::vector<KeyFrame*>& window) {
+bool Landmark::TransformHost2NextKeyframe(std::vector<KeyFrame*>& window) {
     // 这里，我们将被边缘化帧的landmark转移到观测到它，且是最新的KF上，
     // 因为对Landmark*进行了传递，所以，直接删除的话，将导致其余KF的core dump
     if (target_.size() < 2) {
         return false;
     }
 
-    // window[0]是待移除的kf
-    for (int i = static_cast<int>(window.size() - 1); i > 0; --i) {
+    // window[0]是待移除的kf，win[-1]是最新帧，这里目的是转给下一帧
+    for (int i = 1; i < static_cast<int>(window.size()); ++i) {
         KeyFrame* nextKF = window[i];
         if (target_.count(nextKF)) {
             return TransformHost2OtherKF(nextKF);

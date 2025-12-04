@@ -12,6 +12,7 @@
 
 constexpr int kPoseDim = 6;
 constexpr int kPointDim = 1;
+constexpr int kMaxNewKFinQueue = 2;
 class Optimizer {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -76,6 +77,8 @@ class Optimizer {
     void ShowLocalMap();
 
     void AddOneKeyFeame(KeyFrame* kf);
+
+    void TriangulateNewLandmark();
 
     void ConstructJ_H_b_g(const bool logOut = false);
 
@@ -226,8 +229,11 @@ class Optimizer {
     std::mutex newKFmutex_;
     void RunWindowBA();
     void StopRunBA();
-    bool CanAddNewKF() { return keepRunWindowBA_ && !newKF_; }
-    double lastWinBAspendTime_ = 1e12; // ms
+    bool CanAddNewKF() {
+        return keepRunWindowBA_ && newKFqueue_.size() <= kMaxNewKFinQueue;
+    }
+    double lastWinBAspendTime_ = 1e12;  // ms
+    std::queue<KeyFrame*> newKFqueue_;
 };
 
 #endif

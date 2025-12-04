@@ -193,9 +193,14 @@ int main(int argc, char** argv) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
-                cv::imshow("init 2 KF", initer.debugMatchImg_);
-                cv::waitKey();
-                cv::destroyWindow("init 2 KF");
+                // cv::imshow("init 2 KF", initer.debugMatchImg_);
+                // cv::waitKey();
+                // cv::destroyWindow("init 2 KF");
+                // 模型预热
+                usleep(1000 * 1e3);
+                while (optimizer.newKF_ != nullptr) {
+                    usleep(100 * 1e3);
+                }
             } else if (findMatchRatio < 0.7 || findMatchNum < 200) {
                 cout << "Few match to initialize! Reset!" << endl;
                 ResetStatus(&optimizer, &isInitialized, &trackLostCount);
@@ -251,7 +256,7 @@ int main(int argc, char** argv) {
         // step2：为剩余的edge point产生的landmark
         // 当前帧已经无法找到足够的匹配，需要创建新关键帧避免极线过长
         const bool caseOptflowTrackLow =
-            (findMatchRatio < 0.5 || findMatchNum < 100);
+            (findMatchRatio < 0.7 || findMatchNum < 200);
 
         const Pose T12 = win.back()->Tcw_ * curF.Twc_;
         const double horDist = T12.t_wb_.head(2).norm();
@@ -390,7 +395,7 @@ int main(int argc, char** argv) {
         delete viewerThread;
     }
     cout << "Viwe 3D thread recycled!" << endl;
-    
+
     return 0;
 }
 

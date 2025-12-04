@@ -89,7 +89,7 @@ class Landmark {
 
     bool TransformHost2OtherKF(KeyFrame* kf2);
 
-    bool TransformHost2NewestKeyframe(std::vector<KeyFrame*>& window);
+    bool TransformHost2NextKeyframe(std::vector<KeyFrame*>& window);
 
     void BackUpStatus();
 

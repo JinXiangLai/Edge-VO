@@ -46,8 +46,8 @@ Optimizer::~Optimizer() {
 }
 
 Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
-    const std::vector<Eigen::Vector3d>& lk1s,
-    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2) {
+    const vector<Eigen::Vector3d>& lk1s, const vector<Eigen::Vector2d>& obvs,
+    const Pose& Twc2) {
 
     ResidualInfo info;
     string debugInfo("chi2 residuals: ");
@@ -90,10 +90,9 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 }
 
 Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
-    const std::vector<Landmark*>& lk1s,
-    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    const cv::Mat& img, int& canUseNum, std::vector<Eigen::Vector3d>& stablePws,
-    std::vector<Eigen::Vector2d>& stableObvs) {
+    const vector<Landmark*>& lk1s, const vector<Eigen::Vector2d>& obvs,
+    const Pose& Twc2, const cv::Mat& img, int& canUseNum,
+    vector<Eigen::Vector3d>& stablePws, vector<Eigen::Vector2d>& stableObvs) {
     stablePws.clear();
     stableObvs.clear();
     stablePws.reserve(lk1s.size());
@@ -177,8 +176,10 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     // 由观测数量由高到低进行采样
     const int stableLandmarkNum = resampleStableLkIndex2Chi2[1].size() +
                                   resampleStableLkIndex2Chi2[2].size();
-    const int maxSampleLandmarkNum =
-        stableLandmarkNum > 200 ? int(stableLandmarkNum * 0.7) : 200;
+    constexpr int kMaxSelectLandmarkNum = 20000;  // 排查选点集中问题
+    const int maxSampleLandmarkNum = stableLandmarkNum > kMaxSelectLandmarkNum
+                                         ? int(stableLandmarkNum * 0.7)
+                                         : kMaxSelectLandmarkNum;
 
     canUseNum = 0;  // 理论上有效的地图点数量，但不需要全部使用
     for (const auto& vec : resampleStableLkIndex2Chi2) {
@@ -229,9 +230,9 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
 }
 
 void Optimizer::CalculateHandGradiantCurFrame(
-    const std::vector<Eigen::Vector3d>& lk1s,
-    const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
-    Eigen::Matrix<double, 6, 6>& H, Eigen::Matrix<double, 6, 1>& g) {
+    const vector<Eigen::Vector3d>& lk1s, const vector<Eigen::Vector2d>& obvs,
+    const Pose& Twc2, Eigen::Matrix<double, 6, 6>& H,
+    Eigen::Matrix<double, 6, 1>& g) {
     constexpr int resDim = 2;
     H.setZero();
     g.setZero();
@@ -304,8 +305,7 @@ void Optimizer::CalculateHandGradiantCurFrame(
 
 Optimizer::ResidualInfo Optimizer::ResampleStablePwAndObvCurFrame(
     const double sampleRatio, const Pose& Twc2,
-    std::vector<Eigen::Vector3d>& stablePws,
-    std::vector<Eigen::Vector2d>& stableObvs) {
+    vector<Eigen::Vector3d>& stablePws, vector<Eigen::Vector2d>& stableObvs) {
     const Camera& cam = *cam_;
     const Pose Tc2w = Twc2.Inverse();
 
@@ -326,8 +326,8 @@ Optimizer::ResidualInfo Optimizer::ResampleStablePwAndObvCurFrame(
     const size_t maxUsefulId =
         static_cast<size_t>(idx2Chi2.size() * sampleRatio);
 
-    std::vector<Eigen::Vector3d> samplePws;
-    std::vector<Eigen::Vector2d> sampleObvs;
+    vector<Eigen::Vector3d> samplePws;
+    vector<Eigen::Vector2d> sampleObvs;
     samplePws.reserve(stablePws.size());
     sampleObvs.reserve(stablePws.size());
     ResidualInfo info;
@@ -711,8 +711,8 @@ bool Optimizer::ExecuteWindowOptimize() {
 }
 
 void Optimizer::PreSelectLandmarkForTracking(
-    KeyFrame::OpticalFlowStruct& optFlw, std::vector<Landmark*>& lk1s,
-    std::vector<Eigen::Vector2d>& obvs) {
+    KeyFrame::OpticalFlowStruct& optFlw, vector<Landmark*>& lk1s,
+    vector<Eigen::Vector2d>& obvs) {
     lk1s.clear();
     obvs.clear();
     lk1s.reserve(optFlw.trackLandmark_.size());
@@ -896,82 +896,84 @@ bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
+    if (window_.empty()) {
+        const int totalTrackLandmarkNum = kf->InitializeLandmark(nullptr);
+        cout << fmt::format(
+            "First kf id: {}, optical flow total feature num: {}\n", kf->id_,
+            totalTrackLandmarkNum);
+        window_.emplace_back(kf);
+    } else {
+        lock_guard<mutex> lock(newKFmutex_);
+        newKFqueue_.push(kf);
+    }
+}
 
+void Optimizer::TriangulateNewLandmark() {
     // 直接在新KF中提取关键点，并放入optFlw结构中，同时保留上一KF的跟踪结果仍进行跟踪
-    KeyFrame* lastKf = window_.empty() ? nullptr : window_.back();
-    const int totalTrackLandmarkNum = kf->InitializeLandmark(lastKf);
+    KeyFrame* lastKf = window_.back();
+    const int totalTrackLandmarkNum = newKF_->InitializeLandmark(lastKf);
     cout << fmt::format("kf id: {}, optical flow total feature num: {}\n",
-                        kf->id_, totalTrackLandmarkNum);
+                        newKF_->id_, totalTrackLandmarkNum);
     int historyTriSucceedNum = 0;
     int prevTriSucceedNum = 0;
     int failTriNum = 0;
 
     KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
-    if (!window_.empty()) {
-        unordered_map<KeyFrame*, Pose> kf2T12;
-        for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-            Landmark* lk = optFlw.trackLandmark_[i];
-            if (lk == nullptr || lk->initialized_) {
-                continue;
-            }
+    unordered_map<KeyFrame*, Pose> kf2T12;
+    for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
+        Landmark* lk = optFlw.trackLandmark_[i];
+        if (lk == nullptr || lk->initialized_) {
+            continue;
+        }
 
-            // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
-            const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
-            const Eigen::Vector2d curObv(p.x, p.y);
-            // lk->target_.insert(
-            //     {kf, curObv});  // TODO：这里改为lightglue匹配时就添加
+        // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
+        const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
+        const Eigen::Vector2d curObv(p.x, p.y);
 
-            // 三角化
-            double idepth1 = 0, idepth2 = 0;
-            if (!kf2T12.count(lk->host_)) {
-                kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
-            }
-            const Pose& T12 = kf2T12.at(lk->host_);
-            if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(),
-                                                    curObv, cam_->Kinv_[0], T12,
-                                                    idepth1, idepth2)) {
-                ++lk->failInitializeNum_;
-                ++failTriNum;
-                continue;
-            }
-            lk->SetTriangulateResult(idepth1);
-            if (i < optFlw.historyLandmarkNum_) {
-                ++historyTriSucceedNum;
-            } else {
-                ++prevTriSucceedNum;
-            }
+        // 三角化
+        double idepth1 = 0, idepth2 = 0;
+        if (!kf2T12.count(lk->host_)) {
+            kf2T12[lk->host_] = lk->host_->Tcw_ * newKF_->Twc_;
+        }
+        const Pose& T12 = kf2T12.at(lk->host_);
+        if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(), curObv,
+                                                cam_->Kinv_[0], T12, idepth1,
+                                                idepth2)) {
+            ++lk->failInitializeNum_;
+            ++failTriNum;
+            continue;
+        }
+        lk->SetTriangulateResult(idepth1);
+        if (i < optFlw.historyLandmarkNum_) {
+            ++historyTriSucceedNum;
+        } else {
+            ++prevTriSucceedNum;
+        }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
 //DrawTriangulateCase(idepth1, *lk, curObv.cast<int>(),
 //                    kf->debugGrayImg_, T12);
 #endif
-        }
-
-        int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
-        cout << fmt::format(
-            "prevTriSucceedNum: {}, historyTriSucceedNum: {}, remove long time "
-            "fail initialize feature num: {}, failTriNum: {}.\n",
-            prevTriSucceedNum, historyTriSucceedNum, removeFeatNum, failTriNum);
-
-#if defined(WRITE_MATCH_PAIR_IMAGE)
-        WriteDebugTriangulateCase2Video(kf->id_);
-#endif
-
-        lock_guard<mutex> lock(newKFmutex_);
-        newKF_ = kf;
-    } else {
-        // 创建的是首帧关键帧，是否需要赋值prevHistoryPts_？
-        // 应该是不需要的
-        window_.push_back(kf);
     }
 
+    int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
+    cout << fmt::format(
+        "prevTriSucceedNum: {}, historyTriSucceedNum: {}, remove long time "
+        "fail initialize feature num: {}, failTriNum: {}.\n",
+        prevTriSucceedNum, historyTriSucceedNum, removeFeatNum, failTriNum);
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+    WriteDebugTriangulateCase2Video(kf->id_);
+#endif
+
     // CalculateLastKFmeanDepth();
-    cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n", kf->id_,
-                        kf->timestamp_ - window_.back()->timestamp_);
+    cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n",
+                        newKF_->id_,
+                        newKF_->timestamp_ - window_.back()->timestamp_);
     cout << fmt::format(
         "Triangulate by KF_{} report: new historyTriSucceedNum: {}, new "
         "prevTriSucceedNum: {}\n",
-        kf->id_, historyTriSucceedNum, prevTriSucceedNum);
+        newKF_->id_, historyTriSucceedNum, prevTriSucceedNum);
 }
 
 void Optimizer::UpdateStatusVariables(const Eigen::VectorXd& deltaX,
@@ -1051,7 +1053,7 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
         // 把地图点的所有权转移到最新KF，其余的不要
         // 这里需要将lk从oldestKF中删除，并将其添加到下一个KF，且需要保持地址不变
         // if (lk->TransformHost2OtherKF(nextKF)) {
-        if (lk->TransformHost2NewestKeyframe(window_)) {
+        if (lk->TransformHost2NextKeyframe(window_)) {
             ++transformLandmarkNum;
             transformSucceed = true;
             // 由于先前没有添加待删除关键帧的地图点至优化变量，
@@ -1121,7 +1123,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     // delete oldest;
     delayEraseKeyframe_.push_back(oldest);
     if (delayEraseKeyframe_.size() > 1) {
-        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+        lock_guard<mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
         if (!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
             delete delayEraseKeyframe_[0];
             delayEraseKeyframe_[0] = nullptr;
@@ -1207,8 +1209,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
     return info;
 }
 
-void Optimizer::DebugOptlandmarkStatus(const size_t num,
-                                       const std::string& name) {
+void Optimizer::DebugOptlandmarkStatus(const size_t num, const string& name) {
     string debugUsefulLkIndex(name + " useful lk status:[ ");
     for (size_t i = 0; i < min(optLandmark_.size(), num); ++i) {
         Landmark* p = optLandmark_[i];
@@ -2189,9 +2190,9 @@ void Optimizer::WinBApreAssignMatrixMemory() {
 void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
                                    const bool logOut) {
     // Eigen 大的matrix使用SetZero()函数仍然十分耗时，可能达10ms，这里需要找到一个快速置0的方法
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    std::memset(mat.data(), 0, mat.size() * sizeof(double));
-    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    memset(mat.data(), 0, mat.size() * sizeof(double));
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     if (logOut) {
         cout << fmt::format("Reset matrix[{}x{}] spend {:.3f}ms\n", mat.rows(),
                             mat.cols(), ChronoMillisecTimeDuration(t0, t1));
@@ -2200,20 +2201,30 @@ void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
 
 void Optimizer::RunWindowBA() {
     while (keepRunWindowBA_) {
-        if (newKF_ == nullptr) {
-            usleep(10 * 1e3);  // 10ms
+        // TODO：把三角化移到这里，并取消对于newKF_的判断
+        if (newKFqueue_.empty()) {
+            usleep(2 * 1e3);  // 2ms
             continue;
         }
 
         chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-        lock_guard<mutex> lock(newKFmutex_);
+        {
+            lock_guard<mutex> lock(newKFmutex_);
+            newKF_ = newKFqueue_.front();
+            newKFqueue_.pop();
+        }
+        TriangulateNewLandmark();
+
         // 滑窗优化时，会将当前帧添加到滑窗中去
         SlidingWindowOptimize(newKF_);
         CalculateLastKFmeanDepth();
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
         lastWinBAspendTime_ = ChronoMillisecTimeDuration(t0, t1);
-        cout << fmt::format("RunWindowBA spend: {:.1f}ms.\n",
-                            lastWinBAspendTime_);
+        cout << fmt::format(
+            "RunWindowBA spend: {:.1f}ms. process newKF_ id: {}, remain "
+            "newKFqueue_.size: {}\n",
+            lastWinBAspendTime_, newKF_->id_, newKFqueue_.size());
+
         newKF_ = nullptr;
     }
 }
@@ -2494,7 +2505,7 @@ void Optimizer::ShowLocalMap() {
 
     unordered_set<Landmark*> aPoints, lPoints;
     {
-        lock_guard<std::mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
+        lock_guard<mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
         KeyFrame::kfOn3Dshow.clear();
         // for (Landmark* p : optLandmark_) {
         //     if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
@@ -2519,7 +2530,7 @@ void Optimizer::ShowLocalMap() {
 
     if (!aPoints.empty() || !lPoints.empty()) {
         {
-            std::lock_guard<std::mutex> lockPoints(interaction->mutPoints);
+            lock_guard<mutex> lockPoints(interaction->mutPoints);
             interaction->activePoints = aPoints;
             interaction->localPoints = lPoints;
         }
