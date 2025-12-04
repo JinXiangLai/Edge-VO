@@ -43,6 +43,8 @@ add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/tensorrtbuffer)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV 4 REQUIRED)
+
+add_definitions(-DUSE_SUPERPOINT_AND_LIGHTGLUE)
 find_package(CUDA REQUIRED)
 
 include_directories(

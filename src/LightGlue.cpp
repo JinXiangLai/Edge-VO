@@ -474,7 +474,7 @@ bool LightGlue::DeserializeEngine() {
     return false;
 }
 
-int LightGlue::matching_points(
+int LightGlue::MatchKeypoints(
     Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
     Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
     Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,
@@ -741,14 +741,14 @@ void LightGlue::MutualNearestNeighbor(const float* scores,
 void LightGlue::ApplyThreshold(vector<int>& matches0, vector<int>& matches1,
                                vector<float>& scores0, vector<float>& scores1,
                                float threshold) {
-    for (int i = 0; i < matches0.size(); ++i) {
+    for (size_t i = 0; i < matches0.size(); ++i) {
         if (matches0[i] != -1 && scores0[i] < threshold) {
             matches0[i] = -1;
             scores0[i] = 0.0f;
         }
     }
 
-    for (int j = 0; j < matches1.size(); ++j) {
+    for (size_t j = 0; j < matches1.size(); ++j) {
         if (matches1[j] != -1 && scores1[j] < threshold) {
             matches1[j] = -1;
             scores1[j] = 0.0f;

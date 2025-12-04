@@ -43,7 +43,7 @@ class LightGlue {
         Eigen::VectorXi& indices0, Eigen::VectorXi& indices1,
         Eigen::VectorXf& mscores);
 
-    int matching_points(
+    int MatchKeypoints(
         Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
         Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
         Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,

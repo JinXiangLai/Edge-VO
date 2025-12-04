@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
         ++processNum;
 
         start = chrono::high_resolution_clock::now();
-        const int matchPairNum = lightglue->matching_points(
+        const int matchPairNum = lightglue->MatchKeypoints(
             kpts0, kpts1, desc0, desc1, mscores, lightglueMatches);
         end = chrono::high_resolution_clock::now();
         auto duration2 =

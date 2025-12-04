@@ -55,7 +55,10 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
     debugGrayImg_ = grayImg_.clone();
     CalculateEachGridForExtractFast();
 
+#ifdef USE_SUPERPOINT_AND_LIGHTGLUE
     InitSuperpointAndLightglueEngine();
+#endif
+
     InitFastDetector();
 
     SetBackupPose();
@@ -254,6 +257,10 @@ void KeyFrame::ExtractSuperpoint() {
         cerr << "Failed when extracting features from first image." << endl;
     } else {
         cout << fmt::format("Superpoint extract {} points!\n", kpts_.rows());
+        for (int i = 0; i < kpts_.rows(); ++i) {
+            const cv::Point2f p(kpts_(i, 0), kpts_(i, 1));
+            cv::circle(debugGrayImg_, p, 2, kColor.at("white"));
+        }
     }
 }
 
@@ -349,7 +356,7 @@ void KeyFrame::ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw) {
         }
     }
 
-    // 需要把之前帧在当前帧的匹配特征点加上
+    // 需要把之前帧在当前帧的匹配特征点加上，注意，此时已经移除optflw中所有无效Landmark*
     kpts_.resize(newPtsIdx.size() + lastKFoptFlw.prevPts_.size(), 2);
     for (size_t i = 0; i < lastKFoptFlw.prevPts_.size(); ++i) {
         const cv::Point2f& p = lastKFoptFlw.prevPts_[i];
@@ -423,8 +430,7 @@ bool KeyFrame::ExtractFastPointEachGrid(const int diffRow, const int diffCol,
 
 void KeyFrame::ExtractFeaturetPoints() {
 
-#define USE_SUPERPOINT_EXTRACTOR 0
-#if USE_SUPERPOINT_EXTRACTOR
+#ifdef USE_SUPERPOINT_AND_LIGHTGLUE
     ExtractSuperpoint();
 #else
     ExtractFastPoints(optFlw);
@@ -454,12 +460,12 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         return optFlw.prevPts_.size();
     }
 
-#define USE_LIGHT_GLUE 0
-#if USE_LIGHT_GLUE
+#ifdef USE_SUPERPOINT_AND_LIGHTGLUE
     // 当前帧反追踪上一帧
     Eigen::VectorXf mscores;
     vector<cv::DMatch> lightglueMatches;
-    const int matchPairNum = lightgluePtr->matching_points(
+    lightgluePtr->SetThreshold(0.05);
+    const int matchPairNum = lightgluePtr->MatchKeypoints(
         kpts_, lastKf->kpts_, desc_, lastKf->desc_, mscores, lightglueMatches);
     cout << fmt::format(
         "kf id: {}, last_kf id: {}, matchPairNum: {}, match ratio: {:.1f}.\n",
@@ -510,7 +516,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         const int lastId = m.trainIdx;
         if (lastKf->landmark_[lastId] == nullptr ||
             lastKf->landmark_[lastId]->CanBeDelete()) {
-            continue:
+            continue;
         }
 
         // 与上一帧匹配的，直接使用上一帧有效的Landmark*修改当前帧的landmark*，
@@ -553,19 +559,15 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
 #else
     // 不使用lightglue进行匹配，以比较效果
     //把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
-    if (lastKf != nullptr) {
-        // 移除掉所有无效Landmark*，这里应该在提取当前帧的关键点时就要调用
-        // optFlw.RemoveUselessLandmark();
-        optFlw.historyLandmarkNum_ = optFlw.prevPts_.size();
-        // 历史关键点在当前帧的跟踪结果需要进行相互观测赋值
-        for (size_t i = 0; i < optFlw.prevPts_.size(); ++i) {
-            landmark_[i] = optFlw.trackLandmark_[i];
-            landmark_[i]->target_.insert({this, i});
-        }
+    // 移除掉所有无效Landmark*，这里应该在提取当前帧的关键点时就要调用
+    optFlw.historyLandmarkNum_ = optFlw.prevPts_.size();
+    // 历史关键点在当前帧的跟踪结果需要进行相互观测赋值
+    for (size_t i = 0; i < optFlw.prevPts_.size(); ++i) {
+        landmark_[i] = optFlw.trackLandmark_[i];
+        landmark_[i]->target_.insert({this, i});
     }
 
     // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
-    // SetOpticalFlowStructCurFrame();
     for (int i = static_cast<int>(optFlw.prevPts_.size()); i < kpts_.rows();
          ++i) {
         // 当前帧新提取的关键帧加入结果
