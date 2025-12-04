@@ -30,7 +30,7 @@ class Optimizer {
         double priorConstraintChi2 = 0.;
     };
 
-    bool OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw, Pose& Twc2,
+    bool OptimizeCurFrame(OpticalFlowStruct& optFlw, Pose& Twc2,
                           const int curFid, int& totalPointNum,
                           int& usefulPointNum, ResidualInfo& info);
 
@@ -78,7 +78,7 @@ class Optimizer {
 
     void AddOneKeyFeame(KeyFrame* kf);
 
-    void TriangulateNewLandmark();
+    void TriangulateNewLandmark(KeyFrame* kf);
 
     void ConstructJ_H_b_g(const bool logOut = false);
 
@@ -152,7 +152,7 @@ class Optimizer {
                      const double& costRelativeAbsDiff, const double lambda,
                      const Eigen::VectorXd& delta);
 
-    void PreSelectLandmarkForTracking(KeyFrame::OpticalFlowStruct& optFlw,
+    void PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
                                       std::vector<Landmark*>& lk1s,
                                       std::vector<Eigen::Vector2d>& obvs);
 
@@ -230,7 +230,9 @@ class Optimizer {
     void RunWindowBA();
     void StopRunBA();
     bool CanAddNewKF() {
-        return keepRunWindowBA_ && newKFqueue_.size() <= kMaxNewKFinQueue;
+        // TODO：隔离三角化与新加KF过程
+        return keepRunWindowBA_ && newKFqueue_.size() <= kMaxNewKFinQueue &&
+               newKF_ == nullptr;
     }
     double lastWinBAspendTime_ = 1e12;  // ms
     std::queue<KeyFrame*> newKFqueue_;

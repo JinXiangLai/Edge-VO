@@ -711,7 +711,7 @@ bool Optimizer::ExecuteWindowOptimize() {
 }
 
 void Optimizer::PreSelectLandmarkForTracking(
-    KeyFrame::OpticalFlowStruct& optFlw, vector<Landmark*>& lk1s,
+    OpticalFlowStruct& optFlw, vector<Landmark*>& lk1s,
     vector<Eigen::Vector2d>& obvs) {
     lk1s.clear();
     obvs.clear();
@@ -746,7 +746,7 @@ void Optimizer::PreSelectLandmarkForTracking(
         lk1s.size(), optFlw.trackLandmark_.size());
 }
 
-bool Optimizer::OptimizeCurFrame(KeyFrame::OpticalFlowStruct& optFlw,
+bool Optimizer::OptimizeCurFrame(OpticalFlowStruct& optFlw,
                                  Pose& Twc2, const int curFid,
                                  int& totalPointNum, int& usefulPointNum,
                                  ResidualInfo& info) {
@@ -904,21 +904,25 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
         window_.emplace_back(kf);
     } else {
         lock_guard<mutex> lock(newKFmutex_);
-        newKFqueue_.push(kf);
+        // newKFqueue_.push(kf);
+
+        // TODO：不再这里三角化
+        TriangulateNewLandmark(kf);
+        newKF_ = kf;
     }
 }
 
-void Optimizer::TriangulateNewLandmark() {
+void Optimizer::TriangulateNewLandmark(KeyFrame* kf) {
     // 直接在新KF中提取关键点，并放入optFlw结构中，同时保留上一KF的跟踪结果仍进行跟踪
     KeyFrame* lastKf = window_.back();
-    const int totalTrackLandmarkNum = newKF_->InitializeLandmark(lastKf);
+    const int totalTrackLandmarkNum = kf->InitializeLandmark(lastKf);
     cout << fmt::format("kf id: {}, optical flow total feature num: {}\n",
-                        newKF_->id_, totalTrackLandmarkNum);
+                        kf->id_, totalTrackLandmarkNum);
     int historyTriSucceedNum = 0;
     int prevTriSucceedNum = 0;
     int failTriNum = 0;
 
-    KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
+    OpticalFlowStruct& optFlw = KeyFrame::optFlw;
     unordered_map<KeyFrame*, Pose> kf2T12;
     for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
         Landmark* lk = optFlw.trackLandmark_[i];
@@ -933,7 +937,7 @@ void Optimizer::TriangulateNewLandmark() {
         // 三角化
         double idepth1 = 0, idepth2 = 0;
         if (!kf2T12.count(lk->host_)) {
-            kf2T12[lk->host_] = lk->host_->Tcw_ * newKF_->Twc_;
+            kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
         }
         const Pose& T12 = kf2T12.at(lk->host_);
         if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(), curObv,
@@ -958,22 +962,19 @@ void Optimizer::TriangulateNewLandmark() {
 
     int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
     cout << fmt::format(
-        "prevTriSucceedNum: {}, historyTriSucceedNum: {}, remove long time "
+        "Triangulate by KF_{} report: prevTriSucceedNum: {}, "
+        "historyTriSucceedNum: {}, remove long time "
         "fail initialize feature num: {}, failTriNum: {}.\n",
-        prevTriSucceedNum, historyTriSucceedNum, removeFeatNum, failTriNum);
+        kf->id_, prevTriSucceedNum, historyTriSucceedNum, removeFeatNum,
+        failTriNum);
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     WriteDebugTriangulateCase2Video(kf->id_);
 #endif
 
     // CalculateLastKFmeanDepth();
-    cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n",
-                        newKF_->id_,
-                        newKF_->timestamp_ - window_.back()->timestamp_);
-    cout << fmt::format(
-        "Triangulate by KF_{} report: new historyTriSucceedNum: {}, new "
-        "prevTriSucceedNum: {}\n",
-        newKF_->id_, historyTriSucceedNum, prevTriSucceedNum);
+    cout << fmt::format("add kf id: {}, kf time duration: {:.3f}s\n", kf->id_,
+                        kf->timestamp_ - window_.back()->timestamp_);
 }
 
 void Optimizer::UpdateStatusVariables(const Eigen::VectorXd& deltaX,
@@ -1116,7 +1117,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
             ++it2;
         }
     };
-    KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
+    OpticalFlowStruct& optFlw = KeyFrame::optFlw;
     RemoveDeleteLandmarkFromOpticalFlow(optFlw.trackLandmark_, optFlw.prevPts_);
 
     // 删除老帧看看是否会有影响
@@ -2202,18 +2203,19 @@ void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
 void Optimizer::RunWindowBA() {
     while (keepRunWindowBA_) {
         // TODO：把三角化移到这里，并取消对于newKF_的判断
-        if (newKFqueue_.empty()) {
+        // if (newKFqueue_.empty()) {
+        if (newKF_ == nullptr) {
             usleep(2 * 1e3);  // 2ms
             continue;
         }
 
         chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-        {
-            lock_guard<mutex> lock(newKFmutex_);
-            newKF_ = newKFqueue_.front();
-            newKFqueue_.pop();
-        }
-        TriangulateNewLandmark();
+        // {
+        //     lock_guard<mutex> lock(newKFmutex_);
+        //     newKF_ = newKFqueue_.front();
+        //     newKFqueue_.pop();
+        // }
+        // TriangulateNewLandmark();
 
         // 滑窗优化时，会将当前帧添加到滑窗中去
         SlidingWindowOptimize(newKF_);
@@ -2225,6 +2227,7 @@ void Optimizer::RunWindowBA() {
             "newKFqueue_.size: {}\n",
             lastWinBAspendTime_, newKF_->id_, newKFqueue_.size());
 
+        lock_guard<mutex> lock(newKFmutex_);
         newKF_ = nullptr;
     }
 }

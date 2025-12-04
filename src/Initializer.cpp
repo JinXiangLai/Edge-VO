@@ -23,7 +23,7 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
         return false;
     }
 
-    const KeyFrame::OpticalFlowStruct& optFlw = KeyFrame::optFlw;
+    const OpticalFlowStruct& optFlw = KeyFrame::optFlw;
 
     if (optFlw.meanParallax_ < kMinParallax) {
         cout << fmt::format("parallax: {:.1f} too small\n",
@@ -263,7 +263,7 @@ bool Initializer::FindEssentialMatrixRansac(
 bool Initializer::ConstructAndDecomposeEssentialMatrix(
     vector<Eigen::Vector4d>& uv2obv, Pose& result) {
 
-    const KeyFrame::OpticalFlowStruct optFlw = KeyFrame::optFlw;
+    const OpticalFlowStruct optFlw = KeyFrame::optFlw;
     Eigen::Matrix3d matrixE;
     if (!FindEssentialMatrixRansac(uv2obv, matrixE)) {
         return false;

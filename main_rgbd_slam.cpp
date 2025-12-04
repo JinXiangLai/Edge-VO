@@ -193,9 +193,9 @@ int main(int argc, char** argv) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
-                // cv::imshow("init 2 KF", initer.debugMatchImg_);
-                // cv::waitKey();
-                // cv::destroyWindow("init 2 KF");
+                cv::imshow("init 2 KF", initer.debugMatchImg_);
+                cv::waitKey();
+                cv::destroyWindow("init 2 KF");
                 // 模型预热
                 usleep(1000 * 1e3);
                 while (optimizer.newKF_ != nullptr) {
@@ -315,7 +315,8 @@ int main(int argc, char** argv) {
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
         const double trackSpendTime = ChronoMillisecTimeDuration(t1, t4);
         const double sleepTime = min((frameTimeGap - trackSpendTime), 28.0);
-        if (sleepTime > 0.) {
+        if (sleepTime > 0. &&
+            (config->debugShowOnlineResult3D || !config->debugRunSerially)) {
             usleep(sleepTime * 1e3);
         } else {
             cout << fmt::format(

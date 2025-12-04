@@ -149,7 +149,7 @@ bool Landmark::TransformHost2OtherKF(KeyFrame* kf2) {
 bool Landmark::TransformHost2NextKeyframe(std::vector<KeyFrame*>& window) {
     // 这里，我们将被边缘化帧的landmark转移到观测到它，且是最新的KF上，
     // 因为对Landmark*进行了传递，所以，直接删除的话，将导致其余KF的core dump
-    if (target_.size() < 2) {
+    if (canBedelete_ || target_.size() < 2) {
         return false;
     }
 

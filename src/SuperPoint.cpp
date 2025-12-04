@@ -203,16 +203,40 @@ bool SuperPoint::ProcessInput(const BufferManager& buffers,
 void SuperPoint::FindHighScoreIndex(vector<float>& scores,
                                     vector<vector<int>>& keypoints, int h,
                                     int w, double threshold) {
+    vector<float> sortScores = scores;
+    sort(sortScores.begin(), sortScores.end(),
+         [](const float a, const float b) { return a > b; });
+    const float kMinUsefulThreshold = 1e-6;
+    if (sortScores.size() > SuperPointConfig::kMaxKeypoints) {
+        if (sortScores[SuperPointConfig::kMaxKeypoints] > kMinUsefulThreshold) {
+            threshold = sortScores[SuperPointConfig::kMaxKeypoints];
+        } else {
+            vector<float>::iterator it = sortScores.end();
+            while (it != sortScores.begin()) {
+                --it;
+                if (*it > kMinUsefulThreshold) {
+                    threshold = *it;
+                    break;
+                }
+            }
+        }
+    } else {
+        threshold = kMinUsefulThreshold;
+    }
+
     vector<float> new_scores;
-    //
     for (int i = 0; i < scores.size(); ++i) {
         if (scores[i] > threshold) {
+            // 将1维得分索引转为图像，转换关系为 i = w*row + col
             vector<int> location = {int(i / w), i % w};
             keypoints.emplace_back(location);
             new_scores.push_back(scores[i]);
         }
     }
     scores.swap(new_scores);
+
+    cout << fmt::format("Superpoint extract {} kpts, by threshold: {}.\n",
+                        scores.size(), threshold);
 }
 
 void SuperPoint::RemoveBorders(vector<vector<int>>& keypoints,
@@ -374,6 +398,7 @@ bool SuperPoint::ProcessOutput(
     // superpoint中，输出的得分是一张热力图，同时对应的描述子也是一张热力图
     int semi_feature_map_h = semi_dims_.d[1];
     int semi_feature_map_w = semi_dims_.d[2];
+    // 得分数组转为vector形式
     vector<float> scores_vec(
         output_score, output_score + semi_feature_map_h * semi_feature_map_w);
     // 这里是对得分热力图超过阈值的点位置进行保存，

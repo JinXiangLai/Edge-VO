@@ -10,6 +10,7 @@
 #include "Camera.h"
 #include "Landmark.h"
 #include "LightGlue.h"
+#include "OpticalFlowStruct.h"
 #include "Pose.h"
 #include "SuperPoint.h"
 
@@ -18,6 +19,8 @@
 #define SUPER_POINT_EXTRACTOR 1
 
 class Landmark;
+struct OpticalFlowStruct;
+
 constexpr double expandRatio = 1.1 * 1.1;
 
 struct TupleHash {
@@ -95,41 +98,16 @@ class KeyFrame {
     bool firstWriteUncertainty_ = true;
 
     void OpticalFlowTrackLandmark(const KeyFrame& f2);
-    struct OpticalFlowStruct {
-        cv::Mat prevImg_;
-        std::vector<cv::Point2f> prevPts_;
-        std::vector<Landmark*> trackLandmark_;
-        size_t totalFeatureCreated_ = 0;
-        size_t historyLandmarkNum_ = 0;  // 记录历史跟踪点的数量以区分上一KF的
-        double meanParallax_ = 0.;
-        int usefulParallaxNum_ = 0;
-        size_t GetTrackFeatureNum() { return prevPts_.size(); }
-        double GetTrackFeatureRatio() {
-            return double(GetTrackFeatureNum()) / totalFeatureCreated_;
-        }
-        size_t SetTotalFeatureCreated() {
-            totalFeatureCreated_ = GetTrackFeatureNum();
-            return totalFeatureCreated_;
-        }
-        void Reset() {
-            prevImg_.release();
-            prevPts_.clear();
-            trackLandmark_.clear();
-            totalFeatureCreated_ = 0;
-            historyLandmarkNum_ = 0;
-        }
-        void Set(const cv::Mat& img, const std::vector<cv::Point2f>& prevPts,
-                 const std::vector<Landmark*>& landmark,
-                 const int totalFeatureCreated, const int historyLandmarkNum);
-    };
     void SetOpticalFlowStructCurFrame();
     double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
-    void ExtractFastPoints();
+    void ExtractFeaturetPoints();
     void GenerateUndistordMap();
     int RemoveNoInitializeLongFeature();
     bool ExtractFastPointEachGrid(const int diffRow, const int diffCol,
                                   const int fastTh1, cv::Point2f& fast);
-    void ExtractFastPointEachImage();
+    void ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw);
+    std::vector<cv::Point2f> ExtractFastPointEachGridImage();
+    void ExtractSuperpoint();
 
     Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> kpts_;
     Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor> desc_;
@@ -180,6 +158,7 @@ class KeyFrame {
     static cv::Ptr<cv::FastFeatureDetector> detectorTh1, detectorTh2;
     void CalculateEachGridForExtractFast();
 
+    void InitSuperpointAndLightglueEngine();
     void InitFastDetector();
 
     double timestamp_ = 0.;
