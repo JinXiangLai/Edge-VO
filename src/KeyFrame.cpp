@@ -55,9 +55,7 @@ KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
     debugGrayImg_ = grayImg_.clone();
     CalculateEachGridForExtractFast();
 
-#ifdef USE_SUPERPOINT_AND_LIGHTGLUE
     InitSuperpointAndLightglueEngine();
-#endif
 
     InitFastDetector();
 
@@ -73,6 +71,8 @@ KeyFrame::KeyFrame(const KeyFrame& f)
       level_(f.level_),
       outOfRange_(f.outOfRange_),
       convergeEdgeNum_(f.convergeEdgeNum_),
+      kpts_(f.kpts_),
+      desc_(f.desc_),
       timestamp_(f.timestamp_) {
     // vector内的堆内存需要先释放
     // 不能这样子，这是构造函数，默认的内存应该是干净的，
@@ -96,6 +96,8 @@ void KeyFrame::operator=(const KeyFrame& f) {
     level_ = f.level_;
     convergeEdgeNum_ = f.convergeEdgeNum_;
     timestamp_ = f.timestamp_;
+    kpts_ = f.kpts_;
+    desc_ = f.desc_;
 #else
     ReleaseMat();
     // 这样会导致cv::Mat等堆内存无法释放

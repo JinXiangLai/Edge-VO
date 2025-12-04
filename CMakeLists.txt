@@ -97,6 +97,14 @@ target_link_libraries(sp_lg_sequence
     -lfmt
 )
 
+add_executable(loop_closure_main loop_closure_main.cpp)
+target_link_libraries(loop_closure_main
+    edge_slam
+    -lpthread
+    -lyaml-cpp
+    -lfmt
+)
+
 # add_executable(ut unit_test.cpp)
 # target_link_libraries(ut 
 #     edge_slam
