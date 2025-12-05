@@ -20,6 +20,10 @@
 using namespace std;
 using namespace cv;
 
+#define MANUAL_SCALE_POSITION 1
+
+constexpr double kScaleDriftRatio = 0.1;
+
 void Run(Optimizer* optimizer);
 
 const cv::Point kViz3DWindowPos(1920 + 1920 / 2,
@@ -27,6 +31,10 @@ const cv::Point kViz3DWindowPos(1920 + 1920 / 2,
 
 void ResetStatus(Optimizer* optimizer, bool* isInitialized,
                  int* trackLostCount);
+
+bool RecoveryPose(const shared_ptr<Camera> cam, const KeyFrame& lastKf,
+                  const KeyFrame& curF, const vector<cv::Point2f>& pts1,
+                  const vector<cv::Point2f>& pts2, Pose& Tw2);
 
 int main(int argc, char** argv) {
 
@@ -95,7 +103,8 @@ int main(int argc, char** argv) {
     cv::Ptr<cv::cudacodec::VideoWriter> writer;
     cv::cuda::GpuMat gpuFrame;
 
-    for (size_t i = firstImgIdx; i < vTimeStamps.size(); ++i) {
+    constexpr int kStep = 10;
+    for (size_t i = firstImgIdx; i < vTimeStamps.size(); i += kStep) {
         Mat img;
         Pose Twc;
         GetImageAndPose(i, vstrImages, vTimeStamps, vPriorPose, calib, img,
@@ -125,18 +134,30 @@ int main(int argc, char** argv) {
             }
 
             KeyFrame::InitPoseFileMessage();
+            kfVec.emplace_back(curKF);
+            continue;
+        }
+
+        const double moveDist = (curKF.Tcw_ * curF.Twc_).t_wb_.norm();
+        if (moveDist < 0.08) {
             continue;
         }
 
         curF.ExtractSuperpoint();
+
         const cv::Mat& gray = curF.grayImg_;
         gray.copyTo(matchImage(cv::Rect(gray.cols, 0, gray.cols, gray.rows)));
 
         Eigen::VectorXf mscores;
         vector<cv::DMatch> lightglueMatches;
+#if !MANUAL_SCALE_POSITION
+
         const int matchPairNum =
             lightglue->MatchKeypoints(curKF.kpts_, curF.kpts_, curKF.desc_,
                                       curF.desc_, mscores, lightglueMatches);
+#else
+        const int matchPairNum = 0;
+#endif
         vector<cv::Point2f> pts0(lightglueMatches.size());
         vector<cv::Point2f> pts1(lightglueMatches.size());
         int count = 0;
@@ -151,26 +172,52 @@ int main(int argc, char** argv) {
             cv::circle(matchImgColor, pts0[count], 2, bgr);
             cv::circle(matchImgColor, p2, 2, bgr);
             cv::line(matchImgColor, pts0[count], p2, bgr);
+            ++count;
         }
 
         // 获取匹配点，使用本质矩阵分解及先验尺度计算每个帧的pose
-        // curF.setTwc();
+        Pose Twc2;
+        const bool getPoseStatus =
+            RecoveryPose(cam, curKF, curF, pts0, pts1, Twc2);
+        if (getPoseStatus) {
+            curF.SetTwc(Twc2);
+        } else {
+            cout << fmt::format("Error while recovery Twc2, match pairs: {}\n",
+                                pts0.size());
+        }
 
-        cv::putText(matchImgColor, fmt::format("match num: {}", matchPairNum),
+        cv::putText(matchImgColor,
+                    fmt::format("match num: {}, recovery pose: {}",
+                                matchPairNum, getPoseStatus),
                     cv::Point(10, 30), cv::FONT_ITALIC, 0.80, {0, 0, 255}, 2);
 
-        if (matchPairNum < 150) {
-            kfVec.emplace_back(curKF);
+        const bool needNewKf =
+            getPoseStatus && (matchPairNum < 0.7 * pts0.size() ||
+                              (curF.timestamp_ - curKF.timestamp_) > 2.0);
+        if (needNewKf) {
             cout << fmt::format("Select {}th img as image0", curF.id_) << endl;
             curKF = std::move(curF);
             gray.copyTo(matchImage(cv::Rect(0, 0, gray.cols, gray.rows)));
+
+            kfVec.emplace_back(curKF);
         }
 
-        if (!videoSavePath.empty()) {
+        if (!videoSavePath.empty() && needNewKf) {
             gpuFrame.upload(matchImgColor);
             writer->write(gpuFrame);
         }
     }
+
+    for (const KeyFrame& f : kfVec) {
+        KeyFrame::WritePoseMessage2File(f);
+    }
+    KeyFrame::ProcessPoseFile();
+
+    // 没有产生Landmar*，因此比较poseFile
+    cout << "Run evo evaluate kf traj precision!";
+    system(fmt::format("evo_ape tum {}/groundtruth.txt {} -a -s -v",
+                       config->dataDir, KeyFrame::poseFilePath)
+               .c_str());
     return 0;
 }
 
@@ -195,4 +242,45 @@ void ResetStatus(Optimizer* optimizer, bool* isInitialized,
     KeyFrame::optFlw.Reset();
     *trackLostCount = 0;
     interaction->trajectory.clear();
+}
+
+bool RecoveryPose(const shared_ptr<Camera> cam, const KeyFrame& lastKf,
+                  const KeyFrame& curF, const vector<cv::Point2f>& pts1,
+                  const vector<cv::Point2f>& pts2, Pose& Tw2) {
+#if !MANUAL_SCALE_POSITION
+    // opencv输出是T21，因此本质矩阵输入要倒序
+    cv::Mat cvE =
+        cv::findEssentialMat(pts2, pts1, Eigen2CVmat(cam->K_[0]), cv::RANSAC);
+
+    // 2. 分解本质矩阵得到R,t，
+    cv::Mat cvR, cv_t, mask;
+    int inliers =
+        recoverPose(cvE, pts2, pts1, Eigen2CVmat(cam->K_[0]), cvR, cv_t, mask);
+    cout << "OpenCV recoverPose found " << inliers << " inliers" << endl;
+    cout << "cvR: " << cvR << endl;
+    cout << "cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+
+    const Eigen::Matrix3d Rres = CVmat2Eigen(cvR);
+    Eigen::Quaterniond q(Rres);
+    Pose initT12(q, CVmat2Eigen(cv_t));
+
+    Pose trueT12 = lastKf.priorTwc_.Inverse() * curF.priorTwc_;
+    const double scale = trueT12.t_wb_.norm() / initT12.t_wb_.norm();
+    initT12.t_wb_ *= scale;
+    Tw2 = lastKf.Twc_ * initT12;
+
+    const bool success = inliers > static_cast<int>(pts1.size() * 0.75);
+    if (!success) {
+        cout << fmt::format("match pair num: {}, inliers: {}, ratio: {}.\n",
+                            pts1.size(), inliers,
+                            static_cast<double>(inliers / pts1.size()));
+    }
+
+    return success;
+#else
+    Pose trueT12 = lastKf.priorTwc_.Inverse() * curF.priorTwc_;
+    trueT12.t_wb_ *= kScaleDriftRatio;
+    Tw2 = lastKf.Twc_ * trueT12;
+    return true;
+#endif
 }
