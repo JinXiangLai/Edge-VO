@@ -710,9 +710,9 @@ bool Optimizer::ExecuteWindowOptimize() {
     return lastCost.cost < firstCost.cost;
 }
 
-void Optimizer::PreSelectLandmarkForTracking(
-    OpticalFlowStruct& optFlw, vector<Landmark*>& lk1s,
-    vector<Eigen::Vector2d>& obvs) {
+void Optimizer::PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
+                                             vector<Landmark*>& lk1s,
+                                             vector<Eigen::Vector2d>& obvs) {
     lk1s.clear();
     obvs.clear();
     lk1s.reserve(optFlw.trackLandmark_.size());
@@ -746,10 +746,9 @@ void Optimizer::PreSelectLandmarkForTracking(
         lk1s.size(), optFlw.trackLandmark_.size());
 }
 
-bool Optimizer::OptimizeCurFrame(OpticalFlowStruct& optFlw,
-                                 Pose& Twc2, const int curFid,
-                                 int& totalPointNum, int& usefulPointNum,
-                                 ResidualInfo& info) {
+bool Optimizer::OptimizeCurFrame(OpticalFlowStruct& optFlw, Pose& Twc2,
+                                 const int curFid, int& totalPointNum,
+                                 int& usefulPointNum, ResidualInfo& info) {
 
     // 构建优化问题所需观测
     vector<Landmark*> preLks;
