@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
     window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
     if (!interaction->SetImgSaveFolderPath(
-            fmt::format("/home/ht/Pictures/viz3d_screenshot",
+            fmt::format("/home/laijinxiang/Pictures/viz3d_screenshot",
                         config->debugMessageSaveFolder))) {
         cout << "Create viz3d image folder failed!\n";
     }
