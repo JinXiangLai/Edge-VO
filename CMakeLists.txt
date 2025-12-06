@@ -74,6 +74,7 @@ target_link_libraries(edge_slam
     ${EIGEN3_LIBS}
     -lyaml-cpp
     -lfmt
+    -lstdc++fs
     
     ${CUDA_LIBRARIES}
     nvinfer

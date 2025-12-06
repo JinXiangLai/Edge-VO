@@ -3,7 +3,9 @@
 //
 
 #include <chrono>
-#include <filesystem>
+//#include <filesystem>
+#include <experimental/filesystem>
+namespace filesystem = std::experimental::filesystem;
 #include <memory>
 
 #include <opencv2/cudacodec.hpp>  // CUDA 视频编码器
@@ -170,7 +172,7 @@ int main(int argc, char** argv) {
 size_t LoadImages(const string& strDirectory, vector<string>& vstrImages,
                   vector<double>& vTimeStamps) {
     string imageDirectory = strDirectory + "/rgb";
-    for (const auto& entry : filesystem::directory_iterator(imageDirectory)) {
+    for (const auto& entry : fs::directory_iterator(imageDirectory)) {
         if (entry.is_regular_file()) {  // 仅获取文件，排除子目录
             vstrImages.push_back(entry.path().filename().string());
         }
