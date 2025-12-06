@@ -20,6 +20,9 @@ struct OpticalFlowStruct {
     double GetTrackFeatureRatio() {
         return double(GetTrackFeatureNum()) / totalFeatureCreated_;
     }
+    double GetHistoryTrackFeatureRatio() {
+        return double(historyLandmarkNum_) / totalFeatureCreated_;
+    }
     size_t SetTotalFeatureCreated() {
         totalFeatureCreated_ = GetTrackFeatureNum();
         return totalFeatureCreated_;

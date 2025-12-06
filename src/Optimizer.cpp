@@ -1893,24 +1893,31 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         optLandmark_.clear();
         return false;
     }
+
     cout << fmt::format(
-        "Begin SlidingWindowOptimize! margKFid: {}, Sample landmark num for "
-        "window BA: {}.\n",
-        margKFid, sampleNum);
+                "Begin SlidingWindowOptimize! margKFid: {}, Sample landmark "
+                "num for "
+                "window BA: {}.",
+                margKFid, sampleNum)
+         << endl;
 
-    margKFstatus_ = false;
-    if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
-        // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
-        // 其信息已经通过深度点的传播转移到后面的KF中
-        if (margKFid < 2 && config->useMarginalization) {
-            margKFstatus_ = MarginalizeOldestKeyFrame();
-            cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
+    if (margKFid >= 0 && margKFid < config->maxKFnumInWindow) {
+        // 将待删除的最老帧移到滑窗开头，有可能移除最新帧
+        MoveMargKF2FirstPosInWindow(margKFid);
+        margKFstatus_ = false;
+        if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
+            // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+            // 其信息已经通过深度点的传播转移到后面的KF中
+            if (margKFid < 2 && config->useMarginalization) {
+                margKFstatus_ = MarginalizeOldestKeyFrame();
+                cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
+            }
+
+            // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
+            // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
+            // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
+            RemoveOldestKeyFrame(margKFid);
         }
-
-        // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
-        // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
-        // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-        RemoveOldestKeyFrame(margKFid);
     }
 
     SetInitLambda(10.0);
@@ -1920,7 +1927,10 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
     cout << fmt::format("win size: {}, win BA spend {:.3f}ms!\n",
                         window_.size(), spendTime);
-
+    if (margKFid == config->maxKFnumInWindow) {
+        // BA之后移除最新帧
+        window_.pop_back();
+    }
     const int markDeleteNum = MarkBigResidualLandmarkDelete();
     cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
                         winOptSuccess);
@@ -1958,6 +1968,26 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
     // 考虑到还要把curKF加进来，因此这里不取等号
     if (static_cast<int>(window_.size()) < config->maxKFnumInWindow) {
         return -1;
+    }
+
+    int historyTrackInitLandmarkNum = 0;
+    for (const auto& lk : KeyFrame::optFlw.trackLandmark_) {
+
+        historyTrackInitLandmarkNum += static_cast<int>(
+            lk->initialized_ &&
+            lk->host_ != window_[config->maxKFnumInWindow - 1]);
+    }
+    cout << fmt::format(
+                "Select marg kf historyTrackInitLandmarkNum: {}, "
+                "historyTrackRatio: {:.2f}",
+                historyTrackInitLandmarkNum,
+                KeyFrame::optFlw.GetHistoryTrackFeatureRatio())
+         << endl;
+    // 历史地图点足够多，并且历史跟踪特征点足够多时，才把最新帧用作三角化
+    if (historyTrackInitLandmarkNum > 300 &&
+        KeyFrame::optFlw.GetHistoryTrackFeatureRatio() > 0.8) {
+        // 直接移除最新帧，但会导致BA优化无效
+        return window_.size();
     }
 
     int smallId = 0;
@@ -2038,12 +2068,13 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         cout << logInfo;
     }
 
-    // 将待删除的最老帧移到滑窗开头
-    MoveMargKF2FirstPosInWindow(smallId);
     return smallId;
 }
 
 void Optimizer::MoveMargKF2FirstPosInWindow(const int margId) {
+    if (margId < 0) {
+        return;
+    }
     KeyFrame* oldest = window_[margId];
     window_.erase(window_.begin() + margId);
     window_.insert(window_.begin(), oldest);
@@ -2066,7 +2097,7 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
         "track totalPointNum: {}, usefulPointNum: {}, usefulRatio: {:.1f}, "
         "mean residual: {}\n",
         totalPointNum, usefulPointNum, usefulRatio, info.meanCost);
-    trackLocalMapLow = usefulPointNum < 30;
+    trackLocalMapLow = usefulPointNum < 50;
 
     Pose beforeTwc2 = kf2->Twc_;
     if (optSuccess) {

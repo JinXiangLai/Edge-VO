@@ -270,11 +270,12 @@ void KeyFrame::ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw) {
     // 提取当前KF的关键点，上一光流跟踪结果在当前KF必须是关键点，否则设为delete
     vector<cv::Point2f> pts = ExtractFastPointEachGridImage();
     cv::Mat keypointInCurImg;
-    if (!lastKFoptFlw.prevPts_.empty()) {
+    // 既然光流跟踪成功，这里就不应该再限制删除跟踪成功的点
+    if (0 && !lastKFoptFlw.prevPts_.empty()) {
         keypointInCurImg = cv::Mat::zeros(grayImg_.size(), CV_8UC1);
 
         auto SetCurImgKeypointArea = [&keypointInCurImg](const cv::Point2f& p) {
-            constexpr int windowLen = 16;
+            constexpr int windowLen = 6;
             constexpr int halfLen = windowLen / 2;
             constexpr int edgeLen = 2;  // 无效边缘点
             const int tempTopY = static_cast<int>(p.y - halfLen);
@@ -307,10 +308,10 @@ void KeyFrame::ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw) {
                 lastKFoptFlw.trackLandmark_[i]->SetCanDelete();
             }
         }
-
-        // 移除掉无效的landmark*，为后续创建关键点提供便利
-        lastKFoptFlw.RemoveUselessLandmark();
     }
+
+    // 移除掉无效的landmark*，为后续创建关键点提供便利
+    lastKFoptFlw.RemoveUselessLandmark();
 
     cv::Mat search;
     if (!lastKFoptFlw.prevImg_.empty()) {
@@ -318,7 +319,8 @@ void KeyFrame::ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw) {
         // 当前关键帧追踪到当前帧的特征点，不要重复创建
         // 遍历当前帧被跟踪到的特征点
         auto SetNoGenerateKeypointArea = [&search](const cv::Point2f& p) {
-            constexpr int windowLen = 6;
+            // 既然是当前帧提取的大响应值点，那么就应该尽力让它被选择
+            constexpr int windowLen = 4;
             constexpr int halfLen = windowLen / 2;
             constexpr int edgeLen = 2;
             const int tempTopY = static_cast<int>(p.y - halfLen);
@@ -524,7 +526,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         // 与上一帧匹配的，直接使用上一帧有效的Landmark*修改当前帧的landmark*，
         landmark_[curId] = lastKf->landmark_[lastId];
         // 添加新的相互观测
-        landmark_[curId]->target_.insert({this, curId});
+        landmark_[curId]->AddNewKFobservation(this, curId);
         trackedKpId[curId] = true;
 
         // 光流跟踪使用，需要记录该landmark*对应当前帧的关键点位置
@@ -566,7 +568,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     // 历史关键点在当前帧的跟踪结果需要进行相互观测赋值
     for (size_t i = 0; i < optFlw.prevPts_.size(); ++i) {
         landmark_[i] = optFlw.trackLandmark_[i];
-        landmark_[i]->target_.insert({this, i});
+        landmark_[i]->AddNewKFobservation(this, i);
     }
 
     // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
