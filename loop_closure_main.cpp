@@ -15,12 +15,12 @@
 #include "Utils.h"
 #include "WheelCameraCalib.h"
 
-#include <opencv2/cudacodec.hpp>  // CUDA 视频编码器
+#include <opencv2/videoio.hpp>
 
 using namespace std;
 using namespace cv;
 
-#define MANUAL_SCALE_POSITION 1
+#define MANUAL_SCALE_POSITION 0
 
 constexpr double kScaleDriftRatio = 0.1;
 
@@ -100,8 +100,7 @@ int main(int argc, char** argv) {
     cv::Mat matchImage, matchImgColor;
 
     const string videoSavePath("./loop_closure_lightglue_match_result.avi");
-    cv::Ptr<cv::cudacodec::VideoWriter> writer;
-    cv::cuda::GpuMat gpuFrame;
+    cv::VideoWriter writer;
 
     constexpr int kStep = 10;
     for (size_t i = firstImgIdx; i < vTimeStamps.size(); i += kStep) {
@@ -129,8 +128,9 @@ int main(int argc, char** argv) {
             matchImgColor = cv::Mat(gray.rows, gray.cols * 2, CV_8UC3);
             gray.copyTo(matchImage(cv::Rect(0, 0, gray.cols, gray.rows)));
             if (!videoSavePath.empty()) {
-                writer = cv::cudacodec::createVideoWriter(videoSavePath,
-                                                          matchImgColor.size());
+                writer.open(videoSavePath,
+                            cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 24,
+                            matchImgColor.size());
             }
 
             KeyFrame::InitPoseFileMessage();
@@ -202,9 +202,10 @@ int main(int argc, char** argv) {
             kfVec.emplace_back(curKF);
         }
 
+        cv::imshow("match result", matchImgColor);
+        cv::waitKey(100);
         if (!videoSavePath.empty() && needNewKf) {
-            gpuFrame.upload(matchImgColor);
-            writer->write(gpuFrame);
+            writer.write(matchImgColor);
         }
     }
 
@@ -218,6 +219,13 @@ int main(int argc, char** argv) {
     system(fmt::format("evo_ape tum {}/groundtruth.txt {} -a -s -v",
                        config->dataDir, KeyFrame::poseFilePath)
                .c_str());
+
+    if (writer.isOpened()) {
+        writer.release();
+        cout << fmt::format("Video writer closed! Video file save at: {}",
+                            videoSavePath)
+             << endl;
+    }
     return 0;
 }
 

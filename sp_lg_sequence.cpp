@@ -8,7 +8,7 @@
 namespace filesystem = std::experimental::filesystem;
 #include <memory>
 
-#include <opencv2/cudacodec.hpp>  // CUDA 视频编码器
+#include <opencv2/video.hpp>  // CUDA 视频编码器
 
 #include "Config.h"
 #include "LightGlue.h"
@@ -79,11 +79,11 @@ int main(int argc, char** argv) {
     image0.copyTo(matchImage(cv::Rect(0, 0, image0.cols, image0.rows)));
 
     const string videoSavePath("./lightglue_match_result.avi");
-    cv::Ptr<cv::cudacodec::VideoWriter> writer;
-    cv::cuda::GpuMat gpuFrame;
+    cv::VideoWriter writer;
+
     if (!videoSavePath.empty()) {
-        writer = cv::cudacodec::createVideoWriter(videoSavePath,
-                                                  matchImgColor.size());
+        writer.open(videoSavePath, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+                    24, matchImgColor.size());
     }
 
     for (int i = 1; i < vstrImages.size(); ++i) {
@@ -161,9 +161,15 @@ int main(int argc, char** argv) {
         // cv::imshow("matchImgColor", matchImgColor);
         // cv::waitKey(0);
         if (!videoSavePath.empty()) {
-            gpuFrame.upload(matchImgColor);
-            writer->write(gpuFrame);
+            writer.write(matchImgColor);
         }
+    }
+
+    if (writer.isOpened()) {
+        writer.release();
+        cout << fmt::format("Video writer closed! Video file save at: {}",
+                            videoSavePath)
+             << endl;
     }
 
     return 0;
@@ -172,8 +178,8 @@ int main(int argc, char** argv) {
 size_t LoadImages(const string& strDirectory, vector<string>& vstrImages,
                   vector<double>& vTimeStamps) {
     string imageDirectory = strDirectory + "/rgb";
-    for (const auto& entry : fs::directory_iterator(imageDirectory)) {
-        if (entry.is_regular_file()) {  // 仅获取文件，排除子目录
+    for (const auto& entry : filesystem::directory_iterator(imageDirectory)) {
+        if (filesystem::is_regular_file(entry)) {  // 仅获取文件，排除子目录
             vstrImages.push_back(entry.path().filename().string());
         }
     }
