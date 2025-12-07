@@ -274,8 +274,8 @@ int main(int argc, char** argv) {
         const double frameDuration =
             (curF.timestamp_ - win.back()->timestamp_) * 1e3;  // ms
         const bool longTimeNoInsertKF =
-            frameDuration > 2.0 * optimizer.lastWinBAspendTime_ &&
-            findMatchRatio < 0.8;
+            frameDuration > min(1000.0, 1.5 * optimizer.lastWinBAspendTime_) &&
+            (findMatchRatio < 0.9);
 
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
