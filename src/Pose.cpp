@@ -68,9 +68,10 @@ Sim3Pose::Sim3Pose(const Sim3Pose& T) {
     scale_ = T.scale_;
 }
 
-Sim3Pose::Sim3Pose(const Pose& T) {
+Sim3Pose::Sim3Pose(const Pose& T, const double scale) {
     q_wb_ = T.q_wb_;
     t_wb_ = T.t_wb_;
+    scale_ = scale;
 }
 
 Sim3Pose::Sim3Pose(const Eigen::Quaterniond& q_wb, const Eigen::Vector3d& t_wb,
@@ -99,7 +100,7 @@ int Sim3Pose::Size() const {
 }
 
 void Sim3Pose::Update(const Eigen::Vector3d& delta_q,
-                      const Eigen::Vector3d& delta_t, const double scale) {
+                      const Eigen::Vector3d& delta_t, const double delta_s) {
     // | s_old * R_old, t_old |   | Δs * ΔR, Δt |
     // | 0,             1     | * | 0,       1  |
     // =>
@@ -109,7 +110,7 @@ void Sim3Pose::Update(const Eigen::Vector3d& delta_q,
     q_wb_ = q_wb_ * Exp<double>(delta_q);  // Sophus库标准更新法
     q_wb_.normalize();
     t_wb_ += delta_t;
-    scale_ += scale;
+    scale_ += delta_s;
 }
 
 Eigen::Matrix4d Sim3Pose::ToMatrix4d() const {
@@ -125,6 +126,25 @@ std::string Sim3Pose::QwbString() const {
 }
 
 std::string Sim3Pose::PwbString() const {
-    return fmt::format("Pwb: {:.2f}, {:.2f}, {:.2f}", t_wb_.x(), t_wb_.y(),
-                       t_wb_.z());
+    return fmt::format("Pwb: {:.2f}, {:.2f}, {:.2f}, scale: {:.2f}", t_wb_.x(),
+                       t_wb_.y(), t_wb_.z(), scale_);
+}
+
+void Sim3Pose::CopyStatus() {
+    q_wb_back_ = q_wb_;
+    t_wb_back_ = t_wb_;
+    scale_back_ = scale_;
+}
+
+void Sim3Pose::BackUpStatus() {
+    q_wb_ = q_wb_back_;
+    t_wb_ = t_wb_back_;
+    scale_ = scale_back_;
+}
+
+string Sim3Pose::DebugOutputPoseMessage() const {
+    const Eigen::Vector3d p = t_wb_ / scale_;
+    const Eigen::Quaterniond& q = q_wb_;
+    return fmt::format("{:.6f} {} {} {} {} {} {} {}", debugTimestamp_, p.x(),
+                       p.y(), p.z(), q.x(), q.y(), q.z(), q.w());
 }
