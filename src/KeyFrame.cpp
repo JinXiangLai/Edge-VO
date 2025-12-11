@@ -319,8 +319,8 @@ void KeyFrame::ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw) {
         // 当前关键帧追踪到当前帧的特征点，不要重复创建
         // 遍历当前帧被跟踪到的特征点
         auto SetNoGenerateKeypointArea = [&search](const cv::Point2f& p) {
-            // 既然是当前帧提取的大响应值点，那么就应该尽力让它被选择
-            constexpr int windowLen = 10;
+            // 既然是当前帧提取的大响应值点，那么就应该尽力让它被选择，但会额外引入更多landmark点
+            constexpr int windowLen = 16;
             constexpr int halfLen = windowLen / 2;
             constexpr int edgeLen = 2;
             const int tempTopY = static_cast<int>(p.y - halfLen);
