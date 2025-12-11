@@ -176,9 +176,9 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     // 由观测数量由高到低进行采样
     const int stableLandmarkNum = resampleStableLkIndex2Chi2[1].size() +
                                   resampleStableLkIndex2Chi2[2].size();
-    constexpr int kMaxSelectLandmarkNum = 20000;  // 排查选点集中问题
+    constexpr int kMaxSelectLandmarkNum = 200;  // 排查选点集中问题
     const int maxSampleLandmarkNum = stableLandmarkNum > kMaxSelectLandmarkNum
-                                         ? int(stableLandmarkNum * 0.7)
+                                         ? int(stableLandmarkNum * 0.8)
                                          : kMaxSelectLandmarkNum;
 
     canUseNum = 0;  // 理论上有效的地图点数量，但不需要全部使用
@@ -594,19 +594,12 @@ bool Optimizer::ExecuteWindowOptimize() {
         H_.diagonal() += _lambda;
 
         Eigen::VectorXd delta_x;
-        if (!onlyPoseUpdate_) {
-            chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-            delta_x = SchurCompleteSolve(
-                H_, g_, window_.size(), lastCost.usefulLandmarkNum,
-                window_[0]->Twc_.Size(), optLandmark_[0]->Size(), i % 20 == 0);
-            chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
-            if (i == 0) {
-                cout << fmt::format("SchurCompleteSolve spend: {:.3f}ms.\n",
-                                    ChronoMillisecTimeDuration(t3, t4));
-            }
-        } else {
-            delta_x = H_.ldlt().solve(g_);
-        }
+
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+        delta_x = SchurCompleteSolve(
+            H_, g_, window_.size(), lastCost.usefulLandmarkNum,
+            window_[0]->Twc_.Size(), optLandmark_[0]->Size(), i % 20 == 0);
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
         // 保留状态备份
         for (size_t i = 0; i < optLandmark_.size(); ++i) {
@@ -620,12 +613,12 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
 
         // 状态更新
-        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
         UpdateStatusVariables(delta_x);
-        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
         // 判断当前更新是否有效，在使用新的pose计算cost时，可能会让一些点被设置为noUsed
         ResidualInfo newCost = CalculateResidualWindow();
-        chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
+        chrono::steady_clock::time_point t7 = chrono::steady_clock::now();
 
         if (margKFstatus_) {
             // 需要考虑先验残差约束
@@ -664,18 +657,22 @@ bool Optimizer::ExecuteWindowOptimize() {
                 "lambda: {}.\n",
                 i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
                 lambda_);
-            chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
+            chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
             cout << fmt::format(
-                "ConstructJ_H_b_g spend: {:.3f}ms, UpdateStatusVariables "
-                "spend: {:.3f}ms, CalculateResidualWindow spend: {:.3f}ms, LM "
+                "ConstructJ_H_b_g spend: {:.3f}ms, Add lambda spend: {:.3f}, "
+                "SchurCompleteSolve spend: {:.3f}ms, Copy status spend: "
+                "{:.3f}ms, UpdateStatusVariables "
+                "spend: {:.3f}ms, CalculateResidualWindow spend: {:.3f}ms, "
+                "ComputePredictionReduction and Update spend: {:.3f}ms, LM "
                 "one iteration spend: {:.3f}ms\n",
                 ChronoMillisecTimeDuration(t1, t2),
+                ChronoMillisecTimeDuration(t2, t3),
                 ChronoMillisecTimeDuration(t3, t4),
                 ChronoMillisecTimeDuration(t4, t5),
-                ChronoMillisecTimeDuration(t1, t6));
-
-            cout << "the first two pose delta x: "
-                 << delta_x.head(12).transpose() << "\n";
+                ChronoMillisecTimeDuration(t5, t6),
+                ChronoMillisecTimeDuration(t6, t7),
+                ChronoMillisecTimeDuration(t7, t8),
+                ChronoMillisecTimeDuration(t1, t8));
         }
 
         if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff, lambda_,
@@ -697,12 +694,12 @@ bool Optimizer::ExecuteWindowOptimize() {
     cout << fmt::format(
         "First cost: {:.1f}, final cost: {:.1f}, first mean proj cost: {:.1f}, "
         "last mean proj cost: {:.1f}, gradient norm: {:.3f}, "
-        "\npriorConstraintChi2: {:.1f}, "
+        "priorConstraintChi2: {:.1f}, usefulLandmark num: {}, "
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
         "spend: {:.3f}ms in window\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
-        g_.norm(), lastCost.priorConstraintChi2,
+        g_.norm(), lastCost.priorConstraintChi2, lastCost.usefulLandmarkNum,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / optLandmark_.size() * 100,
         spendTime);
@@ -1929,7 +1926,9 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
                         window_.size(), spendTime);
     if (margKFid == config->maxKFnumInWindow) {
         // BA之后移除最新帧
-        window_.pop_back();
+        MoveMargKF2FirstPosInWindow(margKFid);
+        TransformLandmarkOwnerFromOldestKF(margKFid);
+        RemoveOldestKeyFrame(margKFid);
     }
     const int markDeleteNum = MarkBigResidualLandmarkDelete();
     cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
@@ -1984,8 +1983,8 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
                 KeyFrame::optFlw.GetHistoryTrackFeatureRatio())
          << endl;
     // 历史地图点足够多，并且历史跟踪特征点足够多时，才把最新帧用作三角化
-    if (historyTrackInitLandmarkNum > 300 &&
-        KeyFrame::optFlw.GetHistoryTrackFeatureRatio() > 0.8) {
+    if (historyTrackInitLandmarkNum > 150 &&
+        KeyFrame::optFlw.GetHistoryTrackFeatureRatio() > 0.7) {
         // 直接移除最新帧，但会导致BA优化无效
         return window_.size();
     }
@@ -2278,6 +2277,7 @@ void Optimizer::CalculateLastKFmeanDepth() {
         lastKFmeanDepth_ = 0.0;
         return;
     }
+    KeyFrame::optFlw.RemoveUselessLandmark();
     const KeyFrame* last = window_.back();
     double sumDepth = 0.;
     int num = 0;
