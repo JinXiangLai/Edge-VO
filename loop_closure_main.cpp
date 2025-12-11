@@ -22,7 +22,7 @@ using namespace cv;
 
 #define MANUAL_SCALE_POSITION 1
 
-#define DEBUG_POSE_GRAPH_SE3 1
+#define DEBUG_POSE_GRAPH_SE3 0
 
 constexpr double kScaleDriftRatio = 0.1;
 
@@ -389,8 +389,8 @@ bool RecoveryPose(const shared_ptr<Camera> cam, const KeyFrame& lastKf,
     Tw2 = lastKf.Twc_ * trueT12;
 #else
     trueT12.t_wb_ *= kScaleDriftRatio * (rand() % 5);
-    // Tw2 = lastKf.Twc_ * trueT12;
-    Tw2 = lastKf.priorTwc_ * trueT12;
+    Tw2 = lastKf.Twc_ * trueT12;
+    // Tw2 = lastKf.priorTwc_ * trueT12;
 #endif
 
     return true;
@@ -425,8 +425,10 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
         relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint);
     ofstream of;
     of.open(kBeforeLoopClosurePoseFilePath);
-    for (const auto& pose : loopClosurePoseTwc) {
-        of << pose.DebugOutputPoseMessage() << endl;
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        cout << "init sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
+             << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+        of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
     }
     of.close();
 
@@ -564,7 +566,7 @@ bool CalculateRelativeSim3Transform(const KeyFrame* fixedKF,
     //
     // sT_wc2 = sT_wt * Tc1c2
 
-#if DEBUG_POSE_GRAPH_SE3
+#if DEBUG_POSE_GRAPH_SE3 || 1
     const Pose Tc1c2_t =
         fixedKF->priorTwc_.Inverse() * loopClosureKF->priorTwc_;
     relativeSim3T12 = Sim3Pose(Tc1c2_t, 1.0);
@@ -632,7 +634,8 @@ int CalculateLoopClosureSim3PoseAndConstraint(
     // 初始化各关键帧的sim3 pose
     loopClosurePoseTwc.reserve(selectKFresult.size());
     for (size_t i = 0; i < selectKFresult.size(); ++i) {
-        loopClosurePoseTwc.emplace_back(Sim3Pose(selectKFresult[i]->Twc_, 1.0));
+        loopClosurePoseTwc.emplace_back(
+            Sim3Pose(selectKFresult[i]->Twc_, 1.0 + 0.1 * i));
         loopClosurePoseTwc.back().debugTimestamp_ =
             selectKFresult[i]->timestamp_;
     }
@@ -640,9 +643,13 @@ int CalculateLoopClosureSim3PoseAndConstraint(
     // 添加连续帧间相对位姿约束
     relativePoseConstraint.reserve((loopClosurePoseTwc.size()));
     for (size_t i = 1; i < loopClosurePoseTwc.size(); ++i) {
-        const Sim3Pose Twc1 = loopClosurePoseTwc[i - 1];
-        const Sim3Pose Twc2 = loopClosurePoseTwc[i];
-        relativePoseConstraint.emplace_back(Twc1.Inverse() * Twc2);
+        // const Sim3Pose Twc1 = loopClosurePoseTwc[i - 1];
+        // const Sim3Pose Twc2 = loopClosurePoseTwc[i];
+        // relativePoseConstraint.emplace_back(Twc1.Inverse() * Twc2);
+        relativePoseConstraint.emplace_back(
+            selectKFresult[i - 1]->priorTwc_.Inverse() *
+                selectKFresult[i]->priorTwc_,
+            1.0);
     }
     // 添加回环首、末帧约束，这里添加的是T21作为先验约束
     relativePoseConstraint.emplace_back(relativeSim3T12);
