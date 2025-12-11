@@ -5,6 +5,7 @@
 #include <stack>
 #include <thread>
 
+#include <Eigen/Sparse>
 #include <opencv2/viz/vizcore.hpp>
 
 #include "Config.h"
@@ -23,6 +24,8 @@ using namespace cv;
 #define MANUAL_SCALE_POSITION 1
 
 #define DEBUG_POSE_GRAPH_SE3 0
+
+#define USE_SPARSE_H_MATRIX 1
 
 constexpr double kScaleDriftRatio = 0.1;
 
@@ -63,6 +66,11 @@ int CalculateLoopClosureSim3PoseAndConstraint(
 void ConstructPoseGraphHessianandGradiant(
     const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint,
     Eigen::MatrixXd& H, Eigen::VectorXd& g);
+// 使用稀疏信息矩阵H
+void ConstructPoseGraphSparseHessianandGradiant(
+    const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint,
+    vector<Eigen::Triplet<double>>& triplets, Eigen::SparseMatrix<double>& H,
+    Eigen::VectorXd& g);
 
 bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
                                  int loopClosureIndex,
@@ -80,6 +88,10 @@ double ComputePredictionReduction(const double lambda,
                                   const Eigen::VectorXd& deltaX,
                                   const Eigen::VectorXd& g,
                                   const Eigen::MatrixXd& H);
+
+double ComputePredictionReductionSparseHessian(
+    const double lambda, const Eigen::VectorXd& deltaX,
+    const Eigen::VectorXd& g, const Eigen::SparseMatrix<double>& H);
 
 int main(int argc, char** argv) {
 
@@ -451,21 +463,61 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
     bool acceptNewVariableStatus = true;
     // 包含首帧雅可比为0, H, g维度应该在外部就设置好
     const int optVarNum = loopClosurePoseTwc.size() * 7;
+#if USE_SPARSE_H_MATRIX
+    Eigen::SparseMatrix<double> H;
+    vector<Eigen::Triplet<double>> triplets;  // 三元组用于高效构建稀疏矩阵
+    const int num_constraints = loopClosurePoseTwc.size();  // 根据实际情况调整
+    triplets.reserve(num_constraints * 4 * 7 * 7);
+    H.resize(optVarNum, optVarNum);
+#else
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(optVarNum, optVarNum);
+#endif
     Eigen::VectorXd g = Eigen::VectorXd::Zero(optVarNum);
-    Eigen::VectorXd _lambda(H.rows());
-    Eigen::VectorXd deltaX(H.rows());
+    Eigen::VectorXd deltaX(optVarNum);
+    chrono::steady_clock::time_point tStart = chrono::steady_clock::now();
+    double constructHandGtime = 0, sloveLDLTtime = 0, predictReductionTime = 0;
+
     for (size_t i = 0; i < kMaxIterativeTime; ++i) {
+        chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
         if (acceptNewVariableStatus) {
-            // 只在状态量更新时需要重新计算信息矩阵和梯度，以节省大量的计算时间
+// 只在状态量更新时需要重新计算信息矩阵和梯度，以节省大量的计算时间
+#if USE_SPARSE_H_MATRIX
+            ConstructPoseGraphSparseHessianandGradiant(
+                loopClosurePoseTwc, sT12Constraint, triplets, H, g);
+
+#else
             ConstructPoseGraphHessianandGradiant(loopClosurePoseTwc,
                                                  sT12Constraint, H, g);
+#endif
         }
 
         // 求解增量
-        _lambda.setConstant(lambda);
-        H.diagonal() += _lambda;
+        for (int i = 0; i < H.rows(); ++i) {
+#if USE_SPARSE_H_MATRIX
+            H.coeffRef(i, i) += lambda;
+#else
+            H(i, i) += lambda;
+#endif
+        }
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+        constructHandGtime += ChronoMillisecTimeDuration(t0, t1);
+
+#if USE_SPARSE_H_MATRIX
+        // 使用适合稀疏矩阵的求解器
+        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> solver;
+        solver.compute(H);
+        if (solver.info() != Eigen::Success) {
+            // 分解失败，可以尝试增加lambda或使用其他求解器
+            cout << "Error while decompose sparse matrix H!" << endl;
+            lambda *= 2.0;
+            continue;
+        }
+        deltaX = solver.solve(g);
+#else
         deltaX = H.ldlt().solve(g);
+#endif
+        chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+        sloveLDLTtime += ChronoMillisecTimeDuration(t1, t2);
 
         // 保留状态备份并使用增量更新状态
         for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
@@ -481,9 +533,19 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
         Optimizer::ResidualInfo newCostInfo =
             CalculatePoseGraphResidualInfo(loopClosurePoseTwc, sT12Constraint);
 
-        // 计算线性化理论下降值以及真实下降值
+        chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+
+// 计算线性化理论下降值以及真实下降值
+#if USE_SPARSE_H_MATRIX
+        const double predictCostDecrease =
+            ComputePredictionReductionSparseHessian(lambda, deltaX, g, H);
+#else
         const double predictCostDecrease =
             ComputePredictionReduction(lambda, deltaX, g, H);
+#endif
+        chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+        predictReductionTime += ChronoMillisecTimeDuration(t3, t4);
+
         const double trueCostDecrease = lastCostInfo.cost - newCostInfo.cost;
         cout << fmt::format(
                     "{}th iterative lastCostInfo: {}, newCostInfo: {}, "
@@ -509,10 +571,10 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
 
         // 更新状态量
         if (acceptNewVariableStatus) {
-            cout << "H:\n"
-                 << H.diagonal().transpose() << "\n"
-                 << "g: " << g.transpose() << "\n"
-                 << "deltaX: " << deltaX.transpose() << endl;
+            // cout << "H:\n"
+            //      << H.diagonal().transpose() << "\n"
+            //      << "g: " << g.transpose() << "\n"
+            //      << "deltaX: " << deltaX.transpose() << endl;
 
             cout << fmt::format(
                         "accept iterative {}th time, last cost: {}, new cost: "
@@ -528,13 +590,18 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
             }
         }
     }
+    chrono::steady_clock::time_point tEnd = chrono::steady_clock::now();
 
     cout << fmt::format(
-                "First cost: {}, last cost: {}, "
-                "decrease cost ratio: {}, lambda: {}",
+                "First cost: {:.3f}, last cost: {:.3f}, "
+                "decrease cost ratio: {:.3f}, lambda: {:.3f}, total opt spend "
+                "time: {:.1f}ms, constructHandGtime: {:.1f}ms, sloveLDLTtime: "
+                "{:.1f}ms, "
+                "predictReductionTime: {:.1f}ms",
                 firstCostInfo.cost, lastCostInfo.cost,
                 (firstCostInfo.cost - lastCostInfo.cost) / firstCostInfo.cost,
-                lambda)
+                lambda, ChronoMillisecTimeDuration(tStart, tEnd),
+                constructHandGtime, sloveLDLTtime, predictReductionTime)
          << endl;
 
     // 4. 传导变换到非回环内帧
@@ -657,10 +724,10 @@ int CalculateLoopClosureSim3PoseAndConstraint(
 }
 
 double RelativePoseHuberLoss(const Eigen::Matrix<double, 7, 1>& residual) {
-    Eigen::Matrix<double, 7, 7> w = Eigen::Matrix<double, 7, 7>::Identity();
-    w.diagonal() << kW[0], kW[0], kW[0], kW[1], kW[1], kW[1], kW[2], kW[2],
-        kW[2];
-    return 0.5 * residual.transpose() * w * residual;
+    Eigen::Matrix<double, 7, 1> w;
+    w << kW[0], kW[0], kW[0], kW[1], kW[1], kW[1], kW[2], kW[2], kW[2];
+    Eigen::Matrix<double, 7, 1> residual_multiple_w = w.cwiseProduct(residual);
+    return 0.5 * residual_multiple_w.dot(residual);
 }
 
 Eigen::Matrix<double, 7, 1> Sim3PoseResidual(const Sim3Pose& sT12,
@@ -694,6 +761,15 @@ double ComputePredictionReduction(const double lambda,
                                   const Eigen::VectorXd& deltaX,
                                   const Eigen::VectorXd& g,
                                   const Eigen::MatrixXd& H) {
+    // 实际下降值为： lastCost - newCost
+    // g = -J.T * r
+    return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
+           0.5 * lambda * deltaX.squaredNorm();
+}
+
+double ComputePredictionReductionSparseHessian(
+    const double lambda, const Eigen::VectorXd& deltaX,
+    const Eigen::VectorXd& g, const Eigen::SparseMatrix<double>& H) {
     // 实际下降值为： lastCost - newCost
     // g = -J.T * r
     return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
@@ -838,6 +914,155 @@ void ConstructPoseGraphHessianandGradiant(
 
     // 闭环残差填充
     FillHessianAndGradiant(0, sTwc.size() - 1, sTwc.size() - 1);
+}
+
+void ConstructPoseGraphSparseHessianandGradiant(
+    const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint,
+    vector<Eigen::Triplet<double>>& triplets, Eigen::SparseMatrix<double>& H,
+    Eigen::VectorXd& g) {
+    // 只选择在回环内的KF进行位姿图优化，回环外的仅根据连接关系进行更新
+    constexpr int Sim3Dim = 7;
+    triplets.clear();
+    g.setZero();
+    const double w[3] = {sqrt(kW[0]), sqrt(kW[1]), sqrt(kW[2])};
+
+    // 构建信息矩阵H与梯度g
+    auto EmplaceBackTriplet = [&triplets](const int startRow,
+                                          const int startCol,
+                                          const Eigen::MatrixXd& blockH) {
+        for (int i = 0; i < blockH.rows(); ++i) {
+            const int trueRow = startRow + i;
+            for (int j = 0; j < blockH.cols(); ++j) {
+                const int trueCol = startCol + j;
+                if (abs(blockH(i, j)) > 1e-12) {
+                    triplets.emplace_back(trueRow, trueCol, blockH(i, j));
+                }
+            }
+        }
+    };
+    Eigen::Matrix<double, 7, 7> A1, A2;
+    auto FillHessianAndGradiant =
+        [&triplets, &g, &EmplaceBackTriplet, &w, &sTwc, &sT12Constraint, &A1,
+         &A2](const int i1, const int i2, const int constraintId) -> void {
+        const Eigen::Matrix3d Rw1 = sTwc[i1].q_wb_.toRotationMatrix();
+        const Eigen::Vector3d& Pw1 = sTwc[i1].t_wb_;
+        const double s1 = sTwc[i1].scale_;
+
+        const Eigen::Matrix3d Rw2 = sTwc[i2].q_wb_.toRotationMatrix();
+        const Eigen::Vector3d& Pw2 = sTwc[i2].t_wb_;
+        const double s2 = sTwc[i2].scale_;
+
+        // 注意取逆
+        const Eigen::Matrix3d dR =
+            sT12Constraint[constraintId].q_wb_.toRotationMatrix().transpose();
+        const Eigen::Vector3d& dP = sT12Constraint[constraintId].t_wb_;
+        const double ds = sT12Constraint[constraintId].scale_;
+
+        // ΔR = LogSO3(dR * Rw1.inv * Rw2)
+        // ΔT = Twc1.inv * Twc2
+        // ΔP = 1/s1 * Rw1.inv * Pw2 - 1/s1 * Rw1.inv * Pw1 - dP
+        //    = 1/s1 * Rw1.inv * (Pw2 - Pw1) - dP
+        // Δs = s1*s2 - ds
+        // 计算残差向量
+        Eigen::Matrix<double, 7, 1> residual;
+        residual.segment<3>(0) = LogSO3(dR * Rw1.transpose() * Rw2);
+        const double invS1 = 1.0 / s1;
+        const Eigen::Vector3d dPw = Pw2 - Pw1;
+        residual.segment<3>(3) = invS1 * Rw1.transpose() * dPw - dP;
+        residual(6) = s1 * s2 - ds;
+
+#if DEBUG_POSE_GRAPH_SE3
+        residual(6) = 0.;
+#endif
+
+        A1.setZero();
+        A2.setZero();
+        const Eigen::Matrix3d invJr =
+            InverseRightJacobianSO3(residual.segment<3>(0));
+
+        // 使用"BCH近似"之前，需要通过"伴随性质"将扰动量换到右边
+        // dLogSO3(dR * R1.T*R2) ---> 微分扰动
+        // = LogSO3(dR * exp(-ε1^)*R1.T*R2) ---> 使用伴随: Exp(ε1)*R = R * Exp(R.T * ε1)
+        // = LogSO3(dR*R1.T*R2 * Exp(R2.T*R1*-ε1)) ---> Exp{小量}，使用BCH近似
+        // = [Jr(dR*R1.T*R2).inv * -R2.T*R1*ε1] + LogSo3(dR*R1.T*R2)
+        // 关于Rw2，易得最终的BCH近似为：
+        // [Jr(dR*R1.T*R2).inv * ε2] + LogSo3(dR*R1.T*R2)
+
+        // ΔR w.r.t Rw1
+        A1.block<3, 3>(0, 0) = -invJr * Rw2.transpose() * Rw1 * w[0];
+        // ΔR w.r.t Rw2
+        A2.block<3, 3>(0, 0) = invJr * dR.transpose() * w[0];
+        // ΔR w.r.t Pw1, s1, Pw2, s2 = 0
+
+        // ΔP w.r.t Rw1
+        A1.block<3, 3>(3, 0) =
+            invS1 * SkewSymmetric(Rw1.transpose() * dPw) * w[1];
+        // ΔP w.r.t Rw2 = 0
+        // ΔP w.r.t Pw1
+        A1.block<3, 3>(3, 3) = -invS1 * Rw1.transpose() * w[1];
+        // ΔP w.r.t Pw2
+        A2.block<3, 3>(3, 3) = invS1 * Rw1.transpose() * w[1];
+        // ΔP w.r.t s1
+        A1.block<3, 1>(3, 6) = -invS1 * invS1 * Rw1.transpose() * dPw * w[1];
+        // ΔP w.r.t s2 = 0
+
+        // Δs w.r.t Rw1, Rw2, Pw1, Pw2 = 0
+        // Δs w.r.t s1
+        A1(6, 6) = s2 * w[2];
+        // Δs w.r.t s2
+        A2(6, 6) = s1 * w[2];
+
+#if DEBUG_POSE_GRAPH_SE3
+        A1.block<3, 1>(3, 6).setZero();
+        A1(6, 6) = 0;
+        A2(6, 6) = 0;
+#endif
+
+        if (i1 == 0) {
+            A1.setZero();
+        }
+
+        // A1及A2在雅可比矩阵中的起始位置aj1, aj2
+        //     sTw1  sTw2, sTw3... sTwn
+        // J =
+        //
+        const int aj1 = i1 * Sim3Dim;
+        const int aj2 = i2 * Sim3Dim;
+        // 信息矩阵叠加雅可比J.T*J信息，注意，J是稀疏的，因此只需叠加当前的A1, A2而不必使用整个雅可比J计算
+        // 若使用J，则只需加1次，即 H+=J.T * J，但这里使用J的分块将有4次填充
+        // H.block<7, 7>(aj1, aj1) += A1.transpose() * A1;
+        EmplaceBackTriplet(aj1, aj1, A1.transpose() * A1);
+
+        // H.block<7, 7>(aj1, aj2) += A1.transpose() * A2;
+        EmplaceBackTriplet(aj1, aj2, A1.transpose() * A2);
+
+        // H.block<7, 7>(aj2, aj2) += A2.transpose() * A2;
+        EmplaceBackTriplet(aj2, aj2, A2.transpose() * A2);
+
+        // H.block<7, 7>(aj2, aj1) += A2.transpose() * A1;
+        EmplaceBackTriplet(aj2, aj1, A2.transpose() * A1);
+
+        g.segment<7>(aj1) -= A1.transpose() * residual;
+        g.segment<7>(aj2) -= A2.transpose() * residual;
+    };
+
+    for (size_t i = 1; i < sTwc.size(); ++i) {
+        FillHessianAndGradiant(i - 1, i, i - 1);
+    }
+
+    // 闭环残差填充
+    FillHessianAndGradiant(0, sTwc.size() - 1, sTwc.size() - 1);
+
+    // 从三元组构建稀疏矩阵
+    H.setZero();
+    H.setFromTriplets(triplets.begin(), triplets.end());
+    H.makeCompressed();  // 压缩存储格式
+    for (size_t i = 0; i < triplets.size(); ++i) {
+        if (abs(triplets[i].value()) < 1e-12) {
+            cout << "triplets[" << i << "]: " << triplets[i].value() << endl;
+        }
+    }
+    // cout << "Sparse matrix H:\n" << H << endl;
 }
 
 bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
