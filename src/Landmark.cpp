@@ -18,7 +18,7 @@ Landmark::Landmark(const int kpRow, KeyFrame* host,
         cam_ = cam;
     }
     // 添加与其初始化帧的相互观测
-    target_.insert({host, kpRow});
+    AddNewKFobservation(host_, kpRow);
 }
 
 Eigen::Vector3d Landmark::GetPcNorm() const {
@@ -204,7 +204,7 @@ bool Landmark::Converge() const {
     //}
     //const double stddev = sqrt(invDepthCov_);
     //return (stddev < 0.001 || stddev / invZ_ < 0.1) && obvTime_ > 5;
-    return obvTime_ > 0;
+    return obvTime_ > config->maxKFnumInWindow;
 }
 
 bool Landmark::ManySupport() const {

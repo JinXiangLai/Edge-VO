@@ -115,6 +115,11 @@ class Landmark {
     int continousPassCheckNum_ = 0;
     void AddContinousCheckPassNum() { ++continousPassCheckNum_; }
 
+    void AddNewKFobservation(KeyFrame* kf, const int keypointRowId) {
+        target_.insert({kf, keypointRowId});
+        ++obvTime_;
+    }
+    
    private:
     std::atomic<bool> canBedelete_{false};
     bool noUsed_ = false;
