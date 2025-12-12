@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
     cv::cuda::GpuMat gpuFrame;
     if (!videoSavePath.empty()) {
         writer = cv::cudacodec::createVideoWriter(videoSavePath,
-                                                  matchImgColor.size());
+                                                  matchImgColor.size(), 30.0);
     }
 
     for (int i = 1; i < vstrImages.size(); ++i) {

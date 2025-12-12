@@ -188,8 +188,8 @@ int main(int argc, char** argv) {
             matchImgColor = cv::Mat(gray.rows, gray.cols * 2, CV_8UC3);
             gray.copyTo(matchImage(cv::Rect(0, 0, gray.cols, gray.rows)));
             if (!videoSavePath.empty()) {
-                writer = cv::cudacodec::createVideoWriter(videoSavePath,
-                                                          matchImgColor.size());
+                writer = cv::cudacodec::createVideoWriter(
+                    videoSavePath, matchImgColor.size(), 30.0);
             }
 
             KeyFrame::InitPoseFileMessage();
