@@ -67,6 +67,9 @@ class Optimizer {
                                        const int poseNum, const int pointNum,
                                        const bool firstTime,
                                        const bool logOut = false);
+
+    void ConstructSparseMatrixMapTable();
+
 #else
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
                                        const Eigen::VectorXd& b,
@@ -223,14 +226,17 @@ class Optimizer {
     std::vector<Landmark*>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
 #if USE_SPARSE_H_MATRIX
-    Eigen::SparseMatrix<double, Eigen::RowMajor>
-        H_;  // 行索引，方便利用指针快速检索
+    Eigen::SparseMatrix<double> H_;
     // std::vector<Eigen::Triplet<double>> triplets_;
 
     Eigen::SparseMatrix<double> Dinv_;
     // std::vector<Eigen::Triplet<double>> DinvMatTriplets_;
     // 待H_矩阵维度确定且压缩后，构建行索引对应的存储位置，实现O(1)遍历
-    std::vector<std::unordered_map<int, int>> colMajorSparseMatrixRow2DataIndex_;
+
+    // std::vector<std::unordered_map<int, double*>>
+    //     colMajorSparseMatrixRowId2DataPtr_;
+    std::vector<std::vector<double*>> colMajorSparseMatrixRowId2DataPtr_;
+    int sparseHmatrixElementNum_ = 0;
 #else
     Eigen::MatrixXd H_;
     // 舒尔补内存，实验发现，大矩阵内存分配比运算耗时！！！

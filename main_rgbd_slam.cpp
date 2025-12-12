@@ -193,9 +193,13 @@ int main(int argc, char** argv) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
-                cv::imshow("init 2 KF", initer.debugMatchImg_);
-                cv::waitKey();
-                cv::destroyWindow("init 2 KF");
+                
+                if (config->debugShowOnlineResult3D) {
+                    cv::imshow("init 2 KF", initer.debugMatchImg_);
+                    cv::waitKey();
+                    cv::destroyWindow("init 2 KF");
+                }
+
                 // 模型预热
                 usleep(1000 * 1e3);
                 while (optimizer.newKF_ != nullptr) {

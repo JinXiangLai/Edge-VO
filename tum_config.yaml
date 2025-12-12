@@ -1,4 +1,4 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_desk
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -120,7 +120,7 @@ debugShowGlobalMap: false # 默认显示局部地图
 debugShowOnlineResult3D: true # 是否显示viz3d窗口
 debugRunSerially: true
 
-superpoint.onnxFilePath: /home/ht/Opencv_Ceres_Eigen_example/Edge-VO/src/onnx_weights/superpoint_480x640.onnx
-superpoint.engineFilePath: /home/ht/Opencv_Ceres_Eigen_example/superpoint_480x640.engine
-lightglue.onnxFilePath: /home/ht/Opencv_Ceres_Eigen_example/Edge-VO/src/onnx_weights/superpoint_lightglue.onnx
-lightglue.engineFilePath: /home/ht/Opencv_Ceres_Eigen_example/superpoint_lightglue.engine
+superpoint.onnxFilePath: ../src/onnx_weights/superpoint_480x640.onnx
+superpoint.engineFilePath: ../superpoint_480x640.engine
+lightglue.onnxFilePath: ../src/onnx_weights/superpoint_lightglue.onnx
+lightglue.engineFilePath: ../superpoint_lightglue.engine

@@ -473,6 +473,42 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
 
     return deltaX;
 }
+
+void Optimizer::ConstructSparseMatrixMapTable() {
+    colMajorSparseMatrixRowId2DataPtr_.clear();
+    colMajorSparseMatrixRowId2DataPtr_.resize(
+        H_.cols(), vector<double*>(H_.cols(), nullptr));
+    sparseHmatrixElementNum_ = H_.nonZeros();
+    cout << "sparse Hessian matrix noZeros num: " << sparseHmatrixElementNum_
+         << endl;
+    // Eigen SparseMatrix示例：3×3 矩阵
+    // [ 1.0  0.0  4.0 ]
+    // [ 0.0  3.0  5.0 ]
+    // [ 2.0  0.0  6.0 ]
+
+    // 元素位置索引
+    // m_values:      [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    // 每个数字都对应着对应列所在的行数，如1.0在第0行，3.0在第1行，6.0在第3行，
+    // 它的个数与value数组的元素个数一致
+    // m_innerIndices:[0,    2,   1,   0,   1,   2]
+    // 第0列索引从0开始，第1列从2开始，那么第0列有2个元素
+    // 6为哨兵，记录了数据个数
+    // m_outerStarts: [0,    2,   3,   6]  // 第i列从m_values[outerStarts[i]]开始,
+    double* m_values = H_.valuePtr();
+    int* m_outerStarts = H_.outerIndexPtr();
+    int* m_innerRowId = H_.innerIndexPtr();
+    for (int j = 0; j < H_.cols(); ++j) {
+        int startValueId = m_outerStarts[j];
+        int endValueId = m_outerStarts[j + 1];
+        auto& colMarjor2RowDataPtr = colMajorSparseMatrixRowId2DataPtr_[j];
+        for (int i = startValueId; i < endValueId; ++i) {
+            // 直接存入H_(m_innerRowId[i], j)元素的指针
+            // colMarjor2RowDataPtr.insert({m_innerRowId[i], &m_values[i]});
+            colMarjor2RowDataPtr[m_innerRowId[i]] = &m_values[i];
+        }
+    }
+}
+
 #else
 Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd& H,
                                               const Eigen::VectorXd& b,
@@ -712,7 +748,7 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
         for (int i = 0; i < H_.rows(); ++i) {
 #if USE_SPARSE_H_MATRIX
-            H_.coeffRef(i, i) += lambda_;
+            *(colMajorSparseMatrixRowId2DataPtr_[i][i]) += lambda_;
 #else
             H_(i, i) += lambda_;
 #endif
@@ -1744,14 +1780,9 @@ void Optimizer::ConstructJ_H_b_g(const bool firstTime) {
         triplets.resize(window_.size() * kPoseDim * kPoseDim +
                         optLandmark_.size() * kPointDim);
     } else {
-        chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-        const int nonZeros = H_.nonZeros();
-        H_.setZero();  // 稀疏矩阵置0
-        H_.uncompress();
-        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-        cout << fmt::format("H_ nonZeros: {}, setZero func spend: {:.1f}ms",
-                            nonZeros, ChronoMillisecTimeDuration(t0, t1))
-             << endl;
+        // H_.setZero();  // 稀疏矩阵置0，会修改内存结构，需要使用memset
+        // 将H_矩阵置0且不修改其内部内存结构
+        memset(H_.valuePtr(), 0., sizeof(double) * sparseHmatrixElementNum_);
     }
 #endif
     // clang-format off
@@ -1924,17 +1955,19 @@ void Optimizer::ConstructJ_H_b_g(const bool firstTime) {
                 triplets.emplace_back(bj, bj, Bt * B);
             } else {
                 // 直接向sparse matrix H_赋值
-                UpdateSparseHessianMatrix<6, 6>(a1j, a1j, A1t * A1 * w, H_);
-                UpdateSparseHessianMatrix<6, 6>(a1j, a2j, A1t * A2 * w, H_);
-                UpdateSparseHessianMatrix<6, 1>(a1j, bj, A1t * B * w, H_);
+                auto& data = colMajorSparseMatrixRowId2DataPtr_;
+                UpdateSparseHessianMatrix<6, 6>(a1j, a1j, A1t * A1 * w, data);
+                UpdateSparseHessianMatrix<6, 6>(a1j, a2j, A1t * A2 * w, data);
+                UpdateSparseHessianMatrix<6, 1>(a1j, bj, A1t * B * w, data);
 
-                UpdateSparseHessianMatrix<6, 6>(a2j, a1j, A2t * A1 * w, H_);
-                UpdateSparseHessianMatrix<6, 6>(a2j, a2j, A2t * A2 * w, H_);
-                UpdateSparseHessianMatrix<6, 1>(a2j, bj, A2t * B * w, H_);
+                UpdateSparseHessianMatrix<6, 6>(a2j, a1j, A2t * A1 * w, data);
+                UpdateSparseHessianMatrix<6, 6>(a2j, a2j, A2t * A2 * w, data);
+                UpdateSparseHessianMatrix<6, 1>(a2j, bj, A2t * B * w, data);
 
-                UpdateSparseHessianMatrix<1, 6>(bj, a1j, Bt * A1 * w, H_);
-                UpdateSparseHessianMatrix<1, 6>(bj, a2j, Bt * A2 * w, H_);
-                H_.coeffRef(bj, bj) += Bt * B;
+                UpdateSparseHessianMatrix<1, 6>(bj, a1j, Bt * A1 * w, data);
+                UpdateSparseHessianMatrix<1, 6>(bj, a2j, Bt * A2 * w, data);
+                // H_.coeffRef(bj, bj) += Bt * B;
+                *data[bj][bj] += Bt * B;
             }
 #else
             MatrixBlockReset<6, 6>(
@@ -2004,8 +2037,9 @@ void Optimizer::ConstructJ_H_b_g(const bool firstTime) {
 #if USE_SPARSE_H_MATRIX
     if (firstTime) {
         H_.setFromTriplets(triplets.begin(), triplets.end());
+        H_.makeCompressed();
+        ConstructSparseMatrixMapTable();
     }
-    H_.makeCompressed();
 #endif
 }
 
