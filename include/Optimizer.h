@@ -229,7 +229,7 @@ class Optimizer {
     Eigen::SparseMatrix<double> H_;
     // std::vector<Eigen::Triplet<double>> triplets_;
 
-    Eigen::SparseMatrix<double> Dinv_;
+    //Eigen::SparseMatrix<double> Dinv_;
     // std::vector<Eigen::Triplet<double>> DinvMatTriplets_;
     // 待H_矩阵维度确定且压缩后，构建行索引对应的存储位置，实现O(1)遍历
 
@@ -240,12 +240,12 @@ class Optimizer {
 #else
     Eigen::MatrixXd H_;
     // 舒尔补内存，实验发现，大矩阵内存分配比运算耗时！！！
-    Eigen::MatrixXd Dinv_;
+    //Eigen::MatrixXd Dinv_;
 #endif
 
     Eigen::MatrixXd E_, newA_;
     Eigen::MatrixXd J_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
-    Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
+    Eigen::VectorXd g_, g_p_, Dinv_;  // b_，残差的行维度一般是无法提前预知的
     double rpChi2_ =
         0;  // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负(事实上，先验残差为负是可接受的，意味着系统往更好的方向优化，因此该常数项不需要考虑)
     Eigen::VectorXd margDeltaX_;  // 边缘化时的状态量增量

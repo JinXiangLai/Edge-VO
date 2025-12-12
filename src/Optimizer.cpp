@@ -397,18 +397,11 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     }
     for (int i = 0; i < pointSize; ++i) {
         //Dinv.block(i, i, kPointDim, kPointDim).noalias() = D.block(i, i, kPointDim, kPointDim).inverse();
-        if (D.coeff(i, i) < 1e-12 && D.coeff(i, i) > -1e-12) {
-            continue;
-        }
-        if (firstTime) {
-            DinvMatTriplets.emplace_back(i, i, 1.0 / D.coeff(i, i));
+        if (D.coeff(i, i) > 1e-12 || D.coeff(i, i) < -1e-12) {
+            Dinv_[i] = 1.0 / D.coeff(i, i);
         } else {
-            Dinv_.coeffRef(i, i) = 1.0 / D.coeff(i, i);
+            Dinv_[i] = 0.;
         }
-    }
-    if (firstTime) {
-        Dinv_.setFromTriplets(DinvMatTriplets.begin(), DinvMatTriplets.end());
-        Dinv_.makeCompressed();
     }
 
     const auto& B = H.block(0, poseSize, poseSize, pointSize);
@@ -419,7 +412,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
-            E_(i, j) = -B.coeff(i, j) * Dinv_.coeff(j, j);
+            E_(i, j) = -B.coeff(i, j) * Dinv_[j];
     }
     // E_.noalias() = -B;
     // for (int j = 0; j < E_.cols(); ++j) {
@@ -451,8 +444,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // Eigen::VectorXd deltaPoint =
     //     Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     deltaX.tail(pointSize) =
-        Dinv_.diagonal().array() *
-        (new_b.tail(pointSize) - C * deltaX.head(poseSize)).array();
+        Dinv_.cwiseProduct(new_b.tail(pointSize) - C * deltaX.head(poseSize));
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     if (logOut) {
@@ -554,16 +546,16 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd& H,
 #pragma omp parallel for
     for (int i = 0; i < pointSize; i += kPointDim) {
         //Dinv.block(i, i, kPointDim, kPointDim).noalias() = D.block(i, i, kPointDim, kPointDim).inverse();
-        if (abs(D(i, i)) != 0.) {
-            Dinv_(i, i) = 1.0 / D(i, i);
+        if (D(i, i) > 1e-12 || D(i, i) < 1e-12) {
+            Dinv_[i] = 1.0 / D(i, i);
         } else {
-            Dinv_(i, i) = 0.;  // 由于只reset一次
+            Dinv_[i] = 0.;  // 由于只reset一次
         }
     }
     Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
     if (A.isApproxToConstant(0)) {
         // 仅更新point
-        deltaX.tail(pointSize) = Dinv_ * b.tail(pointSize);
+        deltaX.tail(pointSize) = Dinv_.cwiseProduct(b.tail(pointSize));
         //cout << "D:\n"
         //     << D << endl
         //     << "Dinv:\n"
@@ -586,7 +578,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd& H,
     // SetEigenMatrixAll0(E_);
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
-            E_(i, j) = -B(i, j) * Dinv_(j, j);
+            E_(i, j) = -B(i, j) * Dinv_[j];
     }
     // E_.noalias() = -B;
     // for (int j = 0; j < E_.cols(); ++j) {
@@ -623,8 +615,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd& H,
     // Eigen::VectorXd deltaPoint =
     //     Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     Eigen::VectorXd deltaPoint =
-        Dinv_.diagonal().array() *
-        (new_b.tail(pointSize) - C * deltaPose).array();
+        Dinv_.cwiseProduct(new_b.tail(pointSize) - C * deltaPose);
     chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     // cout << setprecision(5) << "deltaPoint: "<< deltaPoint.transpose() << endl;
@@ -2434,7 +2425,7 @@ void Optimizer::WinBApreAssignMatrixMemory() {
     g_.resize(variableDim);
 
     // 分配舒尔补求解所需矩阵内存
-    Dinv_.resize(landmarkDim, landmarkDim);
+    Dinv_.resize(landmarkDim);
     E_.resize(optPoseDim, landmarkDim);
     newA_.resize(optPoseDim, landmarkDim);
 
@@ -2445,7 +2436,6 @@ void Optimizer::WinBApreAssignMatrixMemory() {
 #if !USE_SPARSE_H_MATRIX
     // 稀疏矩阵resize时会同步置0
     SetEigenMatrixAll0(H_, true);
-    SetEigenMatrixAll0(Dinv_);
 #endif
 }
 
