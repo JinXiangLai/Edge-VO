@@ -5,10 +5,14 @@
 #include <memory>
 #include <vector>
 
+#include <Eigen/Sparse>
+
 #include "Config.h"
 #include "KeyFrame.h"
 #include "Landmark.h"
 #include "Pose.h"
+
+#define USE_SPARSE_H_MATRIX 1
 
 constexpr int kPoseDim = 6;
 constexpr int kPointDim = 1;
@@ -56,12 +60,19 @@ class Optimizer {
         std::vector<Eigen::Vector3d>& stablePws,
         std::vector<Eigen::Vector2d>& stableObvs);
 
+#if USE_SPARSE_H_MATRIX
+
+    Eigen::VectorXd SchurCompleteSolve(const Eigen::SparseMatrix<double>& H,
+                                       const Eigen::VectorXd& b,
+                                       const int poseNum, const int pointNum,
+                                       const bool firstTime,
+                                       const bool logOut = false);
+#else
     Eigen::VectorXd SchurCompleteSolve(const Eigen::MatrixXd& H,
                                        const Eigen::VectorXd& b,
                                        const int poseNum, const int pointNum,
-                                       const int poseDim = 6,
-                                       const int pointDim = 1,
                                        const bool& logOut = false);
+#endif
 
     double CalculatePriorCost(const Eigen::VectorXd& deltaX);
 
@@ -80,7 +91,7 @@ class Optimizer {
 
     void TriangulateNewLandmark(KeyFrame* kf);
 
-    void ConstructJ_H_b_g(const bool logOut = false);
+    void ConstructJ_H_b_g(const bool firstTime = false);
 
     KeyFrame* GetLastKF() { return window_.back(); }
 
@@ -139,9 +150,15 @@ class Optimizer {
                         int& continousNoImprovementNum,
                         double& costRelativeAbsDiff, double& lambda);
 
+#if USE_SPARSE_H_MATRIX
+    double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+                                      const Eigen::VectorXd& g,
+                                      const Eigen::SparseMatrix<double>& H);
+#else
     double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
                                       const Eigen::VectorXd& g,
                                       const Eigen::MatrixXd& H);
+#endif
 
     double ComputePredictionReductionFrame(
         const double lambda, const Eigen::Matrix<double, kPoseDim, 1>& deltaX,
@@ -205,10 +222,24 @@ class Optimizer {
     std::vector<KeyFrame*> window_;
     std::vector<Landmark*>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
-    Eigen::MatrixXd J_, H_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
+#if USE_SPARSE_H_MATRIX
+    Eigen::SparseMatrix<double, Eigen::RowMajor>
+        H_;  // 行索引，方便利用指针快速检索
+    // std::vector<Eigen::Triplet<double>> triplets_;
+
+    Eigen::SparseMatrix<double> Dinv_;
+    // std::vector<Eigen::Triplet<double>> DinvMatTriplets_;
+    // 待H_矩阵维度确定且压缩后，构建行索引对应的存储位置，实现O(1)遍历
+    std::vector<std::unordered_map<int, int>> colMajorSparseMatrixRow2DataIndex_;
+#else
+    Eigen::MatrixXd H_;
+    // 舒尔补内存，实验发现，大矩阵内存分配比运算耗时！！！
+    Eigen::MatrixXd Dinv_;
+#endif
+
+    Eigen::MatrixXd E_, newA_;
+    Eigen::MatrixXd J_, Hp_;  // J_的行维度无法提前预知，其涉及的是约束数量
     Eigen::VectorXd g_, g_p_;  // b_，残差的行维度一般是无法提前预知的
-    Eigen::MatrixXd Dinv_, E_,
-        newA_;  // 舒尔补内存，实验发现，大矩阵内存分配比运算耗时！！！
     double rpChi2_ =
         0;  // 由边缘化时分解Hp_计算得到，需要计算以避免先验残差为负(事实上，先验残差为负是可接受的，意味着系统往更好的方向优化，因此该常数项不需要考虑)
     Eigen::VectorXd margDeltaX_;  // 边缘化时的状态量增量

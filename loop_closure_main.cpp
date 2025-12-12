@@ -5,7 +5,6 @@
 #include <stack>
 #include <thread>
 
-#include <Eigen/Sparse>
 #include <opencv2/viz/vizcore.hpp>
 
 #include "Config.h"
@@ -927,23 +926,10 @@ void ConstructPoseGraphSparseHessianandGradiant(
     const double w[3] = {sqrt(kW[0]), sqrt(kW[1]), sqrt(kW[2])};
 
     // 构建信息矩阵H与梯度g
-    auto EmplaceBackTriplet = [&triplets](const int startRow,
-                                          const int startCol,
-                                          const Eigen::MatrixXd& blockH) {
-        for (int i = 0; i < blockH.rows(); ++i) {
-            const int trueRow = startRow + i;
-            for (int j = 0; j < blockH.cols(); ++j) {
-                const int trueCol = startCol + j;
-                if (abs(blockH(i, j)) > 1e-12) {
-                    triplets.emplace_back(trueRow, trueCol, blockH(i, j));
-                }
-            }
-        }
-    };
     Eigen::Matrix<double, 7, 7> A1, A2;
-    auto FillHessianAndGradiant =
-        [&triplets, &g, &EmplaceBackTriplet, &w, &sTwc, &sT12Constraint, &A1,
-         &A2](const int i1, const int i2, const int constraintId) -> void {
+    auto FillHessianAndGradiant = [&triplets, &g, &w, &sTwc, &sT12Constraint,
+                                   &A1, &A2](const int i1, const int i2,
+                                             const int constraintId) -> void {
         const Eigen::Matrix3d Rw1 = sTwc[i1].q_wb_.toRotationMatrix();
         const Eigen::Vector3d& Pw1 = sTwc[i1].t_wb_;
         const double s1 = sTwc[i1].scale_;
@@ -1031,16 +1017,16 @@ void ConstructPoseGraphSparseHessianandGradiant(
         // 信息矩阵叠加雅可比J.T*J信息，注意，J是稀疏的，因此只需叠加当前的A1, A2而不必使用整个雅可比J计算
         // 若使用J，则只需加1次，即 H+=J.T * J，但这里使用J的分块将有4次填充
         // H.block<7, 7>(aj1, aj1) += A1.transpose() * A1;
-        EmplaceBackTriplet(aj1, aj1, A1.transpose() * A1);
+        EmplaceBackTriplet<7, 7>(aj1, aj1, A1.transpose() * A1, triplets);
 
         // H.block<7, 7>(aj1, aj2) += A1.transpose() * A2;
-        EmplaceBackTriplet(aj1, aj2, A1.transpose() * A2);
+        EmplaceBackTriplet<7, 7>(aj1, aj2, A1.transpose() * A2, triplets);
 
         // H.block<7, 7>(aj2, aj2) += A2.transpose() * A2;
-        EmplaceBackTriplet(aj2, aj2, A2.transpose() * A2);
+        EmplaceBackTriplet<7, 7>(aj2, aj2, A2.transpose() * A2, triplets);
 
         // H.block<7, 7>(aj2, aj1) += A2.transpose() * A1;
-        EmplaceBackTriplet(aj2, aj1, A2.transpose() * A1);
+        EmplaceBackTriplet<7, 7>(aj2, aj1, A2.transpose() * A1, triplets);
 
         g.segment<7>(aj1) -= A1.transpose() * residual;
         g.segment<7>(aj2) -= A2.transpose() * residual;
@@ -1054,7 +1040,6 @@ void ConstructPoseGraphSparseHessianandGradiant(
     FillHessianAndGradiant(0, sTwc.size() - 1, sTwc.size() - 1);
 
     // 从三元组构建稀疏矩阵
-    H.setZero();
     H.setFromTriplets(triplets.begin(), triplets.end());
     H.makeCompressed();  // 压缩存储格式
     for (size_t i = 0; i < triplets.size(); ++i) {

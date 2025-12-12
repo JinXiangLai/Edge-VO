@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <Eigen/Sparse>
 #include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/viz.hpp>
@@ -371,6 +372,33 @@ inline double CalculateParallax(const Eigen::Vector2d& p1,
     }
 
     return -1.0;
+}
+
+template <int rows, int cols>
+void EmplaceBackTriplet(const int startRow, const int startCol,
+                        const Eigen::Matrix<double, rows, cols>& blockH,
+                        std::vector<Eigen::Triplet<double>>& triplets) {
+    for (int i = 0; i < rows; ++i) {
+        const int trueRow = startRow + i;
+        for (int j = 0; j < cols; ++j) {
+            const int trueCol = startCol + j;
+            triplets.emplace_back(trueRow, trueCol, blockH(i, j));
+        }
+    }
+}
+
+template <int rows, int cols>
+void UpdateSparseHessianMatrix(const int startRow, const int startCol,
+                               const Eigen::Matrix<double, rows, cols>& blockH,
+                               Eigen::SparseMatrix<double>& H) {
+    for (int i = 0; i < rows; ++i) {
+        const int trueRow = startRow + i;
+        for (int j = 0; j < cols; ++j) {
+            const int trueCol = startCol + j;
+            H.coeffRef(trueRow, trueCol) += blockH(i, j); // 该方式访问速度过慢
+            // 利用H矩阵内存数据固定的方式加速索引
+        }
+    }
 }
 
 class InteractionParam {

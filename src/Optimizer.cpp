@@ -356,10 +356,11 @@ Optimizer::ResidualInfo Optimizer::ResampleStablePwAndObvCurFrame(
     return info;
 }
 
+#if USE_SPARSE_H_MATRIX
 Eigen::VectorXd Optimizer::SchurCompleteSolve(
-    const Eigen::MatrixXd& H, const Eigen::VectorXd& b, const int poseNum,
-    const int pointNum, const int poseDim, const int pointDim,
-    const bool& logOut) {
+    const Eigen::SparseMatrix<double>& H, const Eigen::VectorXd& b,
+    const int poseNum, const int pointNum, const bool firstTime,
+    const bool logOut) {
     chrono::steady_clock::time_point tStart = chrono::steady_clock::now();
 
     /***
@@ -382,7 +383,125 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // | I  -B*D.inv |   | A  B |   | A-B*D.inv*C  0 |
     // | 0     I     | * | C  D | = |    C         D |
     // H -= lambdaMatrix;
-    const int poseSize = poseNum * poseDim;
+    const int poseSize = poseNum * kPoseDim;
+    const int pointSize = H.cols() - poseSize;
+
+    // 使用稀疏矩阵视图，避免拷贝数据
+    const auto& A = H.block(0, 0, poseSize, poseSize);
+    const auto& D = H.block(poseSize, poseSize, pointSize, pointSize);
+
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    std::vector<Eigen::Triplet<double>> DinvMatTriplets;
+    if (firstTime) {
+        DinvMatTriplets.reserve(pointNum);
+    }
+    for (int i = 0; i < pointSize; ++i) {
+        //Dinv.block(i, i, kPointDim, kPointDim).noalias() = D.block(i, i, kPointDim, kPointDim).inverse();
+        if (D.coeff(i, i) < 1e-12 && D.coeff(i, i) > -1e-12) {
+            continue;
+        }
+        if (firstTime) {
+            DinvMatTriplets.emplace_back(i, i, 1.0 / D.coeff(i, i));
+        } else {
+            Dinv_.coeffRef(i, i) = 1.0 / D.coeff(i, i);
+        }
+    }
+    if (firstTime) {
+        Dinv_.setFromTriplets(DinvMatTriplets.begin(), DinvMatTriplets.end());
+        Dinv_.makeCompressed();
+    }
+
+    const auto& B = H.block(0, poseSize, poseSize, pointSize);
+    const auto& C = H.block(poseSize, 0, pointSize, poseSize);
+
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    //const Eigen::MatrixXd E = -B * Dinv;
+    // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
+    for (int i = 0; i < B.rows(); ++i) {
+        for (int j = 0; j < B.cols(); ++j)
+            E_(i, j) = -B.coeff(i, j) * Dinv_.coeff(j, j);
+    }
+    // E_.noalias() = -B;
+    // for (int j = 0; j < E_.cols(); ++j) {
+    //     E_.col(j) *= Dinv_(j, j);
+    // }
+    chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+
+    Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
+    // 求pose增量
+    newA_ = A + E_ * C;
+    //cout << "newA:\n" << newA << endl;
+    // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
+    //Eigen::VectorXd new_b = leftMatrix * b;
+    // | I  E|
+    // | 0  I| * b
+    Eigen::VectorXd new_b = b;
+    new_b.head(poseSize) = b.head(poseSize) + E_ * b.tail(pointSize);
+
+    deltaX.head(poseSize) =
+        newA_.colPivHouseholderQr().solve(new_b.head(poseSize));
+    chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+    //cout << "b: " << b.transpose() << endl
+    //     << "newb: " << new_b.transpose() << endl;
+    // 求point增量
+    // H * Δx = b ==> C*deltaX_pose + D*deltaX_point = b
+    // D*deltaX_point = b - C*deltaX_pose
+    // deltaX_point = D.inv * (b - C*deltaX_pose)
+    // 由于Dinv_是稀疏的对角线矩阵，避免不必要的加法，需注意使用array
+    // Eigen::VectorXd deltaPoint =
+    //     Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
+    deltaX.tail(pointSize) =
+        Dinv_.diagonal().array() *
+        (new_b.tail(pointSize) - C * deltaX.head(poseSize)).array();
+    chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+
+    if (logOut) {
+        cout << fmt::format(
+            "reference memory spend: {:.1f}ms,  "
+            "calculate D.inv spend: {:.1f}ms, "
+            "calculate E mat spend: {:.1f}ms, "
+            "calculate dPose spend: {:.1f}ms, "
+            "calculate dPoint spend: {:.1f}ms, "
+            "total spend: {:.1f}\n",
+            ChronoMillisecTimeDuration(tStart, t0),
+            ChronoMillisecTimeDuration(t0, t1),
+            ChronoMillisecTimeDuration(t1, t2),
+            ChronoMillisecTimeDuration(t2, t3),
+            ChronoMillisecTimeDuration(t3, t4),
+            ChronoMillisecTimeDuration(tStart, t4));
+    }
+
+    return deltaX;
+}
+#else
+Eigen::VectorXd Optimizer::SchurCompleteSolve(const Eigen::MatrixXd& H,
+                                              const Eigen::VectorXd& b,
+                                              const int poseNum,
+                                              const int pointNum,
+                                              const bool& logOut) {
+    chrono::steady_clock::time_point tStart = chrono::steady_clock::now();
+
+    /***
+    *     T   p...
+    * T   A   B
+    * p   C   D
+    * ...
+    ***/
+    // 对B进行边缘化，左乘形成上三角矩阵
+    // | I          0 |   | A  B |   | A  B |
+    // | -C*A.inv   I | * | C  D | = | 0  ΔA| ==> ΔA = -C*A.inv*B + D
+    // 对C进行边缘化，右乘形成下三角矩阵
+    // | A  B |   | I  -A.inv*B |   | A  0 |
+    // | C  D | * | 0       I   | = | C  ΔA| = H' ==> 用来求pose
+    // 可以得到:
+    // | I        0 |   | A  B |   | I  -A.inv*B |   | A  0 |
+    // |-C*A.inv  I | * | C  D | * | 0      I    | = | 0  ΔA| = H'
+
+    // 自己可以构建舒尔补，左乘形成下三角矩阵，先求解pose增量，再求解point增量
+    // | I  -B*D.inv |   | A  B |   | A-B*D.inv*C  0 |
+    // | 0     I     | * | C  D | = |    C         D |
+    // H -= lambdaMatrix;
+    const int poseSize = poseNum * kPoseDim;
     const int pointSize = H.cols() - poseSize;
 
     // 这里若使用Eigen::MatrixXd&，那么会产生临时对象，导致内存分配，对于2000个地图点可能需要10ms完成，浪费巨大！！！
@@ -397,8 +516,8 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point tAssian = chrono::steady_clock::now();
 
 #pragma omp parallel for
-    for (int i = 0; i < pointSize; i += pointDim) {
-        //Dinv.block(i, i, pointDim, pointDim).noalias() = D.block(i, i, pointDim, pointDim).inverse();
+    for (int i = 0; i < pointSize; i += kPointDim) {
+        //Dinv.block(i, i, kPointDim, kPointDim).noalias() = D.block(i, i, kPointDim, kPointDim).inverse();
         if (abs(D(i, i)) != 0.) {
             Dinv_(i, i) = 1.0 / D(i, i);
         } else {
@@ -497,6 +616,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
 
     return deltaX;
 }
+#endif
 
 double Optimizer::CalculatePriorCost(const Eigen::VectorXd& deltaX) {
     // 边缘化与执行优化时的状态量数量要一致，
@@ -565,9 +685,8 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
 
-        Eigen::VectorXd _lambda(H_.rows());
-        _lambda.setConstant(lambda_);
         if (margKFstatus_) {
+#if !USE_SPARSE_H_MATRIX
             if (i == 0) {
                 cout << "Hp_[6x6]: " << setprecision(2)
                      << Hp_.diagonal().head(6).transpose() << endl;
@@ -581,24 +700,35 @@ bool Optimizer::ExecuteWindowOptimize() {
 
             H_ += Hp_;
             g_ += g_p_;
+#endif
         } else {
             // 破坏了优化问题一致性，不可取
             //_lambda.head(6).setConstant(
             //    g_.head(6).cwiseAbs().maxCoeff() * 1e4);  // 首帧的约束足够大，但不能使矩阵病态
             //_lambda[0] = 1e20;
             if (i == 0) {
-                cout << "Fixed First Frame!!! _lambda.head(6): "
-                     << _lambda.head(6).transpose() << endl;
+                cout << "Fixed First Frame!!! lambda_: " << lambda_ << endl;
             }
         }
-        H_.diagonal() += _lambda;
+        for (int i = 0; i < H_.rows(); ++i) {
+#if USE_SPARSE_H_MATRIX
+            H_.coeffRef(i, i) += lambda_;
+#else
+            H_(i, i) += lambda_;
+#endif
+        }
 
         Eigen::VectorXd delta_x;
 
         chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
-        delta_x = SchurCompleteSolve(
-            H_, g_, window_.size(), lastCost.usefulLandmarkNum,
-            window_[0]->Twc_.Size(), optLandmark_[0]->Size(), i % 20 == 0);
+#if USE_SPARSE_H_MATRIX
+        delta_x =
+            SchurCompleteSolve(H_, g_, window_.size(),
+                               lastCost.usefulLandmarkNum, i == 0, i % 20 == 0);
+#else
+        delta_x = SchurCompleteSolve(H_, g_, window_.size(),
+                                     lastCost.usefulLandmarkNum, i % 20 == 0);
+#endif
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
         // 保留状态备份
@@ -1385,11 +1515,9 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
     ConstructJ_H_b_g(true);
 
     // Step:接下来计算相关先验Hp, g_p
-    const int poseDim = window_[0]->Twc_.Size();
-    constexpr int depthDim = 1;
-    //const int margDim = poseDim + margLandmark.size() * depthDim;
+    //const int margDim = kPoseDim + margLandmark.size() * depthDim;
     // 这里我们直接将最老帧的landmark转移或丢弃不用，只保留边缘化最老帧的信息
-    const int margDim = poseDim;
+    const int margDim = kPoseDim;
     const int leftDim = H_.cols() - margDim;
     // 使用舒尔补进行边缘化H矩阵，并形成上三角矩阵
     // | I          0 |   | A  B |   | A  B |
@@ -1425,10 +1553,15 @@ bool Optimizer::MarginalizeOldestKeyFrame() {
          << Hp_.block(0, 0, 6, 6) << "\n"
          << "gp_: " << g_p_.transpose() << "\n";
     // 构建先验增量，边缘化帧改变了原有的概率分布，需要将该增量用于更新状态量
+#if USE_SPARSE_H_MATRIX
+    // 稀疏矩阵模式下，暂不用实现边缘化
+    const Eigen::VectorXd deltaX;
+#else
     const Eigen::VectorXd deltaX = SchurCompleteSolve(
         Hp_, g_p_, config->maxKFnumInWindow,
         Hp_.cols() - config->maxKFnumInWindow * config->maxKFnumInWindow,
-        window_[0]->Tcw_.Size(), optLandmark_[0]->Size(), false);
+        false);
+#endif
     cout << "marg KF delta x: " << deltaX.transpose() << endl;
     //if (!CalculatePriorCostChi2(deltaX)) {
     //    cout << fmt::format(
@@ -1501,6 +1634,16 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
     return true;
 }
 
+#if USE_SPARSE_H_MATRIX
+double Optimizer::ComputePredictionReduction(
+    const Eigen::VectorXd& deltaX, const Eigen::VectorXd& g,
+    const Eigen::SparseMatrix<double>& H) {
+    // 实际下降值为： lastCost - newCost
+    // g = -J.T * r
+    return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
+           0.5 * lambda_ * deltaX.squaredNorm();
+}
+#else
 double Optimizer::ComputePredictionReduction(const Eigen::VectorXd& deltaX,
                                              const Eigen::VectorXd& g,
                                              const Eigen::MatrixXd& H) {
@@ -1509,6 +1652,7 @@ double Optimizer::ComputePredictionReduction(const Eigen::VectorXd& deltaX,
     return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
            0.5 * lambda_ * deltaX.squaredNorm();
 }
+#endif
 
 double Optimizer::ComputePredictionReductionFrame(
     const double lambda, const Eigen::Matrix<double, 6, 1>& deltaX,
@@ -1571,7 +1715,7 @@ bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
     return false;
 }
 
-void Optimizer::ConstructJ_H_b_g(const bool logOut) {
+void Optimizer::ConstructJ_H_b_g(const bool firstTime) {
     // 构建H, g
     // 给出每个KF对应的在H矩阵中的位置
     unordered_map<const KeyFrame*, int> kfMapCol;
@@ -1585,8 +1729,6 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
         Rcw.insert({window_[i], window_[i]->Tcw_.q_wb_.toRotationMatrix()});
         Rwc.insert({window_[i], window_[i]->Twc_.q_wb_.toRotationMatrix()});
     }
-    constexpr int poseDim = 6;  // window_[0]->Twc_.Size();
-    constexpr int depthDim = 1;
 
     // 或许我们不知道residual，Jacobian的行数，但是H矩阵以及g向量的维度是可知的
 
@@ -1596,6 +1738,22 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
 
     // SetEigenMatrixAll0(H_, logOut);
     g_.setZero();
+#if USE_SPARSE_H_MATRIX
+    std::vector<Eigen::Triplet<double>> triplets;
+    if (firstTime) {
+        triplets.resize(window_.size() * kPoseDim * kPoseDim +
+                        optLandmark_.size() * kPointDim);
+    } else {
+        chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+        const int nonZeros = H_.nonZeros();
+        H_.setZero();  // 稀疏矩阵置0
+        H_.uncompress();
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+        cout << fmt::format("H_ nonZeros: {}, setZero func spend: {:.1f}ms",
+                            nonZeros, ChronoMillisecTimeDuration(t0, t1))
+             << endl;
+    }
+#endif
     // clang-format off
     // 计算residual & jacobian
     /*********
@@ -1603,7 +1761,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
     * r0
     *********/
     // clang-format on
-    const int depthStartCol = window_.size() * poseDim;
+    const int depthStartCol = window_.size() * kPoseDim;
     const int resDim = 2;
     int resNum = 0;  // 显示当前计算到雅可比的第几行
     int usefulLandmarkNum = 0;
@@ -1747,10 +1905,42 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             *******************************************************************/
             // clang-format on
             A1t = A1.transpose();
+            A2t = A2.transpose();
+            Bt = B.transpose();
+
+#if USE_SPARSE_H_MATRIX
+            if (firstTime) {
+                EmplaceBackTriplet<6, 6>(a1j, a1j, A1t * A1 * w, triplets);
+                EmplaceBackTriplet<6, 6>(a1j, a2j, A1t * A2 * w, triplets);
+                EmplaceBackTriplet<6, 1>(a1j, bj, A1t * B * w, triplets);
+
+                EmplaceBackTriplet<6, 6>(a2j, a1j, A2t * A1 * w, triplets);
+                EmplaceBackTriplet<6, 6>(a2j, a2j, A2t * A2 * w, triplets);
+                EmplaceBackTriplet<6, 1>(a2j, bj, A2t * B * w, triplets);
+
+                EmplaceBackTriplet<1, 6>(bj, a1j, Bt * A1 * w, triplets);
+                EmplaceBackTriplet<1, 6>(bj, a2j, Bt * A2 * w, triplets);
+                // EmplaceBackTriplet(bj, bj, Bt * Bt * w, triplets_);
+                triplets.emplace_back(bj, bj, Bt * B);
+            } else {
+                // 直接向sparse matrix H_赋值
+                UpdateSparseHessianMatrix<6, 6>(a1j, a1j, A1t * A1 * w, H_);
+                UpdateSparseHessianMatrix<6, 6>(a1j, a2j, A1t * A2 * w, H_);
+                UpdateSparseHessianMatrix<6, 1>(a1j, bj, A1t * B * w, H_);
+
+                UpdateSparseHessianMatrix<6, 6>(a2j, a1j, A2t * A1 * w, H_);
+                UpdateSparseHessianMatrix<6, 6>(a2j, a2j, A2t * A2 * w, H_);
+                UpdateSparseHessianMatrix<6, 1>(a2j, bj, A2t * B * w, H_);
+
+                UpdateSparseHessianMatrix<1, 6>(bj, a1j, Bt * A1 * w, H_);
+                UpdateSparseHessianMatrix<1, 6>(bj, a2j, Bt * A2 * w, H_);
+                H_.coeffRef(bj, bj) += Bt * B;
+            }
+#else
             MatrixBlockReset<6, 6>(
                 a1j, a1j,
                 reinterpret_cast<uint64_t>(&H_.block<6, 6>(a1j, a1j)(0, 0)));
-            H_.block<6, 6>(a1j, a1j) += (A1.transpose() * A1) * w;
+            H_.block<6, 6>(a1j, a1j) += (A1t * A1) * w;
 
             MatrixBlockReset<6, 6>(
                 a1j, a2j,
@@ -1762,7 +1952,6 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
                 reinterpret_cast<uint64_t>(&H_.block<6, 1>(a1j, bj)(0, 0)));
             H_.block<6, 1>(a1j, bj) += A1t * B * w;
 
-            A2t = A2.transpose();
             MatrixBlockReset<6, 6>(
                 a2j, a1j,
                 reinterpret_cast<uint64_t>(&H_.block<6, 6>(a2j, a1j)(0, 0)));
@@ -1771,14 +1960,13 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             MatrixBlockReset<6, 6>(
                 a2j, a2j,
                 reinterpret_cast<uint64_t>(&H_.block<6, 6>(a2j, a2j)(0, 0)));
-            H_.block<6, 6>(a2j, a2j) += (A2.transpose() * A2) * w;
+            H_.block<6, 6>(a2j, a2j) += (A2t * A2) * w;
 
             MatrixBlockReset<6, 1>(
                 a2j, bj,
                 reinterpret_cast<uint64_t>(&H_.block<6, 1>(a2j, bj)(0, 0)));
             H_.block<6, 1>(a2j, bj) += A2t * B * w;
 
-            Bt = B.transpose();
             MatrixBlockReset<1, 6>(
                 bj, a1j,
                 reinterpret_cast<uint64_t>(&H_.block<1, 6>(bj, a1j)(0, 0)));
@@ -1793,6 +1981,7 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
                 bj, bj,
                 reinterpret_cast<uint64_t>(&H_.block<1, 1>(bj, bj)(0, 0)));
             H_.block<1, 1>(bj, bj) += (B.transpose() * B) * w;
+#endif
             // clang-format off
             /********************* 利用稀疏性计算g=-J'*b ****************************
             * | A1'|       | A1' * b |
@@ -1800,9 +1989,9 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             * | B' |       | B'  * b |
             **********************************************************************/
             // clang-format on
-            g_.middleRows(a1j, poseDim) -= A1t * r * w;
-            g_.middleRows(a2j, poseDim) -= A2t * r * w;
-            g_.middleRows(bj, depthDim) -= Bt * r * w;
+            g_.middleRows(a1j, kPoseDim) -= A1t * r * w;
+            g_.middleRows(a2j, kPoseDim) -= A2t * r * w;
+            g_.middleRows(bj, kPointDim) -= Bt * r * w;
 
             addConstraint = true;
         }
@@ -1811,6 +2000,13 @@ void Optimizer::ConstructJ_H_b_g(const bool logOut) {
             ++usefulLandmarkNum;
         }
     }
+
+#if USE_SPARSE_H_MATRIX
+    if (firstTime) {
+        H_.setFromTriplets(triplets.begin(), triplets.end());
+    }
+    H_.makeCompressed();
+#endif
 }
 
 void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
@@ -1818,11 +2014,10 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
     if (config->relativePoseConstraintWeight <= 0.) {
         return;
     }
-    const int PoseDim = window_[0]->Twc_.Size();
     const int resDim = 6;
 
-    H.resize(window_.size() * PoseDim, window_.size() * PoseDim);
-    g.resize(window_.size() * PoseDim);
+    H.resize(window_.size() * kPoseDim, window_.size() * kPoseDim);
+    g.resize(window_.size() * kPoseDim);
     H.setZero();
     g.setZero();
     const double w = config->relativePoseConstraintWeight;
@@ -1840,7 +2035,7 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
         // 实际是 ΔP - Rwc1.T*Pwc1 + Rwc1.T*Pwc2
         r_R_P.tail(3) = pTc1c2.t_wb_ - Tc1c2.t_wb_;
 
-        const int aj1 = (i - 1) * PoseDim, aj2 = i * PoseDim;
+        const int aj1 = (i - 1) * kPoseDim, aj2 = i * kPoseDim;
         Eigen::Matrix<double, 6, 6> A1, A2;
         A1.setZero();
         A2.setZero();
@@ -2191,30 +2386,33 @@ void Optimizer::WinBApreAssignMatrixMemory() {
     // 要使用const auto& a = A.block(); 因为block()返回的是 Eigen::Block<const Eigen::MatrixXd>对象
 
     // 为了避免内存重复分配，LM迭代过程中，不应该再改变状态量维度，若要剔除某个点，直接使其雅可比为0即可，此时该状态量梯度自然变为0
-    int poseDim = window_.size() * window_[0]->Twc_.Size();
+    int optPoseDim = window_.size() * window_[0]->Twc_.Size();
     int landmarkDim = 0;
     for (const Landmark* lk : optLandmark_) {
-        landmarkDim += lk->NoUsed() ? 0 : lk->Size();
+        landmarkDim += lk->NoUsed() ? 0 : kPointDim;
     }
-    const int variableDim = poseDim + landmarkDim;
+    const int variableDim = optPoseDim + landmarkDim;
     cout << fmt::format("window_.size: {}, opt variable dim: {}\n",
                         window_.size(), variableDim);
 
-    // 分配求解信息矩阵和梯度的矩阵内存
+    // 分配求解信息矩阵和梯度的矩阵内存，在SparseMatrix下，会同时将元素置0
     H_.resize(variableDim, variableDim);
     g_.resize(variableDim);
 
     // 分配舒尔补求解所需矩阵内存
     Dinv_.resize(landmarkDim, landmarkDim);
-    E_.resize(poseDim, landmarkDim);
-    newA_.resize(poseDim, landmarkDim);
+    E_.resize(optPoseDim, landmarkDim);
+    newA_.resize(optPoseDim, landmarkDim);
 
     // 置0舒尔补矩阵，因为其运算是=，只需reset一次
-    SetEigenMatrixAll0(Dinv_);
     SetEigenMatrixAll0(E_);
     SetEigenMatrixAll0(newA_);
     // 难点是信息矩阵H_，其运算是+=，采用延迟重置方案
+#if !USE_SPARSE_H_MATRIX
+    // 稀疏矩阵resize时会同步置0
     SetEigenMatrixAll0(H_, true);
+    SetEigenMatrixAll0(Dinv_);
+#endif
 }
 
 void Optimizer::SetEigenMatrixAll0(Eigen::Matrix<double, -1, -1>& mat,
