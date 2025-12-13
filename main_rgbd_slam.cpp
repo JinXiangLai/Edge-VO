@@ -48,9 +48,8 @@ int main(int argc, char** argv) {
     viz::Viz3d window("Local Map Viewer");
     window.setWindowPosition(kViz3DWindowPos);
     interaction->window = &window;
-    if (!interaction->SetImgSaveFolderPath(
-            fmt::format("../viz3d_screenshot",
-                        config->debugMessageSaveFolder))) {
+    if (!interaction->SetImgSaveFolderPath(fmt::format(
+            "../viz3d_screenshot", config->debugMessageSaveFolder))) {
         cout << "Create viz3d image folder failed!\n";
     }
     InitColor();
@@ -193,7 +192,7 @@ int main(int argc, char** argv) {
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
                 cout << "\n******\nInitialized!\n******\n";
-                
+
                 if (config->debugShowOnlineResult3D) {
                     cv::imshow("init 2 KF", initer.debugMatchImg_);
                     cv::waitKey();
@@ -281,6 +280,8 @@ int main(int argc, char** argv) {
             frameDuration > min(1000.0, 1.5 * optimizer.lastWinBAspendTime_) &&
             (findMatchRatio < 0.9);
 
+        const bool frequentInsertKf =
+            curF.timestamp_ - win.back()->timestamp_ > 0.15;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -293,7 +294,8 @@ int main(int argc, char** argv) {
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
         if (optimizer.CanAddNewKF() &&
             ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
-             caseFastInsertKF || trackLocalMapLow || longTimeNoInsertKF)) {
+             caseFastInsertKF || trackLocalMapLow || longTimeNoInsertKF ||
+             frequentInsertKf)) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
                 "caseMoveBaselineLOng: {}, caseFastInsertKF: {}, "
@@ -422,7 +424,10 @@ void ResetStatus(Optimizer* optimizer, bool* isInitialized,
     optimizer->window_.clear();
     KeyFrame::Tc0w = Pose();
     KeyFrame::kfOn3Dshow.clear();
-    KeyFrame::optFlw.Reset();
+    {
+        lock_guard<mutex> lock(globalOptFlwMutex);
+        globalOptFlw.Reset();
+    }
     *trackLostCount = 0;
     interaction->trajectory.clear();
 }

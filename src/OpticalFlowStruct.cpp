@@ -1,6 +1,11 @@
 #include "OpticalFlowStruct.h"
 
 using namespace std;
+
+// 全局变量定义
+std::mutex globalOptFlwMutex;
+OpticalFlowStruct globalOptFlw;
+
 void OpticalFlowStruct::RemoveUselessLandmark() {
     std::vector<cv::Point2f> tempPts;
     std::vector<Landmark*> tempLandmark;
@@ -26,7 +31,7 @@ void OpticalFlowStruct::RemoveUselessLandmark() {
 
     SelectUsefulLandmark(srcHistoryNum, prevPts_.size());
     cout << fmt::format(
-        "optflw remove useless landmark num: {}, remain landmark num: {}\n",
+        "optical flow remove useless landmark num: {}, remain landmark num: {}\n",
         totalFeatureCreated_ - tempPts.size(), tempPts.size());
     // totalFeatureCreated_ = tempPts.size(); // 不能重新赋值总的特征，因为跟踪过程会丢失
 

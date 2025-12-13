@@ -34,7 +34,7 @@ class Optimizer {
         double priorConstraintChi2 = 0.;
     };
 
-    bool OptimizeCurFrame(OpticalFlowStruct& optFlw, Pose& Twc2,
+    bool OptimizeCurFrame( Pose& Twc2,
                           const int curFid, int& totalPointNum,
                           int& usefulPointNum, ResidualInfo& info);
 
@@ -172,7 +172,7 @@ class Optimizer {
                      const double& costRelativeAbsDiff, const double lambda,
                      const Eigen::VectorXd& delta);
 
-    void PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
+    void PreSelectLandmarkForTracking(
                                       std::vector<Landmark*>& lk1s,
                                       std::vector<Eigen::Vector2d>& obvs);
 

@@ -864,12 +864,11 @@ bool Optimizer::ExecuteWindowOptimize() {
     return lastCost.cost < firstCost.cost;
 }
 
-void Optimizer::PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
-                                             vector<Landmark*>& lk1s,
+void Optimizer::PreSelectLandmarkForTracking(vector<Landmark*>& lk1s,
                                              vector<Eigen::Vector2d>& obvs) {
     lk1s.clear();
     obvs.clear();
-    lk1s.reserve(optFlw.trackLandmark_.size());
+    lk1s.reserve(globalOptFlw.trackLandmark_.size());
     obvs.reserve(lk1s.size());
     constexpr int kDebugNum = 20000;
 
@@ -883,7 +882,7 @@ void Optimizer::PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
                 const cv::Point2f& p = prevPts[i];
                 obvs.emplace_back(p.x, p.y);
 #if defined(WRITE_MATCH_PAIR_IMAGE)
-                //DrawProjectCase(*lk, obvs.back(), optFlw.prevImg_, Twc2);
+                //DrawProjectCase(*lk, obvs.back(), globalOptFlw.prevImg_, Twc2);
 #endif
             }
             if (lk1s.size() > kDebugNum) {
@@ -892,39 +891,49 @@ void Optimizer::PreSelectLandmarkForTracking(OpticalFlowStruct& optFlw,
         }
     };
 
-    SelectLandmark(optFlw.trackLandmark_, optFlw.prevPts_);
+    {
+        //lock_guard<mutex> lock(globalOptFlwMutex); // 调用处加锁
+        SelectLandmark(globalOptFlw.trackLandmark_, globalOptFlw.prevPts_);
 
-    cout << fmt::format(
-        "curF pose opt preselect landmark num: {}, total optflow track feature "
-        "num: {}\n",
-        lk1s.size(), optFlw.trackLandmark_.size());
+        cout << fmt::format(
+            "curF pose opt preselect landmark num: {}, total optflow track "
+            "feature "
+            "num: {}\n",
+            lk1s.size(), globalOptFlw.trackLandmark_.size());
+    }
 }
 
-bool Optimizer::OptimizeCurFrame(OpticalFlowStruct& optFlw, Pose& Twc2,
-                                 const int curFid, int& totalPointNum,
-                                 int& usefulPointNum, ResidualInfo& info) {
+bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
+                                 int& totalPointNum, int& usefulPointNum,
+                                 ResidualInfo& info) {
 
     // 构建优化问题所需观测
     vector<Landmark*> preLks;
     vector<Eigen::Vector2d> preObvs;
-    PreSelectLandmarkForTracking(optFlw, preLks, preObvs);
-    totalPointNum = preLks.size();
-
-    if (preLks.empty()) {
-        cout << "useful landmark num for opt is: " << preLks.size()
-             << " Error! may be no initialized???\n";
-        //exit(-1);
-        return false;
-    }
-
-#if defined(WRITE_MATCH_PAIR_IMAGE)
-    //WriteDebugTriangulateCase2Video(curFid);
-#endif
     vector<Eigen::Vector3d> stablePws;
     vector<Eigen::Vector2d> stableObvs;
-    ResidualInfo lastCost =
-        SetOptimizeLandmarkForTracking(preLks, preObvs, Twc2, optFlw.prevImg_,
-                                       usefulPointNum, stablePws, stableObvs);
+    ResidualInfo lastCost;
+    {
+        lock_guard<mutex> lock(globalOptFlwMutex);
+        PreSelectLandmarkForTracking(preLks, preObvs);
+        totalPointNum = preLks.size();
+
+        if (preLks.empty()) {
+            cout << "useful landmark num for opt is: " << preLks.size()
+                 << " Error! may be no initialized???\n";
+            //exit(-1);
+            return false;
+        }
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+        //WriteDebugTriangulateCase2Video(curFid);
+#endif
+        // 此处globalOptFlw只访问图像的size，不修改其内容，不需要加锁
+        // 注意：前端只能访问globalOptFlw，不能修改它
+        lastCost = SetOptimizeLandmarkForTracking(
+            preLks, preObvs, Twc2, globalOptFlw.prevImg_, usefulPointNum,
+            stablePws, stableObvs);
+    }
 
     if (stablePws.size() < 100) {
         cout << "use " << stablePws.size() << " landmarks to optimize!\n";
@@ -1066,7 +1075,7 @@ void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
 }
 
 void Optimizer::TriangulateNewLandmark(KeyFrame* kf) {
-    // 直接在新KF中提取关键点，并放入optFlw结构中，同时保留上一KF的跟踪结果仍进行跟踪
+    // 直接在新KF中提取关键点，并放入optical flow结构中，同时保留上一KF的跟踪结果仍进行跟踪
     KeyFrame* lastKf = window_.back();
     const int totalTrackLandmarkNum = kf->InitializeLandmark(lastKf);
     cout << fmt::format("kf id: {}, optical flow total feature num: {}\n",
@@ -1075,51 +1084,53 @@ void Optimizer::TriangulateNewLandmark(KeyFrame* kf) {
     int prevTriSucceedNum = 0;
     int failTriNum = 0;
 
-    OpticalFlowStruct& optFlw = KeyFrame::optFlw;
     unordered_map<KeyFrame*, Pose> kf2T12;
-    for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-        Landmark* lk = optFlw.trackLandmark_[i];
-        if (lk == nullptr || lk->initialized_) {
-            continue;
-        }
+    {
+        lock_guard<mutex> lock(globalOptFlwMutex);
+        for (size_t i = 0; i < globalOptFlw.trackLandmark_.size(); ++i) {
+            Landmark* lk = globalOptFlw.trackLandmark_[i];
+            if (lk == nullptr || lk->initialized_) {
+                continue;
+            }
 
-        // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
-        const cv::Point2f& p = optFlw.prevPts_[i];  // curFrameObv
-        const Eigen::Vector2d curObv(p.x, p.y);
+            // 仍被当前帧观测到，可以进行深度滤波更新，或者进行多视角优化
+            const cv::Point2f& p = globalOptFlw.prevPts_[i];  // curFrameObv
+            const Eigen::Vector2d curObv(p.x, p.y);
 
-        // 三角化
-        double idepth1 = 0, idepth2 = 0;
-        if (!kf2T12.count(lk->host_)) {
-            kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
-        }
-        const Pose& T12 = kf2T12.at(lk->host_);
-        if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(), curObv,
-                                                cam_->Kinv_[0], T12, idepth1,
-                                                idepth2)) {
-            ++lk->failInitializeNum_;
-            ++failTriNum;
-            continue;
-        }
-        lk->SetTriangulateResult(idepth1);
-        if (i < optFlw.historyLandmarkNum_) {
-            ++historyTriSucceedNum;
-        } else {
-            ++prevTriSucceedNum;
-        }
+            // 三角化
+            double idepth1 = 0, idepth2 = 0;
+            if (!kf2T12.count(lk->host_)) {
+                kf2T12[lk->host_] = lk->host_->Tcw_ * kf->Twc_;
+            }
+            const Pose& T12 = kf2T12.at(lk->host_);
+            if (!GetHostAndCurFrameObservationDepth(lk->GetHostFrameObv(),
+                                                    curObv, cam_->Kinv_[0], T12,
+                                                    idepth1, idepth2)) {
+                ++lk->failInitializeNum_;
+                ++failTriNum;
+                continue;
+            }
+            lk->SetTriangulateResult(idepth1);
+            if (i < globalOptFlw.historyLandmarkNum_) {
+                ++historyTriSucceedNum;
+            } else {
+                ++prevTriSucceedNum;
+            }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
 //DrawTriangulateCase(idepth1, *lk, curObv.cast<int>(),
 //                    kf->debugGrayImg_, T12);
 #endif
-    }
+        }
 
-    int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
-    cout << fmt::format(
-        "Triangulate by KF_{} report: prevTriSucceedNum: {}, "
-        "historyTriSucceedNum: {}, remove long time "
-        "fail initialize feature num: {}, failTriNum: {}.\n",
-        kf->id_, prevTriSucceedNum, historyTriSucceedNum, removeFeatNum,
-        failTriNum);
+        int removeFeatNum = window_.back()->RemoveNoInitializeLongFeature();
+        cout << fmt::format(
+            "Triangulate by KF_{} report: prevTriSucceedNum: {}, "
+            "historyTriSucceedNum: {}, remove long time "
+            "fail initialize feature num: {}, failTriNum: {}.\n",
+            kf->id_, prevTriSucceedNum, historyTriSucceedNum, removeFeatNum,
+            failTriNum);
+    }
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     WriteDebugTriangulateCase2Video(kf->id_);
@@ -1270,8 +1281,12 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
             ++it2;
         }
     };
-    OpticalFlowStruct& optFlw = KeyFrame::optFlw;
-    RemoveDeleteLandmarkFromOpticalFlow(optFlw.trackLandmark_, optFlw.prevPts_);
+
+    {
+        lock_guard<mutex> lock(globalOptFlwMutex);
+        RemoveDeleteLandmarkFromOpticalFlow(globalOptFlw.trackLandmark_,
+                                            globalOptFlw.prevPts_);
+    }
 
     // 删除老帧看看是否会有影响
     // delete oldest;
@@ -2190,7 +2205,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
     }
 
     int historyTrackInitLandmarkNum = 0;
-    for (const auto& lk : KeyFrame::optFlw.trackLandmark_) {
+    for (const auto& lk : globalOptFlw.trackLandmark_) {
 
         historyTrackInitLandmarkNum += static_cast<int>(
             lk->initialized_ &&
@@ -2200,11 +2215,11 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
                 "Select marg kf historyTrackInitLandmarkNum: {}, "
                 "historyTrackRatio: {:.2f}",
                 historyTrackInitLandmarkNum,
-                KeyFrame::optFlw.GetHistoryTrackFeatureRatio())
+                globalOptFlw.GetHistoryTrackFeatureRatio())
          << endl;
     // 历史地图点足够多，并且历史跟踪特征点足够多时，才把最新帧用作三角化
-    if (historyTrackInitLandmarkNum > 150 &&
-        KeyFrame::optFlw.GetHistoryTrackFeatureRatio() > 0.7) {
+    if (historyTrackInitLandmarkNum > 200 &&
+        globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5) {
         // 直接移除最新帧，但会导致BA优化无效
         return window_.size();
     }
@@ -2235,13 +2250,13 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
         }
 
         cout << fmt::format(
-            "optFlw.prevPts_.size(): {}, optFlw.historyLandmarkNum_: {}\n",
-            KeyFrame::optFlw.prevPts_.size(),
-            KeyFrame::optFlw.historyLandmarkNum_);
+            "globalOptFlw.prevPts_.size(): {}, "
+            "globalOptFlw.historyLandmarkNum_: {}\n",
+            globalOptFlw.prevPts_.size(), globalOptFlw.historyLandmarkNum_);
 
         // 关键帧被当前KF观测到的特征点数量统计
-        for (size_t i = 0; i < KeyFrame::optFlw.historyLandmarkNum_; ++i) {
-            Landmark* lk = KeyFrame::optFlw.trackLandmark_[i];
+        for (size_t i = 0; i < globalOptFlw.historyLandmarkNum_; ++i) {
+            Landmark* lk = globalOptFlw.trackLandmark_[i];
             if (!kf2Index.count(lk->host_)) {
                 continue;
             }
@@ -2308,8 +2323,8 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
     int usefulPointNum = 0;
     ResidualInfo info;
     onlyPoseUpdate_ = true;
-    const bool optSuccess = OptimizeCurFrame(
-        KeyFrame::optFlw, Twc2, kf2->id_, totalPointNum, usefulPointNum, info);
+    const bool optSuccess =
+        OptimizeCurFrame(Twc2, kf2->id_, totalPointNum, usefulPointNum, info);
     onlyPoseUpdate_ = false;
     const double usefulRatio = double(usefulPointNum) / totalPointNum;
     cout << fmt::format(
@@ -2499,13 +2514,16 @@ void Optimizer::CalculateLastKFmeanDepth() {
         lastKFmeanDepth_ = 0.0;
         return;
     }
-    KeyFrame::optFlw.RemoveUselessLandmark();
     const KeyFrame* last = window_.back();
     double sumDepth = 0.;
     int num = 0;
+
+    lock_guard<mutex> lock(globalOptFlwMutex);
+    globalOptFlw.RemoveUselessLandmark();
+
     // 只有历史跟踪点才可能三角化成功
-    for (size_t i = 0; i < KeyFrame::optFlw.historyLandmarkNum_; ++i) {
-        Landmark* lk = KeyFrame::optFlw.trackLandmark_[i];
+    for (size_t i = 0; i < globalOptFlw.historyLandmarkNum_; ++i) {
+        Landmark* lk = globalOptFlw.trackLandmark_[i];
         if (!lk->CanBeUseForOptimization() ||
             !lk->target_.count(const_cast<KeyFrame*>(last))) {
             continue;
@@ -2555,11 +2573,11 @@ void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
             }
         };
 
-    AssignLandmark(KeyFrame::optFlw.trackLandmark_, KeyFrame::optFlw.prevPts_);
+    AssignLandmark(globalOptFlw.trackLandmark_, globalOptFlw.prevPts_);
 
     const int wDiff = window_[0]->debugGrayImg_.cols;
     const cv::Point2f pointDiff(wDiff, 0);
-    const cv::Mat& debugImg2 = KeyFrame::optFlw.prevImg_;
+    const cv::Mat& debugImg2 = globalOptFlw.prevImg_;
     vector<string> colorKey;
     for (const auto& match : kColor) {
         colorKey.emplace_back(match.first);

@@ -345,7 +345,7 @@ void ResetStatus(Optimizer* optimizer, bool* isInitialized,
     optimizer->window_.clear();
     KeyFrame::Tc0w = Pose();
     KeyFrame::kfOn3Dshow.clear();
-    KeyFrame::optFlw.Reset();
+    globalOptFlw.Reset();
     *trackLostCount = 0;
     interaction->trajectory.clear();
 }

@@ -105,7 +105,7 @@ class KeyFrame {
     int RemoveNoInitializeLongFeature();
     bool ExtractFastPointEachGrid(const int diffRow, const int diffCol,
                                   const int fastTh1, cv::Point2f& fast);
-    void ExtractFastPoints(OpticalFlowStruct& lastKFoptFlw);
+    void ExtractFastPoints();
     std::vector<cv::Point2f> ExtractFastPointEachGridImage();
     void ExtractSuperpoint();
 
@@ -114,8 +114,6 @@ class KeyFrame {
     Eigen::Vector2d GetObv(const int kpRow) const {
         return {kpts_(kpRow, 0), kpts_(kpRow, 1)};
     }
-
-    static OpticalFlowStruct optFlw;
 
 #if defined(WRITE_MATCH_PAIR_IMAGE)
     void DrawBestMatchEachFrame(const Eigen::Vector2i& kp1,

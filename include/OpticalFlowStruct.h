@@ -38,5 +38,12 @@ struct OpticalFlowStruct {
              const std::vector<Landmark*>& landmark,
              const int totalFeatureCreated, const int historyLandmarkNum);
     void RemoveUselessLandmark();
+
+    
 };
+
+// 全局变量声明
+extern std::mutex globalOptFlwMutex;
+extern OpticalFlowStruct globalOptFlw;
+
 #endif

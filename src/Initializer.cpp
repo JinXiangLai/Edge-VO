@@ -23,27 +23,27 @@ bool Initializer::InitializeSecondKeyFramePose(const int findMatchNum,
         return false;
     }
 
-    const OpticalFlowStruct& optFlw = KeyFrame::optFlw;
-
-    if (optFlw.meanParallax_ < kMinParallax) {
+    if (globalOptFlw.meanParallax_ < kMinParallax) {
         cout << fmt::format("parallax: {:.1f} too small\n",
-                            optFlw.meanParallax_);
+                            globalOptFlw.meanParallax_);
         return false;
     } else {
         cout << fmt::format("parallax: {:.1f} can used for initializing\n",
-                            optFlw.meanParallax_);
+                            globalOptFlw.meanParallax_);
     }
 
     vector<Eigen::Vector4d> uv2obv;
-    uv2obv.reserve(optFlw.trackLandmark_.size());
-    for (size_t i = 0; i < optFlw.trackLandmark_.size(); ++i) {
-        const Eigen::Vector2d& uv = optFlw.trackLandmark_[i]->GetHostFrameObv();
-        const cv::Point2f obv = optFlw.prevPts_[i];
+    uv2obv.reserve(globalOptFlw.trackLandmark_.size());
+    for (size_t i = 0; i < globalOptFlw.trackLandmark_.size(); ++i) {
+        const Eigen::Vector2d& uv =
+            globalOptFlw.trackLandmark_[i]->GetHostFrameObv();
+        const cv::Point2f obv = globalOptFlw.prevPts_[i];
         uv2obv.emplace_back(uv.x(), uv.y(), obv.x, obv.y);
     }
 
     const double trans =
-        (optFlw.trackLandmark_[0]->host_->priorTwc_.Inverse() * curF.priorTwc_)
+        (globalOptFlw.trackLandmark_[0]->host_->priorTwc_.Inverse() *
+         curF.priorTwc_)
             .t_wb_.head(2)
             .norm();
     Pose result;
@@ -244,7 +244,7 @@ bool Initializer::FindEssentialMatrixRansac(
         if (rmse < minRmse) {
             minRmse = rmse;
             matrixE = finalE;
-            GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+            GenerateDebugImage(globalOptFlw.prevImg_);
             for (size_t i = 0; i < kSampleNum; ++i) {
                 const int randomIndex = selectIndex[i];
                 const Eigen::Vector2d& p1 = uv2obv[randomIndex].head(2);
@@ -263,7 +263,6 @@ bool Initializer::FindEssentialMatrixRansac(
 bool Initializer::ConstructAndDecomposeEssentialMatrix(
     vector<Eigen::Vector4d>& uv2obv, Pose& result) {
 
-    const OpticalFlowStruct optFlw = KeyFrame::optFlw;
     Eigen::Matrix3d matrixE;
     if (!FindEssentialMatrixRansac(uv2obv, matrixE)) {
         return false;
@@ -383,7 +382,7 @@ bool Initializer::ConstructAndDecomposeEssentialMatrixOpenCV(
     const size_t selectStep = (uv2obv.size() - 1) / kSelectNum;
     vector<cv::Point2f> ps1, ps2;
     int useNum = 0;
-    GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+    GenerateDebugImage(globalOptFlw.prevImg_);
     for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
         const Eigen::Vector2d& p1 = uv2obv[j].head(2);
         const Eigen::Vector2d p2 = uv2obv[j].tail(2);
@@ -593,7 +592,7 @@ bool Initializer::ConstructAndDecomposeEssentialMatrixNormPoint(
     ps1.reserve(kSelectNum);
     ps2.reserve(kSelectNum);
     int useNum = 0;
-    GenerateDebugImage(KeyFrame::optFlw.prevImg_);
+    GenerateDebugImage(globalOptFlw.prevImg_);
     for (size_t j = 0; useNum < kSelectNum; j += selectStep) {
         const Eigen::Vector2d& p1 = uv2obv[j].head(2);
         const Eigen::Vector2d p2 = uv2obv[j].tail(2);
