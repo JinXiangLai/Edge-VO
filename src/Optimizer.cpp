@@ -2133,24 +2133,24 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
                 margKFid, sampleNum)
          << endl;
 
-    if (margKFid >= 0 && margKFid < config->maxKFnumInWindow) {
-        // 将待删除的最老帧移到滑窗开头，有可能移除最新帧
-        MoveMargKF2FirstPosInWindow(margKFid);
-        margKFstatus_ = false;
-        if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
-            // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
-            // 其信息已经通过深度点的传播转移到后面的KF中
-            if (margKFid < 2 && config->useMarginalization) {
-                margKFstatus_ = MarginalizeOldestKeyFrame();
-                cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
-            }
+    //if (margKFid >= 0 && margKFid < config->maxKFnumInWindow) {
+    //    // 将待删除的最老帧移到滑窗开头，有可能移除最新帧
+    //    MoveMargKF2FirstPosInWindow(margKFid);
+    //    margKFstatus_ = false;
+    //    if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
+    //        // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
+    //        // 其信息已经通过深度点的传播转移到后面的KF中
+    //        if (margKFid < 2 && config->useMarginalization) {
+    //            margKFstatus_ = MarginalizeOldestKeyFrame();
+    //            cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
+    //        }
 
-            // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
-            // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
-            // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-            RemoveOldestKeyFrame(margKFid);
-        }
-    }
+    //        // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
+    //        // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
+    //        // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
+    //        RemoveOldestKeyFrame(margKFid);
+    //    }
+    //}
 
     SetInitLambda(10.0);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
@@ -2159,7 +2159,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
     cout << fmt::format("win size: {}, win BA spend {:.3f}ms!\n",
                         window_.size(), spendTime);
-    if (margKFid == config->maxKFnumInWindow) {
+    if (margKFid == config->maxKFnumInWindow || 1) {
         // BA之后移除最新帧
         MoveMargKF2FirstPosInWindow(margKFid);
         TransformLandmarkOwnerFromOldestKF(margKFid);

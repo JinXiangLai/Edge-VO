@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_xyz
+dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_desk
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
