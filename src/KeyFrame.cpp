@@ -2,9 +2,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <flann/flann.hpp>
 #include <opencv2/highgui.hpp>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Config.h"
@@ -27,18 +29,17 @@ std::unordered_set<KeyFrame*> KeyFrame::kfOn3Dshow;
 std::shared_ptr<Camera> KeyFrame::cam_;
 cv::Size KeyFrame::eachGridSize(0, 0);
 cv::Ptr<cv::FastFeatureDetector> KeyFrame::detectorTh1, KeyFrame::detectorTh2;
-std::ofstream KeyFrame::poseFile;
-std::ofstream KeyFrame::kfPoseFile;
-std::string KeyFrame::poseFilePath, KeyFrame::kfPoseFilePath;
-std::vector<std::pair<double, std::string>> KeyFrame::vecTime2Pose;
-std::shared_ptr<SuperPoint> KeyFrame::superpointPtr;
-std::shared_ptr<LightGlue> KeyFrame::lightgluePtr;
+ofstream KeyFrame::poseFile;
+ofstream KeyFrame::kfPoseFile;
+string KeyFrame::poseFilePath, KeyFrame::kfPoseFilePath;
+vector<pair<double, string>> KeyFrame::vecTime2Pose;
+shared_ptr<SuperPoint> KeyFrame::superpointPtr;
+shared_ptr<LightGlue> KeyFrame::lightgluePtr;
 
 class Landmark;
 
-KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc,
-                   std::shared_ptr<Camera> cam, const int id,
-                   const double timestamp, const int level)
+KeyFrame::KeyFrame(const cv::Mat& img, const Pose& Twc, shared_ptr<Camera> cam,
+                   const int id, const double timestamp, const int level)
     : id_(id),
       grayImg_(img),
       Twc_{Twc},
@@ -462,16 +463,23 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     Eigen::VectorXf mscores;
     vector<cv::DMatch> lightglueMatches;
     lightgluePtr->SetThreshold(0.05);
+    int matchPairNum = 0;
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-    const int matchPairNum = lightgluePtr->MatchKeypoints(
-        kpts_, lastKf->kpts_, desc_, lastKf->desc_, mscores, lightglueMatches);
+    if (globalOptFlw.historyLandmarkNum_ == 0) {
+        matchPairNum = lightgluePtr->MatchKeypoints(kpts_, lastKf->kpts_, desc_,
+                                                    lastKf->desc_, mscores,
+                                                    lightglueMatches);
+    } else {
+        matchPairNum = SupperPointMatch(lastKf, lightglueMatches);
+    }
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
     cout << fmt::format(
         "kf id: {}, last_kf id: {}, matchPairNum: {}, match ratio: {:.1f}, "
-        "spend: {:.1f}ms.\n",
+        "spend: {:.1f}ms, lightglue used: {}\n",
         id_, lastKf->id_, matchPairNum, double(matchPairNum) / kpts_.rows(),
-        ChronoMillisecTimeDuration(t0, t1));
+        ChronoMillisecTimeDuration(t0, t1),
+        globalOptFlw.historyLandmarkNum_ == 0);
 
     // 可视化匹配结果
     if (0) {
@@ -591,7 +599,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
 #endif
 }
 
-void KeyFrame::AddReportElement(const std::string& key) {
+void KeyFrame::AddReportElement(const string& key) {
     if (matchResultStatiscs_.count(key)) {
         matchResultStatiscs_[key]++;
     } else {
@@ -802,8 +810,7 @@ void KeyFrame::ProcessPoseFile() {
         poseFile.close();
     }
     sort(vecTime2Pose.begin(), vecTime2Pose.end(),
-         [](const pair<double, std::string>& kf1,
-            const pair<double, std::string>& kf2) {
+         [](const pair<double, string>& kf1, const pair<double, string>& kf2) {
              return kf1.first < kf2.first;
          });
     for (const auto& time2PoseStr : vecTime2Pose) {
@@ -1116,4 +1123,113 @@ void KeyFrame::SetTwc(const Pose& Twc, const bool printDiff) {
 void KeyFrame::ReleaseMat() {
     grayImg_.release();
     debugGrayImg_.release();
+}
+
+// superpoint匹配阈值
+#define USE_L2_NORM_DIST 0
+constexpr double kWrongMatchL2 = 0.7;
+constexpr double kMNratio = 0.8;
+
+int KeyFrame::SupperPointMatch(KeyFrame* kf,
+                               vector<cv::DMatch>& superpointMatches) {
+    superpointMatches.reserve(kpts_.rows());
+
+    /*
+    cv::Mat desc1(desc_.rows(), 256, CV_32F, desc_.data());
+    cv::Mat desc2(kf->desc_.rows(), 256, CV_32F, kf->desc_.data());
+
+    // 建立KD树索引
+    cv::Ptr<cv::flann::IndexParams> indexParams =
+        cv::makePtr<cv::flann::KDTreeIndexParams>(4);  // 4棵树
+    cv::Ptr<cv::flann::SearchParams> searchParams =
+        cv::makePtr<cv::flann::SearchParams>(256);  // 搜索参数
+    cv::FlannBasedMatcher matcher(indexParams, searchParams);
+    vector<vector<cv::DMatch>> knn_matches;
+    matcher.knnMatch(desc1, desc2, knn_matches, 2);
+
+    // Lowe's ratio test
+    for (const auto& knn_match : knn_matches) {
+        if (knn_match[0].distance < kMNratio * knn_match[1].distance) {
+            superpointMatches.emplace_back(knn_match[0]);
+        }
+    }
+*/
+
+    /*
+    for (int i = 0; i < kpts_.rows(); ++i) {
+        const auto desc1 = desc_.row(i);
+        float bestScore = 2.0, secondBestScore = 2.0;
+
+        int bestMatchIndex2 = -1;
+        for (int j = 0; j < kf->kpts_.rows(); ++j) {
+            const auto& desc2 = kf->desc_.row(j);
+            const float score = (desc1 - desc2).norm();
+            if (score < bestScore) {
+                secondBestScore = bestScore;
+                bestScore = score;
+                bestMatchIndex2 = j;
+            } else if (score < secondBestScore) {
+                secondBestScore = score;
+            }
+
+        }
+
+        if (bestScore > kWrongMatchL2 ||
+            secondBestScore * kMNratio < bestScore) {
+            continue;
+        }
+        superpointMatches.emplace_back(i, bestMatchIndex2, bestScore);
+    }
+*/
+
+    auto MatchThread =
+        [](const int startId, const int endId,
+           const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
+               desc1s,
+           const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
+               desc2s,
+           vector<cv::DMatch>& matchResult) {
+            matchResult.reserve(endId - startId);
+            for (int i = startId; i < endId; ++i) {
+                float bestScore = 1e6, secondBestScore = 1e6;
+                int bestMatchIndex2 = -1;
+
+                for (int j = 0; j < desc2s.rows(); ++j) {
+                    const float score = (desc1s.row(i) - desc2s.row(j)).norm();
+                    if (score < bestScore) {
+                        secondBestScore = bestScore;
+                        bestScore = score;
+                        bestMatchIndex2 = j;
+                    } else if (score < secondBestScore) {
+                        secondBestScore = score;
+                    }
+                }
+
+                if (bestScore > kWrongMatchL2 ||
+                    secondBestScore * kMNratio < bestScore) {
+                    continue;
+                }
+                matchResult.emplace_back(i, bestMatchIndex2, bestScore);
+            }
+        };
+
+    constexpr int kThreadNum = 4;
+    const int part = kpts_.rows() / kThreadNum;
+    thread th[kThreadNum];
+    vector<vector<cv::DMatch>> matches(kThreadNum);
+    for (int i = 0; i < kThreadNum; ++i) {
+        const int startId = i * part;
+        const int endId = startId + part;
+        th[i] = thread(MatchThread, startId, endId, ref(desc_), ref(kf->desc_),
+                       ref(matches[i]));
+    }
+    for (int i = 0; i < kThreadNum; ++i) {
+        th[i].join();
+    }
+    for (int i = 0; i < kThreadNum; ++i) {
+        superpointMatches.insert(superpointMatches.end(), matches[i].begin(),
+                                 matches[i].end());
+    }
+
+    return superpointMatches.size();
 }
