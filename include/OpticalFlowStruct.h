@@ -11,7 +11,7 @@ class Landmark;
 struct OpticalFlowStruct {
     cv::Mat prevImg_;
     std::vector<cv::Point2f> prevPts_;
-    std::vector<Landmark*> trackLandmark_;
+    std::vector<std::shared_ptr<Landmark>> trackLandmark_;
     size_t totalFeatureCreated_ = 0;
     size_t historyLandmarkNum_ = 0;  // 记录历史跟踪点的数量以区分上一KF的
     double meanParallax_ = 0.;
@@ -35,7 +35,7 @@ struct OpticalFlowStruct {
         historyLandmarkNum_ = 0;
     }
     void Set(const cv::Mat& img, const std::vector<cv::Point2f>& prevPts,
-             const std::vector<Landmark*>& landmark,
+             const std::vector<std::shared_ptr<Landmark>>& landmark,
              const int totalFeatureCreated, const int historyLandmarkNum);
     void RemoveUselessLandmark();
 

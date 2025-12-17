@@ -8,7 +8,7 @@ OpticalFlowStruct globalOptFlw;
 
 void OpticalFlowStruct::RemoveUselessLandmark() {
     std::vector<cv::Point2f> tempPts;
-    std::vector<Landmark*> tempLandmark;
+    std::vector<shared_ptr<Landmark>> tempLandmark;
     tempPts.reserve(prevPts_.size());
     tempLandmark.reserve(trackLandmark_.size());
 

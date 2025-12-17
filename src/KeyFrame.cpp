@@ -109,41 +109,29 @@ void KeyFrame::operator=(const KeyFrame& f) {
 
 KeyFrame::~KeyFrame() {
     // 由于Landmar与KeyFrame相互引用，所以之前将析构函数放在头文件导致landmark_内存无法释放？？
-    int deleteLKnum = 0;
-    for (Landmark*& lk : landmark_) {
-        if (lk != nullptr && lk->CanBeDelete() && lk->host_ == this) {
-            // 同步将其余观测的指针置空，避免悬空，
-            // 因为滑窗内其余观测到该Landmark*的Keyframe*中的landmar_数组，也会存储该Landmark*
-            for (auto& p : lk->target_) {
-                p.first->landmark_[p.second] = nullptr;
-            }
-            delete lk;
-            ++deleteLKnum;
-            lk = nullptr;
-        }
-    }
+    // int deleteLKnum = 0;
+    // for (Landmark*& lk : landmark_) {
+    //     if (lk != nullptr && lk->CanBeDelete() && lk->host_ == this) {
+    //         // 同步将其余观测的指针置空，避免悬空，
+    //         // 因为滑窗内其余观测到该Landmark*的Keyframe*中的landmar_数组，也会存储该Landmark*
+    //         for (auto& p : lk->target_) {
+    //             p.first->landmark_[p.second] = nullptr;
+    //         }
+    //         delete lk;
+    //         ++deleteLKnum;
+    //         lk = nullptr;
+    //     }
+    // }
     // ReleaseMat(); // 不需要手动释放
     if (invDepthUncertaintyFile_.is_open()) {
         invDepthUncertaintyFile_.close();
     }
 
-    cout << fmt::format(
-        "{} Release KF id: {}, landmark size: {}, delete size: {}, transform "
-        "size: {}\n",
-        reinterpret_cast<size_t>(this), id_, landmark_.size(), deleteLKnum,
-        (landmark_.size() - deleteLKnum));
-}
-
-void KeyFrame::SetOpticalFlowStructCurFrame() {
-    lock_guard<mutex> lock(globalOptFlwMutex);
-    globalOptFlw.prevImg_ = grayImg_;
-    for (const auto& p : landmark_) {
-        // 添加landmark对跟踪成功点的相互观测
-        globalOptFlw.prevPts_.emplace_back(p->GetHostFrameObvCV());
-        globalOptFlw.trackLandmark_.push_back(p);
-    }
-    cout << fmt::format("kf id: {}, SetOpticalFlowStructCurFrame num: {}\n",
-                        id_, landmark_.size());
+    // cout << fmt::format(
+    //     "{} Release KF id: {}, landmark size: {}, delete size: {}, transform "
+    //     "size: {}\n",
+    //     reinterpret_cast<size_t>(this), id_, landmark_.size(), deleteLKnum,
+    //     (landmark_.size() - deleteLKnum));
 }
 
 void KeyFrame::GenerateUndistordMap() {
@@ -235,8 +223,8 @@ void KeyFrame::InitFastDetector() {
 }
 
 int KeyFrame::RemoveNoInitializeLongFeature() {
-    //lock_guard<mutex> lock(globalOptFlwMutex); // 调用处已经加锁
-    vector<Landmark*>::iterator it1 = globalOptFlw.trackLandmark_.begin();
+    vector<shared_ptr<Landmark>>::iterator it1 =
+        globalOptFlw.trackLandmark_.begin();
     vector<cv::Point2f>::iterator it2 = globalOptFlw.prevPts_.begin();
     int removeFeatNum = 0;
     constexpr int kMaxNotInitSuccessNum = 10;
@@ -460,7 +448,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         lock_guard<mutex> lock(globalOptFlwMutex);
         // 初始化世界帧
         for (int i = 0; i < kpts_.rows(); ++i) {
-            landmark_[i] = new Landmark(i, this, cam_, kInitInvDepth);
+            landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
             globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
             globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
@@ -474,11 +462,16 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     Eigen::VectorXf mscores;
     vector<cv::DMatch> lightglueMatches;
     lightgluePtr->SetThreshold(0.05);
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     const int matchPairNum = lightgluePtr->MatchKeypoints(
         kpts_, lastKf->kpts_, desc_, lastKf->desc_, mscores, lightglueMatches);
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+
     cout << fmt::format(
-        "kf id: {}, last_kf id: {}, matchPairNum: {}, match ratio: {:.1f}.\n",
-        id_, lastKf->id_, matchPairNum, double(matchPairNum) / kpts_.rows());
+        "kf id: {}, last_kf id: {}, matchPairNum: {}, match ratio: {:.1f}, "
+        "spend: {:.1f}ms.\n",
+        id_, lastKf->id_, matchPairNum, double(matchPairNum) / kpts_.rows(),
+        ChronoMillisecTimeDuration(t0, t1));
 
     // 可视化匹配结果
     if (0) {
@@ -547,7 +540,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         if (trackedKpId[i]) {
             continue;
         }
-        landmark_[i] = new Landmark(i, this, cam_, kInitInvDepth);
+        landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
         glueMatch.trackLandmark_.emplace_back(landmark_[i]);
         glueMatch.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
     }
@@ -582,12 +575,12 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         }
 
         // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
-        for (int i = static_cast<int>(globalOptFlw.prevPts_.size());
-             i < kpts_.rows(); ++i) {
+        for (int i = static_cast<int>(optFlw.prevPts_.size()); i < kpts_.rows();
+             ++i) {
             // 当前帧新提取的关键帧加入结果
-            landmark_[i] = new Landmark(i, this, cam_, kInitInvDepth);
-            globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
-            globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
+            landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+            optFlw.trackLandmark_.emplace_back(landmark_[i]);
+            optFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
 
         globalOptFlw.SetTotalFeatureCreated();
@@ -665,7 +658,7 @@ void KeyFrame::OpticalFlowTrackExecute(const cv::Mat& prevImg,
     const auto debugPts1 = globalOptFlw.prevPts_;
 #endif
 
-    vector<Landmark*> trackLandmark;
+    vector<shared_ptr<Landmark>> trackLandmark;
     size_t historyLandmarkTrackSuccessNum = 0;
     vector<double> parallaxVec;
     parallaxVec.reserve(500);

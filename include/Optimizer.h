@@ -34,8 +34,7 @@ class Optimizer {
         double priorConstraintChi2 = 0.;
     };
 
-    bool OptimizeCurFrame( Pose& Twc2,
-                          const int curFid, int& totalPointNum,
+    bool OptimizeCurFrame(Pose& Twc2, const int curFid, int& totalPointNum,
                           int& usefulPointNum, ResidualInfo& info);
 
     ResidualInfo CalculateResidualCurFrame(
@@ -43,7 +42,7 @@ class Optimizer {
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2);
 
     ResidualInfo SetOptimizeLandmarkForTracking(
-        const std::vector<Landmark*>& lk1s,
+        const std::vector<std::shared_ptr<Landmark>>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2,
         const cv::Mat& img, int& canUseNum,
         std::vector<Eigen::Vector3d>& stablePws,
@@ -127,8 +126,9 @@ class Optimizer {
 
     void AdaptSetInitLambda();
 
-    void AssignTrackedFeature(const std::vector<Landmark*>& lk1s,
-                              const Pose& T12, const int lvl = 0);
+    void AssignTrackedFeature(
+        const std::vector<std::shared_ptr<Landmark>>& lk1s, const Pose& T12,
+        const int lvl = 0);
 
     void RemoveOneKeyframe(const KeyFrame& curF);
 
@@ -173,8 +173,8 @@ class Optimizer {
                      const Eigen::VectorXd& delta);
 
     void PreSelectLandmarkForTracking(
-                                      std::vector<Landmark*>& lk1s,
-                                      std::vector<Eigen::Vector2d>& obvs);
+        std::vector<std::shared_ptr<Landmark>>& lk1s,
+        std::vector<Eigen::Vector2d>& obvs);
 
     int MarkBigResidualLandmarkDelete();
 
@@ -223,7 +223,7 @@ class Optimizer {
     // edge slam使用
     // 关键帧滑窗优化使用
     std::vector<KeyFrame*> window_;
-    std::vector<Landmark*>
+    std::vector<std::shared_ptr<Landmark>>
         optLandmark_;  // 投影到最新帧能被观测到的才加入，以减小问题规模
 #if USE_SPARSE_H_MATRIX
     Eigen::SparseMatrix<double> H_;

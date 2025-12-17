@@ -227,7 +227,7 @@ bool Landmark::ManySupport() const {
             if (host_->pointMapId_.count(id)) {
                 const int id = host_->pointMapId_.at(id);
 #endif
-                Landmark* lk = host_->landmark_[id];
+                shared_ptr<Landmark> lk = host_->landmark_[id];
                 if (lk == nullptr || lk->IsOutOfRange()) {
                     continue;
                 }

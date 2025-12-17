@@ -1298,14 +1298,14 @@ char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
     return cv::waitKey(0);
 }
 
-void ShowPointCloud(const vector<Landmark*>& ps) {
+void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps) {
     viz::Viz3d window("One Frame Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points;
     vector<Vec3b> colors;
 
-    for (Landmark* _p : ps) {
+    for (auto _p : ps) {
         const Landmark& p = *_p;
         if (_p == nullptr || !p.Converge()) {
             continue;
@@ -1360,15 +1360,17 @@ void ShowPointCloud(const vector<Landmark*>& ps) {
     window.spin();
 }
 
-void ShowPointCloud(const vector<Landmark*>& ps1, const vector<Landmark*>& ps2,
+void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps1,
+                    const vector<std::shared_ptr<Landmark>>& ps2,
                     const std::string& windowName, const double zOffset) {
     viz::Viz3d window(windowName);
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points1, points2;
 
-    auto Generate = [](const vector<Landmark*>& ps, vector<Point3d>& points) {
-        for (const Landmark* p : ps) {
+    auto Generate = [](const vector<std::shared_ptr<Landmark>>& ps,
+                       vector<Point3d>& points) {
+        for (const auto &p : ps) {
             if (p == nullptr || !p->Converge()) {
                 continue;
             }
@@ -1408,7 +1410,7 @@ void ShowPointCloud(const vector<Landmark*>& ps1, const vector<Landmark*>& ps2,
     window.spin();
 }
 
-void ShowPointCloud(const unordered_set<Landmark*>& ps) {
+void ShowPointCloud(const unordered_set<std::shared_ptr<Landmark>>& ps) {
     if (ps.empty()) {
         return;
     }
@@ -1417,7 +1419,7 @@ void ShowPointCloud(const unordered_set<Landmark*>& ps) {
     window.setViewerPose(viewPose);
     vector<Point3d> points;
 
-    for (Landmark* p : ps) {
+    for (auto p : ps) {
         if (p == nullptr || !p->Converge()) {
             continue;
         }
@@ -1473,13 +1475,13 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,
-                          &curKFimg](unordered_set<Landmark*>& ps,
+                          &curKFimg](unordered_set<std::shared_ptr<Landmark>>& ps,
                                      const cv::Vec3b& color,
                                      vector<Point3d>& points,
                                      vector<cv::Vec3b>& colors) {
         points.reserve(10000);
 
-        for (Landmark* p : ps) {
+        for (auto p : ps) {
             if (p == nullptr || !p->initialized_ || p->CanBeDelete()) {
                 continue;
             }
@@ -1526,8 +1528,8 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     vector<Point3d> localPoints;
     vector<cv::Vec3b> localColors;
-    std::unordered_set<Landmark*> sactivePoints;
-    std::unordered_set<Landmark*> slocalPoints;
+    std::unordered_set<std::shared_ptr<Landmark>> sactivePoints;
+    std::unordered_set<std::shared_ptr<Landmark>> slocalPoints;
     {
         lock_guard<std::mutex> lockPointCloud(interaction->mutPoints);
         sactivePoints = interaction->activePoints;

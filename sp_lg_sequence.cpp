@@ -80,8 +80,13 @@ int main(int argc, char** argv) {
     cv::Ptr<cv::cudacodec::VideoWriter> writer;
     cv::cuda::GpuMat gpuFrame;
     if (!videoSavePath.empty()) {
+#if CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR < 6
         writer = cv::cudacodec::createVideoWriter(videoSavePath,
-                                                  matchImgColor.size(), 30.0);
+                                                  matchImgColor.size(), 24.0);
+#else
+        writer = cv::cudacodec::createVideoWriter(videoSavePath,
+                                                  matchImgColor.size());
+#endif
     }
 
     for (int i = 1; i < vstrImages.size(); ++i) {

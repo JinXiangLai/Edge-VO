@@ -259,10 +259,10 @@ double CalculateScore(const Eigen::Matrix<float, kDescriptorPatchSize, 1>& d1,
 
 uint64_t CalculateDescriptor(const cv::Mat& grayImg, const Eigen::Vector2i& px);
 
-void ShowPointCloud(const std::vector<Landmark*>& ps);
+void ShowPointCloud(const std::vector<std::shared_ptr<Landmark>>& ps);
 
-void ShowPointCloud(const std::vector<Landmark*>& ps1,
-                    const std::vector<Landmark*>& ps2,
+void ShowPointCloud(const std::vector<std::shared_ptr<Landmark>>& ps1,
+                    const std::vector<std::shared_ptr<Landmark>>& ps2,
                     const std::string& windowName = "Point cloud",
                     const double zOffset = 0.0);
 
@@ -275,7 +275,7 @@ double GetDepthUncertainty(const Eigen::Vector2d& px2,
 
 bool NeedNewKF(const KeyFrame* kf, const KeyFrame* f);
 
-void ShowPointCloud(const std::unordered_set<Landmark*>& ps);
+void ShowPointCloud(const std::unordered_set<std::shared_ptr<Landmark>>& ps);
 
 bool IsFastPoint(const cv::Mat& gray, const int fastTh1, const cv::Point2i& pt,
                  int& response);
@@ -429,8 +429,8 @@ class InteractionParam {
     cv::viz::Viz3d* window;  // ("Local Map Viewer");
     //cv::Affine3d *viewPose; // 不需要，默认的window会保留现场
     std::mutex mutPoints;
-    std::unordered_set<Landmark*> activePoints;
-    std::unordered_set<Landmark*> localPoints;
+    std::unordered_set<std::shared_ptr<Landmark>> activePoints;
+    std::unordered_set<std::shared_ptr<Landmark>> localPoints;
     std::vector<Eigen::Vector3d> allMapPoints;
     void ShowGlobalMapPoint();
     std::atomic<bool> stopView = false;

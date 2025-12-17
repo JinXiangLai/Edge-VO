@@ -72,8 +72,9 @@ class KeyFrame {
     Pose Tcw_, TcwBack_;
     Pose priorTwc_;
     int level_ = 1;
-    std::vector<Landmark*>
-        landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
+    // std::vector<Landmark*>
+    //     landmark_;  // 成员变量内存在指针，需要手写拷贝构造函数
+    std::vector<std::shared_ptr<Landmark>> landmark_;
 
     bool outOfRange_ = false;
     int convergeEdgeNum_ = 0;
@@ -98,7 +99,6 @@ class KeyFrame {
     bool firstWriteUncertainty_ = true;
 
     void OpticalFlowTrackLandmark(const KeyFrame& f2);
-    void SetOpticalFlowStructCurFrame();
     double TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum);
     void ExtractFeaturetPoints();
     void GenerateUndistordMap();

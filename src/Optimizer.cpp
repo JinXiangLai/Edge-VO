@@ -12,8 +12,6 @@
 #include "Landmark.h"
 #include "Utils.h"
 
-#define USE_DT_RESIDUAL  // 测试优化算法是否有问题
-
 using namespace std;
 using namespace cv;
 
@@ -90,9 +88,10 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualCurFrame(
 }
 
 Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
-    const vector<Landmark*>& lk1s, const vector<Eigen::Vector2d>& obvs,
-    const Pose& Twc2, const cv::Mat& img, int& canUseNum,
-    vector<Eigen::Vector3d>& stablePws, vector<Eigen::Vector2d>& stableObvs) {
+    const vector<shared_ptr<Landmark>>& lk1s,
+    const vector<Eigen::Vector2d>& obvs, const Pose& Twc2, const cv::Mat& img,
+    int& canUseNum, vector<Eigen::Vector3d>& stablePws,
+    vector<Eigen::Vector2d>& stableObvs) {
     stablePws.clear();
     stableObvs.clear();
     stablePws.reserve(lk1s.size());
@@ -141,7 +140,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeLandmarkForTracking(
     }
 
     for (size_t j = 0; j < lk1s.size(); ++j) {
-        Landmark* lk1 = lk1s[j];
+        shared_ptr<Landmark> lk1 = lk1s[j];
         const double& chi2 = errorCopy[j];
         if (chi2 > maxChi2) {
             continue;
@@ -864,7 +863,7 @@ bool Optimizer::ExecuteWindowOptimize() {
     return lastCost.cost < firstCost.cost;
 }
 
-void Optimizer::PreSelectLandmarkForTracking(vector<Landmark*>& lk1s,
+void Optimizer::PreSelectLandmarkForTracking(vector<shared_ptr<Landmark>>& lk1s,
                                              vector<Eigen::Vector2d>& obvs) {
     lk1s.clear();
     obvs.clear();
@@ -872,11 +871,12 @@ void Optimizer::PreSelectLandmarkForTracking(vector<Landmark*>& lk1s,
     obvs.reserve(lk1s.size());
     constexpr int kDebugNum = 20000;
 
-    auto SelectLandmark = [&lk1s, &obvs](const vector<Landmark*>& trackLandmark,
-                                         const vector<cv::Point2f>& prevPts) {
+    auto SelectLandmark = [&lk1s, &obvs](
+                              const vector<shared_ptr<Landmark>>& trackLandmark,
+                              const vector<cv::Point2f>& prevPts) {
         for (size_t i = 0; i < trackLandmark.size(); ++i) {
             // TODO: FEJ指的是关于逆深度的线性化点在首次计算出逆深度值时
-            Landmark* lk = trackLandmark[i];
+            shared_ptr<Landmark> lk = trackLandmark[i];
             if (lk->initialized_ && !lk->CanBeDelete()) {
                 lk1s.emplace_back(lk);
                 const cv::Point2f& p = prevPts[i];
@@ -908,7 +908,7 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
                                  ResidualInfo& info) {
 
     // 构建优化问题所需观测
-    vector<Landmark*> preLks;
+    vector<shared_ptr<Landmark>> preLks;
     vector<Eigen::Vector2d> preObvs;
     vector<Eigen::Vector3d> stablePws;
     vector<Eigen::Vector2d> stableObvs;
@@ -1088,7 +1088,7 @@ void Optimizer::TriangulateNewLandmark(KeyFrame* kf) {
     {
         lock_guard<mutex> lock(globalOptFlwMutex);
         for (size_t i = 0; i < globalOptFlw.trackLandmark_.size(); ++i) {
-            Landmark* lk = globalOptFlw.trackLandmark_[i];
+            auto lk = globalOptFlw.trackLandmark_[i];
             if (lk == nullptr || lk->initialized_) {
                 continue;
             }
@@ -1209,7 +1209,7 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
 
     int transformLandmarkNum = 0;
     int newAddOptimizeLandmarkNum = 0;
-    for (Landmark* lk : oldest->landmark_) {
+    for (auto lk : oldest->landmark_) {
         if (lk == nullptr || lk->host_ != oldest) {
             continue;
         }
@@ -1255,7 +1255,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     // 移除掉边缘化帧对地图点的观测
     for (const KeyFrame* kf : window_) {
 
-        for (Landmark* lk : kf->landmark_) {
+        for (auto lk : kf->landmark_) {
             if (lk == nullptr) {
                 // TODO：需要完美处理SetCanDelete的情况，这里只是跳过了被置为不合法的情况，
                 // 优化Landmark*的管理
@@ -1268,8 +1268,9 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     }
     // 移除光流跟踪中被标记为可以删除的Landmark
     auto RemoveDeleteLandmarkFromOpticalFlow =
-        [](vector<Landmark*>& lks, vector<cv::Point2f>& obvs) -> void {
-        vector<Landmark*>::iterator it1 = lks.begin();
+        [](vector<std::shared_ptr<Landmark>>& lks,
+           vector<cv::Point2f>& obvs) -> void {
+        vector<std::shared_ptr<Landmark>>::iterator it1 = lks.begin();
         vector<cv::Point2f>::iterator it2 = obvs.begin();
         while (it1 != lks.end()) {
             if ((*it1)->CanBeDelete()) {
@@ -1309,7 +1310,7 @@ int Optimizer::SampleUsefulLandmark(const int margKFid) {
     const int minObvNum = window_.size() > 2 ? kMinUsefulObvNumWithHost : 2;
 
     for (int i = startKFid; i < static_cast<int>(window_.size()); ++i) {
-        for (Landmark* p : window_[i]->landmark_) {
+        for (auto p : window_[i]->landmark_) {
             // 地图点有被其他关键帧看到
             if (p == nullptr || !p->initialized_ || p->IsOutOfRange() ||
                 p->CanBeDelete() ||
@@ -1329,7 +1330,7 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
     ResidualInfo info;
 
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark*& p = optLandmark_[i];
+        auto& p = optLandmark_[i];
         if (p->NoUsed()) {
             continue;
         } else {
@@ -1381,9 +1382,9 @@ Optimizer::ResidualInfo Optimizer::CalculateResidualWindow(
 void Optimizer::DebugOptlandmarkStatus(const size_t num, const string& name) {
     string debugUsefulLkIndex(name + " useful lk status:[ ");
     for (size_t i = 0; i < min(optLandmark_.size(), num); ++i) {
-        Landmark* p = optLandmark_[i];
+        auto p = optLandmark_[i];
         debugUsefulLkIndex.append(fmt::format(
-            " {}-{}-{}", i, reinterpret_cast<size_t>(p), p->NoUsed()));
+            " {}-{}-{}", i, reinterpret_cast<size_t>(p.get()), p->NoUsed()));
     }
     debugUsefulLkIndex.append(" ]");
     cout << debugUsefulLkIndex << endl;
@@ -1396,7 +1397,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
     vector<int> sumConstraintNum(optLandmark_.size(), 0);
     int totalSelectConstraintNum = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark*& p = optLandmark_[i];
+        auto& p = optLandmark_[i];
         KeyFrame* host = p->host_;
         if (host->id_ == window_.back()->id_) {
             sumErrorVec[i] += kMaxSetError;
@@ -1458,7 +1459,7 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
 
     ResidualInfo info;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark*& p = optLandmark_[i];
+        auto& p = optLandmark_[i];
         if (errorCopy[i] > maxChi2) {
             p->SetNoUsed();
             continue;
@@ -1824,7 +1825,7 @@ void Optimizer::ConstructJ_H_b_g(const bool firstTime) {
 
     hasResetHessianblock_.clear();
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark* p = optLandmark_[i];
+        auto p = optLandmark_[i];
         if (p->NoUsed()) {
             continue;
         }
@@ -2256,7 +2257,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
 
         // 关键帧被当前KF观测到的特征点数量统计
         for (size_t i = 0; i < globalOptFlw.historyLandmarkNum_; ++i) {
-            Landmark* lk = globalOptFlw.trackLandmark_[i];
+            auto lk = globalOptFlw.trackLandmark_[i];
             if (!kf2Index.count(lk->host_)) {
                 continue;
             }
@@ -2380,7 +2381,7 @@ int Optimizer::MarkBigResidualLandmarkDelete() {
     constexpr double kMaxChi2 = 9 * 9;
     int markCount = 0;
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
-        Landmark* lk = optLandmark_[i];
+        auto lk = optLandmark_[i];
 
         KeyFrame* host = lk->host_;
         const Eigen::Vector3d pc1 = lk->GetPc();
@@ -2428,7 +2429,7 @@ void Optimizer::WinBApreAssignMatrixMemory() {
     // 为了避免内存重复分配，LM迭代过程中，不应该再改变状态量维度，若要剔除某个点，直接使其雅可比为0即可，此时该状态量梯度自然变为0
     int optPoseDim = window_.size() * window_[0]->Twc_.Size();
     int landmarkDim = 0;
-    for (const Landmark* lk : optLandmark_) {
+    for (const auto lk : optLandmark_) {
         landmarkDim += lk->NoUsed() ? 0 : kPointDim;
     }
     const int variableDim = optPoseDim + landmarkDim;
@@ -2523,7 +2524,7 @@ void Optimizer::CalculateLastKFmeanDepth() {
 
     // 只有历史跟踪点才可能三角化成功
     for (size_t i = 0; i < globalOptFlw.historyLandmarkNum_; ++i) {
-        Landmark* lk = globalOptFlw.trackLandmark_[i];
+        auto lk = globalOptFlw.trackLandmark_[i];
         if (!lk->CanBeUseForOptimization() ||
             !lk->target_.count(const_cast<KeyFrame*>(last))) {
             continue;
@@ -2553,25 +2554,26 @@ void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
     for (size_t i = 0; i < window_.size(); ++i) {
         kf2Idx.insert({window_[i], i});
     }
-    vector<vector<Landmark*>> usefulMapPointEachKf(window_.size());
+    vector<vector<shared_ptr<Landmark>>> usefulMapPointEachKf(window_.size());
     vector<vector<cv::Point2f>> usefulObservationCurF(window_.size());
     for (size_t i = 0; i < usefulMapPointEachKf.size(); ++i) {
         usefulMapPointEachKf[i].reserve(500);
         usefulObservationCurF[i].reserve(500);
     }
 
-    auto AssignLandmark =
-        [&kf2Idx, &usefulMapPointEachKf, &usefulObservationCurF](
-            const vector<Landmark*>& lks, const vector<cv::Point2f>& curFobv) {
-            for (size_t i = 0; i < lks.size(); ++i) {
-                if (lks[i]->NoUsed() || !lks[i]->CanBeUseForOptimization()) {
-                    continue;
-                }
-                const int idx = kf2Idx[lks[i]->host_];
-                usefulMapPointEachKf[idx].emplace_back(lks[i]);
-                usefulObservationCurF[idx].emplace_back(curFobv[i]);
+    auto AssignLandmark = [&kf2Idx, &usefulMapPointEachKf,
+                           &usefulObservationCurF](
+                              const vector<shared_ptr<Landmark>>& lks,
+                              const vector<cv::Point2f>& curFobv) {
+        for (size_t i = 0; i < lks.size(); ++i) {
+            if (lks[i]->NoUsed() || !lks[i]->CanBeUseForOptimization()) {
+                continue;
             }
-        };
+            const int idx = kf2Idx[lks[i]->host_];
+            usefulMapPointEachKf[idx].emplace_back(lks[i]);
+            usefulObservationCurF[idx].emplace_back(curFobv[i]);
+        }
+    };
 
     AssignLandmark(globalOptFlw.trackLandmark_, globalOptFlw.prevPts_);
 
@@ -2614,7 +2616,7 @@ void Optimizer::WriteDebugTrackLostStatus(const KeyFrame& curF) {
 
         // 绘制匹配点
         for (size_t j = 0; j < usefulMapPointEachKf[i].size(); ++j) {
-            Landmark* const lk = usefulMapPointEachKf[i][j];
+            std::shared_ptr<Landmark> const lk = usefulMapPointEachKf[i][j];
             const cv::Point2f& p1 = lk->GetHostFrameObvCV();
             const cv::Point2f& p2 = usefulObservationCurF[i][j] + pointDiff;
             const Vec3b& color = kColor.at(colorKey[rand() % kColor.size()]);
@@ -2776,7 +2778,7 @@ void Optimizer::ShowLocalMap() {
         vTwc.push_back(kf->Twc_);
     }
 
-    unordered_set<Landmark*> aPoints, lPoints;
+    unordered_set<std::shared_ptr<Landmark>> aPoints, lPoints;
     {
         lock_guard<mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
         KeyFrame::kfOn3Dshow.clear();
@@ -2790,7 +2792,7 @@ void Optimizer::ShowLocalMap() {
         for (int i = 0; i < static_cast<int>(window_.size()); ++i) {
             // for(int i = window_.size()-1; i < window_.size(); ++i) {
             KeyFrame* kf = window_[i];
-            for (Landmark* p : kf->landmark_) {
+            for (auto p : kf->landmark_) {
                 if (p != nullptr && !aPoints.count(p) && !lPoints.count(p) &&
                     !p->CanBeDelete() && p->initialized_) {
                     lPoints.insert(p);
