@@ -213,7 +213,7 @@ void KeyFrame::InitSuperpointAndLightglueEngine() {
                 "onnx model path."
              << endl;
     }
-    lightgluePtr->SetThreshold(0.5);
+    lightgluePtr->SetThreshold(LightGlueConfig::kMatchThreshold);
     cout << "SuperPoint and lightglue inference engine build success." << endl;
     lightgluePtr->ValidateFP16();
 }
@@ -473,7 +473,6 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     // 当前帧反追踪上一帧
     Eigen::VectorXf mscores;
     vector<cv::DMatch> lightglueMatches;
-    lightgluePtr->SetThreshold(0.05);
     int matchPairNum = 0;
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     if (true || globalOptFlw.historyLandmarkNum_ == 0) {

@@ -25,6 +25,7 @@ constexpr const char* kOutputTensorNames[1] = {"mscores0"};
 
 constexpr int kImageHeight = 480;
 constexpr int kImageWidth = 640;
+constexpr float kMatchThreshold = 0.01; // 有双向匹配约束，可以设置小
 };  // namespace LightGlueConfig
 
 class LightGlue {

@@ -1,16 +1,16 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_xyz
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
 Camera.model: "pinhole"
 
 ## fr1
-# Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
-# Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
+Camera.intrinstic: [517.3, 318.6, 516.5, 255.3] # fx cx fy cy
+Camera.distortion: [0.2624, -0.9531, -0.0054, 0.0026, 1.1633] # d0, d1, d2, d3, d4
 
 # fr2
-Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
-Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
+# Camera.intrinstic: [520.9, 325.1, 521.0, 249.7] # fx cx fy cy
+# Camera.distortion: [0.2312, -0.7849, -0.0033, -0.0001, 0.9172] # d0, d1, d2, d3, d4
 
 Qcg: [0, 0, 0, 1] # qx qy qz qw
 Pcg: [0, 0, 0] # tx ty tz
