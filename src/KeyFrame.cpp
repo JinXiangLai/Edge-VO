@@ -170,16 +170,21 @@ void KeyFrame::CalculateEachGridForExtractFast() {
     }
     const float width = grayImg_.cols;
     const float height = grayImg_.rows;
+#if USE_SUPERPOINT_AND_LIGHTGLUE
+    const int featureNum = SuperPointConfig::kMaxKeypoints;
+#else
+    const int featureNum = config->extractFastNumEachFrame;
+#endif
     // 计算每个格子含有的像素个数
-    const int gridPixelNum = static_cast<int>(
-        width * height / config->extractFastNumEachFrame + 0.5);
+    const int gridPixelNum =
+        static_cast<int>(width * height / featureNum + 0.5);
     const float ratio = width / height;  // 宽高比
     const int gridHeight = static_cast<int>(sqrt(gridPixelNum / ratio) + 0.5);
     const int gridWidth = static_cast<int>(gridHeight * ratio + 0.5);
     cout << fmt::format(
         "gridHeight: {}, gridWidth: {}, need feature num: {}, recalculate "
         "feature num: {}\n",
-        gridHeight, gridWidth, config->extractFastNumEachFrame,
+        gridHeight, gridWidth, featureNum,
         (width * height / (gridHeight * gridWidth)));
     constexpr int kMinGridHeight = 6;
     eachGridSize.width =
@@ -194,6 +199,7 @@ void KeyFrame::InitSuperpointAndLightglueEngine() {
 
     superpointPtr = make_shared<SuperPoint>(config->superpointOnnxFilePath,
                                             config->superpointEngineFilePath);
+    superpointPtr->SetEachGridSize2ExtractOnePoint(eachGridSize);
     if (!superpointPtr->Build()) {
         cerr << "Error in SuperPoint building engine. Please check your "
                 "onnx model path."
@@ -246,10 +252,15 @@ int KeyFrame::RemoveNoInitializeLongFeature() {
 }
 
 void KeyFrame::ExtractSuperpoint() {
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     if (!superpointPtr->Infer(grayImg_, kpts_, desc_)) {
         cerr << "Failed when extracting features from first image." << endl;
     } else {
-        cout << fmt::format("Superpoint extract {} points!\n", kpts_.rows());
+        chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+
+        cout << fmt::format(
+            "Superpoint extract {} points, total spend: {:.1f}ms\n",
+            kpts_.rows(), ChronoMillisecTimeDuration(t0, t1));
         for (int i = 0; i < kpts_.rows(); ++i) {
             const cv::Point2f p(kpts_(i, 0), kpts_(i, 1));
             cv::circle(debugGrayImg_, p, 2, kColor.at("white"));
@@ -465,7 +476,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     lightgluePtr->SetThreshold(0.05);
     int matchPairNum = 0;
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
-    if (globalOptFlw.historyLandmarkNum_ == 0) {
+    if (true || globalOptFlw.historyLandmarkNum_ == 0) {
         matchPairNum = lightgluePtr->MatchKeypoints(kpts_, lastKf->kpts_, desc_,
                                                     lastKf->desc_, mscores,
                                                     lightglueMatches);
@@ -1136,10 +1147,17 @@ void KeyFrame::ReleaseMat() {
     debugGrayImg_.release();
 }
 
-// superpoint匹配阈值
-#define USE_L2_NORM_DIST 0
-constexpr double kWrongMatchL2 = 0.7;
-constexpr double kMNratio = 0.8;
+// superpoint匹配阈值，使用cos运算量反而更小
+#define USE_L2_NORM_DIST 1
+constexpr float kWrongMatchNorm = 0.7;
+constexpr float kWrongMatchNorm2 = 0.7 * 0.7;
+
+const float kWrongMatchCos = cos(30 * kDeg2Rad);
+constexpr float kMNratio = 1.0;  // 有正、反向匹配，不再比较次小
+
+constexpr float kMNratio2 = kMNratio * kMNratio;
+
+constexpr float kMaxObv2EpipolarLineDist = 64.0;  // 640x480
 
 int KeyFrame::SupperPointMatch(KeyFrame* kf,
                                vector<cv::DMatch>& superpointMatches) {
@@ -1154,107 +1172,74 @@ int KeyFrame::SupperPointMatch(KeyFrame* kf,
          (SkewSymmetric(T12.t_wb_) * T12.q_wb_.toRotationMatrix()) *
          cam_->Kinv_[0])
             .cast<float>();
-    /*
-    cv::Mat desc1(desc_.rows(), 256, CV_32F, desc_.data());
-    cv::Mat desc2(kf->desc_.rows(), 256, CV_32F, kf->desc_.data());
 
-    // 建立KD树索引
-    cv::Ptr<cv::flann::IndexParams> indexParams =
-        cv::makePtr<cv::flann::KDTreeIndexParams>(4);  // 4棵树
-    cv::Ptr<cv::flann::SearchParams> searchParams =
-        cv::makePtr<cv::flann::SearchParams>(256);  // 搜索参数
-    cv::FlannBasedMatcher matcher(indexParams, searchParams);
-    vector<vector<cv::DMatch>> knn_matches;
-    matcher.knnMatch(desc1, desc2, knn_matches, 2);
-
-    // Lowe's ratio test
-    for (const auto& knn_match : knn_matches) {
-        if (knn_match[0].distance < kMNratio * knn_match[1].distance) {
-            superpointMatches.emplace_back(knn_match[0]);
-        }
-    }
-*/
-
-    /*
-    for (int i = 0; i < kpts_.rows(); ++i) {
-        const auto desc1 = desc_.row(i);
-        float bestScore = 2.0, secondBestScore = 2.0;
-
-        int bestMatchIndex2 = -1;
-        for (int j = 0; j < kf->kpts_.rows(); ++j) {
-            const auto& desc2 = kf->desc_.row(j);
-            const float score = (desc1 - desc2).norm();
-            if (score < bestScore) {
-                secondBestScore = bestScore;
-                bestScore = score;
-                bestMatchIndex2 = j;
-            } else if (score < secondBestScore) {
-                secondBestScore = score;
+    auto MatchThread = [&F12](const int startId, const int endId,
+                              const Eigen::Matrix<float, Eigen::Dynamic, 2,
+                                                  Eigen::RowMajor>& kpts1,
+                              const Eigen::Matrix<float, Eigen::Dynamic, 2,
+                                                  Eigen::RowMajor>& kpts2,
+                              const Eigen::Matrix<float, Eigen::Dynamic, 256,
+                                                  Eigen::RowMajor>& desc1s,
+                              const Eigen::Matrix<float, Eigen::Dynamic, 256,
+                                                  Eigen::RowMajor>& desc2s,
+                              vector<cv::DMatch>& matchResult) {
+        matchResult.reserve(endId - startId);
+        for (int i = startId; i < endId; ++i) {
+            Eigen::Vector3f l2 =
+                (Eigen::Vector3f(kpts1.row(i)[0], kpts1.row(i)[1], 1.0)
+                     .transpose() *
+                 F12)
+                    .normalized();
+            if (abs(l2.x()) < 1e-10 && abs(l2.y()) < 1e-10) {
+                continue;
             }
 
-        }
-
-        if (bestScore > kWrongMatchL2 ||
-            secondBestScore * kMNratio < bestScore) {
-            continue;
-        }
-        superpointMatches.emplace_back(i, bestMatchIndex2, bestScore);
-    }
-*/
-
-    constexpr double kMaxObv2EpipolarLineDist = 20.0;
-    auto MatchThread =
-        [&F12](const int startId, const int endId,
-               const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>&
-                   kpts1,
-               const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>&
-                   kpts2,
-               const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
-                   desc1s,
-               const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
-                   desc2s,
-               vector<cv::DMatch>& matchResult) {
-            matchResult.reserve(endId - startId);
-            for (int i = startId; i < endId; ++i) {
-                Eigen::Vector3f l2 =
-                    (Eigen::Vector3f(kpts1.row(i)[0], kpts1.row(i)[1], 1.0)
-                         .transpose() *
-                     F12)
-                        .normalized();
-                if (abs(l2.x()) < 1e-10 && abs(l2.y()) < 1e-10) {
+#if USE_L2_NORM_DIST
+            float bestScore = 1e6;
+#else
+            float bestScore = -1e6;
+#endif
+            int bestMatchIndex2 = -1;
+            for (int j = 0; j < desc2s.rows(); ++j) {
+                if (ComputeObv2EpipolarLineDist(
+                        l2, {kpts2.row(j)[0], kpts2.row(j)[1]}) >
+                    kMaxObv2EpipolarLineDist) {
                     continue;
                 }
 
-                float bestScore = 1e6, secondBestScore = 1e6;
-                int bestMatchIndex2 = -1;
-                for (int j = 0; j < desc2s.rows(); ++j) {
-                    if (ComputeObv2EpipolarLineDist(
-                            l2, {kpts2.row(j)[0], kpts2.row(j)[1]}) >
-                        kMaxObv2EpipolarLineDist) {
-                        continue;
-                    }
-
-                    const float score = (desc1s.row(i) - desc2s.row(j)).norm();
-                    if (score < bestScore) {
-                        secondBestScore = bestScore;
-                        bestScore = score;
-                        bestMatchIndex2 = j;
-                    } else if (score < secondBestScore) {
-                        secondBestScore = score;
-                    }
-                }
-
-                if ((secondBestScore - bestScore > 0.2 ||
-                     bestScore < secondBestScore * kMNratio) &&
-                    bestScore < kWrongMatchL2) {
-                    matchResult.emplace_back(i, bestMatchIndex2, bestScore);
-                } else {
-                    matchResult.emplace_back(i, -1, bestScore);
+#if USE_L2_NORM_DIST
+                // squaredNorm耗时比norm还长
+                // float score = (desc1s.row(i) - desc2s.row(j)).squaredNorm();
+                float score = (desc1s.row(i) - desc2s.row(j)).norm();
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestMatchIndex2 = j;
                 }
             }
-        };
 
-    constexpr int kThreadNum = 2;
+            if (bestScore < kWrongMatchNorm) {
+                matchResult.emplace_back(i, bestMatchIndex2, bestScore);
+            } else {
+                matchResult.emplace_back(i, -1, bestScore);
+            }
+#else
+                float score = desc1s.row(i).dot(desc2s.row(j));
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatchIndex2 = j;
+                }
+            }
+
+            if (bestScore > kWrongMatchCos) {
+                matchResult.emplace_back(i, bestMatchIndex2, bestScore);
+            } else {
+                matchResult.emplace_back(i, -1, bestScore);
+            }
+#endif
+        }
+    };
+
+    constexpr int kThreadNum = 4;
     const int part = kpts_.rows() / kThreadNum;
     const int remainNum = kpts_.rows() % kThreadNum;
     thread th[kThreadNum];

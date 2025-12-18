@@ -5,6 +5,7 @@
 #include <opencv2/opencv.hpp>
 #include <unordered_map>
 #include <utility>
+#include "SuperPoint.h"
 
 using namespace tensorrt_common;
 using namespace tensorrt_log;
@@ -80,34 +81,44 @@ bool LightGlue::Build() {
         return false;
     }
 
+    // .engine输入点不在这范围内时，将导致维度检验失败而core
+    constexpr int kMinPointNum = SuperPointConfig::kMaxKeypoints;
+    constexpr int kMidPointNum = SuperPointConfig::kMaxKeypoints;
+    constexpr int kMaxPointNum = SuperPointConfig::kMaxKeypoints;
     // 两对输入特征点
     profile->setDimensions(LightGlueConfig::kInputTensorNames[0],
-                           OptProfileSelector::kMIN, Dims3(1, 30, 2));
+                           OptProfileSelector::kMIN, Dims3(1, kMinPointNum, 2));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[0],
-                           OptProfileSelector::kOPT, Dims3(1, 512, 2));
+                           OptProfileSelector::kOPT, Dims3(1, kMidPointNum, 2));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[0],
-                           OptProfileSelector::kMAX, Dims3(1, 1024, 2));
+                           OptProfileSelector::kMAX, Dims3(1, kMaxPointNum, 2));
 
     profile->setDimensions(LightGlueConfig::kInputTensorNames[1],
-                           OptProfileSelector::kMIN, Dims3(1, 30, 2));
+                           OptProfileSelector::kMIN, Dims3(1, kMinPointNum, 2));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[1],
-                           OptProfileSelector::kOPT, Dims3(1, 512, 2));
+                           OptProfileSelector::kOPT, Dims3(1, kMidPointNum, 2));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[1],
-                           OptProfileSelector::kMAX, Dims3(1, 1024, 2));
+                           OptProfileSelector::kMAX, Dims3(1, kMaxPointNum, 2));
     // 两对输入描述子
     profile->setDimensions(LightGlueConfig::kInputTensorNames[2],
-                           OptProfileSelector::kMIN, Dims3(1, 30, 256));
+                           OptProfileSelector::kMIN,
+                           Dims3(1, kMinPointNum, 256));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[2],
-                           OptProfileSelector::kOPT, Dims3(1, 512, 256));
+                           OptProfileSelector::kOPT,
+                           Dims3(1, kMidPointNum, 256));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[2],
-                           OptProfileSelector::kMAX, Dims3(1, 1024, 256));
+                           OptProfileSelector::kMAX,
+                           Dims3(1, kMaxPointNum, 256));
 
     profile->setDimensions(LightGlueConfig::kInputTensorNames[3],
-                           OptProfileSelector::kMIN, Dims3(1, 30, 256));
+                           OptProfileSelector::kMIN,
+                           Dims3(1, kMinPointNum, 256));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[3],
-                           OptProfileSelector::kOPT, Dims3(1, 512, 256));
+                           OptProfileSelector::kOPT,
+                           Dims3(1, kMidPointNum, 256));
     profile->setDimensions(LightGlueConfig::kInputTensorNames[3],
-                           OptProfileSelector::kMAX, Dims3(1, 1024, 256));
+                           OptProfileSelector::kMAX,
+                           Dims3(1, kMaxPointNum, 256));
 
     // 输出不用设置
     config->addOptimizationProfile(profile);

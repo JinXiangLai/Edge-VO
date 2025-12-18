@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
 
         // 未全部完成初始化时，快速插入KF
         const bool caseFastInsertKF =
-            findMatchRatio < 0.9 &&
+            findMatchRatio < 0.7 &&
             static_cast<int>(win.size()) < config->maxKFnumInWindow;
 
         const bool hasHorMove = (horDist > 0.05 * meanDepth);
@@ -278,7 +278,7 @@ int main(int argc, char** argv) {
             (curF.timestamp_ - win.back()->timestamp_) * 1e3;  // ms
         const bool longTimeNoInsertKF =
             frameDuration > min(1000.0, 1.5 * optimizer.lastWinBAspendTime_) &&
-            (findMatchRatio < 0.9);
+            (findMatchRatio < 0.7);
 
         const bool frequentInsertKf =
             curF.timestamp_ - win.back()->timestamp_ > 0.15;

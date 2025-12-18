@@ -13,7 +13,6 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
-
 #include "../3rdparty/tensorrtbuffer/include/buffers.h"
 
 using tensorrt_common::TensorRTUniquePtr;
@@ -25,7 +24,7 @@ constexpr const char* kInputTensorName = "image";
 constexpr const char* kOutputTensorNames[2] = {"scores", "descriptors"};
 
 // 可调试配置
-constexpr int kMaxKeypoints = 1024;
+constexpr int kMaxKeypoints = 1024; // 超过1024点模型就报错，应该是engine没有更新
 constexpr double kKeypointThreshold = 0.005;
 constexpr int kRemoveBorder = 4;  // 排除边缘位置的高得分点
 };                                // namespace SuperPointConfig
@@ -47,6 +46,10 @@ class SuperPoint {
     void SaveEngine();
 
     bool DeserializeEngine();
+
+    void SetEachGridSize2ExtractOnePoint(const cv::Size& size) {
+        eachGridSize_ = size;
+    }
 
    private:
     nvinfer1::Dims input_dims_{};
@@ -91,6 +94,8 @@ class SuperPoint {
                            int dim, int h, int w, int s = 8);
 
     std::string onnxFilePath_, engineFilePath_;
+
+    cv::Size eachGridSize_;
 };
 
 typedef std::shared_ptr<SuperPoint> SuperPointPtr;
