@@ -183,6 +183,19 @@ cv::Point2f Landmark::GetHostFrameObvCV() const {
     return {host_->kpts_(kpRow_, 0), host_->kpts_(kpRow_, 1)};
 }
 
+cv::Point2f Landmark::GetLastFrameObvCV() const {
+    cv::Point2f res(0, 0);
+    size_t id = 0;
+    for (auto match : target_) {
+        if (match.first->id_ >= id) {
+            id = match.first->id_;
+            res.x = match.first->kpts_.row(match.second)[0];
+            res.y = match.first->kpts_.row(match.second)[1];
+        }
+    }
+    return res;
+}
+
 //void Landmark::AddKeyframeTargetObv(KeyFrame* kf, const Eigen::Vector2d& obv) {
 //    lock_guard<mutex> lock(mute_);
 //    target_.insert({kf, obv});

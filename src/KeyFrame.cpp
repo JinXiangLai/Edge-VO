@@ -470,7 +470,18 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
                                                     lastKf->desc_, mscores,
                                                     lightglueMatches);
     } else {
-        matchPairNum = SupperPointMatch(lastKf, lightglueMatches);
+        SupperPointMatch(lastKf, lightglueMatches);
+        vector<cv::DMatch> lightglueMatches2;
+        lastKf->SupperPointMatch(this, lightglueMatches2);
+        for (int i = 0; i < lightglueMatches.size(); ++i) {
+            if (lightglueMatches[i].trainIdx < 0) {
+                continue;
+            }
+            if (lightglueMatches2[lightglueMatches[i].trainIdx].trainIdx == i) {
+                lightglueMatches[matchPairNum++] = lightglueMatches[i];
+            }
+        }
+        lightglueMatches.resize(matchPairNum);
     }
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
@@ -1134,6 +1145,15 @@ int KeyFrame::SupperPointMatch(KeyFrame* kf,
                                vector<cv::DMatch>& superpointMatches) {
     superpointMatches.reserve(kpts_.rows());
 
+    // Eigen::Matrix3f F12;
+    // globalOptFlw.GetFundamentalMatrixF12(cam_, F12);
+
+    Pose T12 = Tcw_ * kf->Twc_;
+    Eigen::Matrix3f F12 =
+        (cam_->Kinv_[0].transpose() *
+         (SkewSymmetric(T12.t_wb_) * T12.q_wb_.toRotationMatrix()) *
+         cam_->Kinv_[0])
+            .cast<float>();
     /*
     cv::Mat desc1(desc_.rows(), 256, CV_32F, desc_.data());
     cv::Mat desc2(kf->desc_.rows(), 256, CV_32F, kf->desc_.data());
@@ -1182,19 +1202,38 @@ int KeyFrame::SupperPointMatch(KeyFrame* kf,
     }
 */
 
+    constexpr double kMaxObv2EpipolarLineDist = 20.0;
     auto MatchThread =
-        [](const int startId, const int endId,
-           const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
-               desc1s,
-           const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
-               desc2s,
-           vector<cv::DMatch>& matchResult) {
+        [&F12](const int startId, const int endId,
+               const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>&
+                   kpts1,
+               const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>&
+                   kpts2,
+               const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
+                   desc1s,
+               const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>&
+                   desc2s,
+               vector<cv::DMatch>& matchResult) {
             matchResult.reserve(endId - startId);
             for (int i = startId; i < endId; ++i) {
+                Eigen::Vector3f l2 =
+                    (Eigen::Vector3f(kpts1.row(i)[0], kpts1.row(i)[1], 1.0)
+                         .transpose() *
+                     F12)
+                        .normalized();
+                if (abs(l2.x()) < 1e-10 && abs(l2.y()) < 1e-10) {
+                    continue;
+                }
+
                 float bestScore = 1e6, secondBestScore = 1e6;
                 int bestMatchIndex2 = -1;
-
                 for (int j = 0; j < desc2s.rows(); ++j) {
+                    if (ComputeObv2EpipolarLineDist(
+                            l2, {kpts2.row(j)[0], kpts2.row(j)[1]}) >
+                        kMaxObv2EpipolarLineDist) {
+                        continue;
+                    }
+
                     const float score = (desc1s.row(i) - desc2s.row(j)).norm();
                     if (score < bestScore) {
                         secondBestScore = bestScore;
@@ -1205,23 +1244,29 @@ int KeyFrame::SupperPointMatch(KeyFrame* kf,
                     }
                 }
 
-                if (bestScore > kWrongMatchL2 ||
-                    secondBestScore * kMNratio < bestScore) {
-                    continue;
+                if ((secondBestScore - bestScore > 0.2 ||
+                     bestScore < secondBestScore * kMNratio) &&
+                    bestScore < kWrongMatchL2) {
+                    matchResult.emplace_back(i, bestMatchIndex2, bestScore);
+                } else {
+                    matchResult.emplace_back(i, -1, bestScore);
                 }
-                matchResult.emplace_back(i, bestMatchIndex2, bestScore);
             }
         };
 
-    constexpr int kThreadNum = 4;
+    constexpr int kThreadNum = 2;
     const int part = kpts_.rows() / kThreadNum;
+    const int remainNum = kpts_.rows() % kThreadNum;
     thread th[kThreadNum];
     vector<vector<cv::DMatch>> matches(kThreadNum);
     for (int i = 0; i < kThreadNum; ++i) {
         const int startId = i * part;
-        const int endId = startId + part;
-        th[i] = thread(MatchThread, startId, endId, ref(desc_), ref(kf->desc_),
-                       ref(matches[i]));
+        int endId = startId + part;
+        if (i == kThreadNum - 1) {
+            endId += remainNum;
+        }
+        th[i] = thread(MatchThread, startId, endId, ref(kpts_), ref(kf->kpts_),
+                       ref(desc_), ref(kf->desc_), ref(matches[i]));
     }
     for (int i = 0; i < kThreadNum; ++i) {
         th[i].join();

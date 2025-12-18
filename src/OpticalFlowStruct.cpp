@@ -1,5 +1,6 @@
 #include "OpticalFlowStruct.h"
 
+#include "Utils.h"
 using namespace std;
 
 // 全局变量定义
@@ -31,10 +32,34 @@ void OpticalFlowStruct::RemoveUselessLandmark() {
 
     SelectUsefulLandmark(srcHistoryNum, prevPts_.size());
     cout << fmt::format(
-        "optical flow remove useless landmark num: {}, remain landmark num: {}\n",
+        "optical flow remove useless landmark num: {}, remain landmark num: "
+        "{}\n",
         totalFeatureCreated_ - tempPts.size(), tempPts.size());
     // totalFeatureCreated_ = tempPts.size(); // 不能重新赋值总的特征，因为跟踪过程会丢失
 
     prevPts_ = std::move(tempPts);
     trackLandmark_ = std::move(tempLandmark);
+}
+
+void OpticalFlowStruct::GetFundamentalMatrixF12(const shared_ptr<Camera> cam,
+                                                Eigen::Matrix3f& e) {
+    const int selectNum = min(int(prevPts_.size() * 0.9), 500);
+    vector<cv::Point2f> ps1, ps2;
+    ps1.reserve(selectNum);
+    ps2.reserve(selectNum);
+    const int sampleStep = prevPts_.size() / selectNum;
+    for (int i = 0; i < selectNum; i += sampleStep) {
+        if (trackLandmark_[i] == nullptr || trackLandmark_[i]->CanBeDelete()) {
+            i -= (sampleStep - 1);
+            continue;
+        }
+        ps1.emplace_back(trackLandmark_[i]->GetLastFrameObvCV());
+        ps2.emplace_back(prevPts_[i].x, prevPts_[i].y);
+    }
+
+    cv::Mat cvE =
+        cv::findEssentialMat(ps2, ps1, Eigen2CVmat(cam->K_[0]), cv::RANSAC);
+    cout << "essential E12:\n" << cvE << endl;
+    e = (cam->Kinv_[0].transpose() * CVmat2Eigen(cvE) * cam->Kinv_[0])
+            .cast<float>();
 }

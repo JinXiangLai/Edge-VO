@@ -53,6 +53,8 @@ class Landmark {
     Eigen::Vector2i GetHostFrameObvInt() const;
     cv::Point2f GetHostFrameObvCV() const;
 
+    cv::Point2f GetLastFrameObvCV() const;
+
     std::unordered_map<KeyFrame*, int> target_;  // host帧映射host帧下的像素索引
     static std::shared_ptr<Camera> cam_;
 

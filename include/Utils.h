@@ -419,6 +419,24 @@ void UpdateSparseHessianMatrix(
     }
 }
 
+template <typename T>
+inline double ComputeObv2EpipolarLineDist(const Eigen::Matrix<T, 3, 1>& l2,
+                                          const Eigen::Matrix<T, 2, 1>& obv) {
+    // l2: ax+by+z=0
+    // if (abs(l2.x()) < 1e-10 && abs(l2.y()) < 1e-10) {
+    //     return 1e6;
+    // } // 外部判定
+    return abs(l2.x() * obv.x() + l2.y() * obv.y() + l2.z()) /
+           sqrt(l2.x() * l2.x() + l2.y() * l2.y());
+}
+
+inline Eigen::Vector3d ComputeEpipolarLine(
+    const Pose& transform_2_1, const Eigen::Matrix3d& inv_cam_intrinsic_,
+    const Eigen::Vector3d& p1) {
+    return inv_cam_intrinsic_.transpose() * SkewSymmetric(transform_2_1.t_wb_) *
+           transform_2_1.q_wb_.toRotationMatrix() * inv_cam_intrinsic_ * p1;
+}
+
 class InteractionParam {
    public:
     bool stepBystep = false;

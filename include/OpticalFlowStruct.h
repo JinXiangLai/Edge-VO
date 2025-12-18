@@ -38,8 +38,8 @@ struct OpticalFlowStruct {
              const std::vector<std::shared_ptr<Landmark>>& landmark,
              const int totalFeatureCreated, const int historyLandmarkNum);
     void RemoveUselessLandmark();
-
-    
+    void GetFundamentalMatrixF12(const std::shared_ptr<Camera> cam,
+                               Eigen::Matrix3f& e);
 };
 
 // 全局变量声明
