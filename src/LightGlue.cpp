@@ -82,7 +82,7 @@ bool LightGlue::Build() {
     }
 
     // .engine输入点不在这范围内时，将导致维度检验失败而core
-    constexpr int kMinPointNum = SuperPointConfig::kMaxKeypoints;
+    constexpr int kMinPointNum = SuperPointConfig::kMaxKeypoints / 2;
     constexpr int kMidPointNum = SuperPointConfig::kMaxKeypoints;
     constexpr int kMaxPointNum = SuperPointConfig::kMaxKeypoints;
     // 两对输入特征点

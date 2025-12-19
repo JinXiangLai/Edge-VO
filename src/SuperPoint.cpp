@@ -203,7 +203,14 @@ bool SuperPoint::ProcessInput(const BufferManager& buffers,
 void SuperPoint::FindHighScoreIndex(vector<float>& scores,
                                     vector<vector<int>>& keypoints, int h,
                                     int w, double threshold) {
-#if 0
+    const float heightBorder = h - SuperPointConfig::kRemoveBorder;
+    const float widthBorder = w - SuperPointConfig::kRemoveBorder;
+    auto PointInBorder = [&heightBorder, &widthBorder](const int x,
+                                                       const int y) -> bool {
+        return x > SuperPointConfig::kRemoveBorder && x < widthBorder &&
+               y > SuperPointConfig::kRemoveBorder && y < heightBorder;
+    };
+
     vector<float> sortScores = scores;
     sort(sortScores.begin(), sortScores.end(),
          [](const float a, const float b) { return a > b; });
@@ -225,39 +232,48 @@ void SuperPoint::FindHighScoreIndex(vector<float>& scores,
         threshold = kMinUsefulThreshold;
     }
 
+#if 1
     vector<float> new_scores;
     for (int i = 0; i < scores.size(); ++i) {
         if (scores[i] > threshold) {
             // 将1维得分索引转为图像，转换关系为 i = w*row + col
             vector<int> location = {int(i % w), i / w};
-            keypoints.emplace_back(location);
-            new_scores.push_back(scores[i]);
+            if (PointInBorder(location[0], location[1])) {
+                keypoints.emplace_back(location);
+                new_scores.push_back(scores[i]);
+            }
         }
     }
 #else
     // 将图像划分成网格，每个网格内提取响应值最大的点，
     // superpoint似乎不支持这样做，效果不好
     // 保证至少能提取到kMaxKeypoints个特征点，使得推理引擎能够一直使用1024个点
+    const float kMinScore = -1.0;
     vector<float> new_scores;
     new_scores.reserve(2000);
     keypoints.reserve(2000);
     for (int topX = 0; topX < w; topX += eachGridSize_.width) {
         for (int topY = 0; topY < h; topY += eachGridSize_.height) {
-            float bestScore = -1.0;
+            float bestScore = kMinScore;
             int bestIndex = -1;
-            const int downX = topX + eachGridSize_.width;
-            const int downY = topY + eachGridSize_.height;
+            const int downX = min(topX + eachGridSize_.width, w);
+            const int downY = min(topY + eachGridSize_.height, h);
             for (int j = topX; j < downX; ++j) {
                 for (int i = topY; i < downY; ++i) {
                     const int index = i * w + j;
-                    if (scores[index] > SuperPointConfig::kKeypointThreshold) {
+                    if (scores[index] >= threshold) {
                         // 将响应值大的点直接添加进来，避免lightglue匹配失败
-                        new_scores.emplace_back(scores[index]);
-                        keypoints.emplace_back(vector<int>{
-                            index % w, index / w});  // 这里直接填充(x, y)
-                        continue;
+                        vector<int> location = {j, i};
+                        if (PointInBorder(location[0], location[1])) {
+                            new_scores.emplace_back(scores[index]);
+                            keypoints.emplace_back(
+                                location);  // 这里直接填充(x, y)
+                        }
+                        // continue;
                     }
-                    if (scores[index] > bestScore) {
+                    // 控制阈值，避免重复添加
+                    if (scores[index] < threshold &&
+                        scores[index] > bestScore) {
                         bestScore = scores[index];
                         bestIndex = index;
                     }
@@ -266,9 +282,11 @@ void SuperPoint::FindHighScoreIndex(vector<float>& scores,
 
             if (bestIndex >= 0) {
                 // 获取到网格内的最佳响应点
-                new_scores.emplace_back(bestScore);
-                keypoints.emplace_back(
-                    vector<int>{bestIndex % w, bestIndex / w});
+                vector<int> location = {int(bestIndex % w), bestIndex / w};
+                if (PointInBorder(location[0], location[1])) {
+                    new_scores.emplace_back(bestScore);
+                    keypoints.emplace_back(location);
+                }
             }
         }
     }
@@ -291,14 +309,16 @@ void SuperPoint::RemoveBorders(vector<vector<int>>& keypoints,
     vector<float> scores_selected;
     keypoints_selected.reserve(keypoints.size());
     scores_selected.reserve(scores.size());
+    const float heightBorder = height - border;
+    const float widthBorder = width - border;
     for (int i = 0; i < keypoints.size(); ++i) {
-        bool flag_h = (keypoints[i][1] >= border) &&
-                      (keypoints[i][1] < (height - border));
+        bool flag_h =
+            (keypoints[i][1] >= border) && (keypoints[i][1] < heightBorder);
         bool flag_w =
-            (keypoints[i][0] >= border) && (keypoints[i][0] < (width - border));
+            (keypoints[i][0] >= border) && (keypoints[i][0] < widthBorder);
         if (flag_h && flag_w) {
-            keypoints_selected.push_back(vector<int>{keypoints[i]});
-            scores_selected.push_back(scores[i]);
+            keypoints_selected.emplace_back(keypoints[i]);
+            scores_selected.emplace_back(scores[i]);
         }
     }
     keypoints.swap(keypoints_selected);
@@ -455,7 +475,7 @@ bool SuperPoint::ProcessOutput(
     // 移除处于得分热力图边缘的特征点
     // RemoveBorders(keypoints_, scores_vec, SuperPointConfig::kRemoveBorder,
     //               semi_feature_map_h, semi_feature_map_w);
-    // 保留得分最大的k关键点
+    // 保留得分最大的k关键点，保证每次输入lightglue的点数量都是一致的，以降低耗时
     TopKkeypoints(keypoints_, scores_vec, SuperPointConfig::kMaxKeypoints);
 
     kpts.resize(scores_vec.size(), 2);
