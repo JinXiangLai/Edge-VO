@@ -136,3 +136,53 @@ bool ProjectInvDepthResidual::Evaluate(double const* const* parameters,
 
     return true;
 }
+
+ProjectionResidual::ProjectionResidual(const Eigen::Vector3d& p_w,
+                                       const Eigen::Vector2d& obv,
+                                       const Eigen::Matrix3d& K)
+    : pw_(p_w), obv_(obv), K_(K) {}
+
+bool ProjectionResidual::Evaluate(double const* const* parameters,
+                                  double* residuals, double** jacobians) const {
+    // 获取优化参数
+    const double* q_wc2 = parameters[0];  // qw, qx, qy, qz
+    const double* p_wc2 = parameters[0] + 4;
+    const Eigen::Quaterniond Qwc2(q_wc2[0], q_wc2[1], q_wc2[2], q_wc2[3]);
+    const Eigen::Vector3d Pwc2(p_wc2[0], p_wc2[1], p_wc2[2]);
+
+    const Eigen::Vector3d dPw = pw_ - Pwc2;
+    const Eigen::Vector3d pc2 = Qwc2.inverse() * dPw;
+    const Eigen::Vector3d pc2Norm = pc2 / pc2.z();
+    const Eigen::Vector2d projectObv2(pc2Norm.x() * K_(0, 0) + K_(0, 2),
+                                      pc2Norm.y() * K_(1, 1) + K_(1, 2));
+
+    // 记录残差
+    residuals[0] = projectObv2[0] - obv_[0];
+    residuals[1] = projectObv2[1] - obv_[1];
+
+    // 计算雅可比
+    if (jacobians && jacobians[0]) {
+        const auto& J_px2_Pc2Norm = K_.block(0, 0, 2, 3);
+        Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> J_res_Twc2(
+            jacobians[0]);
+        // 由于维度是关于四元数的，所以需要设置zero
+        J_res_Twc2.setZero();
+        const double d = 1 / pc2.z();
+        const double d2 = d * d;
+        Eigen::Matrix<double, 3, 3> J_Pc2Norm_Pc2;
+        J_Pc2Norm_Pc2 << d, 0, -pc2.x() * d2, 0, d, -pc2.y() * d2, 0, 0, 0;
+
+        const Eigen::Matrix<double, 2, 3> J_px2_Pc2 =
+            J_px2_Pc2Norm * J_Pc2Norm_Pc2;
+
+        const Eigen::Quaterniond Qc2w = Qwc2.inverse();
+        Eigen::Matrix<double, 3, 6> J_Pc2_Twc2;
+        // * Pc2 w.r.t t12
+        J_Pc2_Twc2.block<3, 3>(0, 3) = -Qc2w.toRotationMatrix();
+        J_Pc2_Twc2.block<3, 3>(0, 0) = SkewSymmetric(Qc2w * dPw);
+
+        J_res_Twc2.block<2, 6>(0, 0) = J_px2_Pc2 * J_Pc2_Twc2;
+    }
+
+    return true;
+}

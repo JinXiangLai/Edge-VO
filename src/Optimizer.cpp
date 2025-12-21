@@ -897,6 +897,7 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     }
 
     vector<double> vecInvZ1(optLandmark_.size());
+    ceres::LossFunction* huberLoss = new ceres::HuberLoss(config->huberDelta);
     for (size_t i = 0; i < optLandmark_.size(); ++i) {
         auto p = optLandmark_[i];
         vecInvZ1[i] = p->invZ_;
@@ -921,8 +922,9 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
                 depthParameterAdd = true;
                 problem.AddParameterBlock(&vecInvZ1[i], 1);
             }
-            problem.AddResidualBlock(costFunction, nullptr, vecTwc[host].data(),
-                                     vecTwc[target].data(), &vecInvZ1[i]);
+            problem.AddResidualBlock(costFunction, huberLoss,
+                                     vecTwc[host].data(), vecTwc[target].data(),
+                                     &vecInvZ1[i]);
         }
     }
 
@@ -930,30 +932,34 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     ceres::Solver::Options options;
     options.minimizer_progress_to_stdout = true;
     options.max_num_iterations = 100;
-    //options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
     //options.linear_solver_type = ceres::DENSE_SCHUR;
-    options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+    //options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
 
     options.minimizer_type = ceres::TRUST_REGION;
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    options.preconditioner_type = ceres::SCHUR_JACOBI;
+
+    options.function_tolerance = 1e-12;
+    options.gradient_tolerance = 1e-16;
+    options.parameter_tolerance = 1e-12;
+
     //options.logging_type =
     //    ceres::PER_MINIMIZER_ITERATION;  // 设置输出log便于bug排查
 
+    /*
     // Openvins 配置
-    // options.linear_solver_type = ceres::DENSE_SCHUR;
-    // options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    // // options.linear_solver_type = ceres::SPARSE_SCHUR;
-    // // options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    // // options.preconditioner_type = ceres::SCHUR_JACOBI;
-    // // options.linear_solver_type = ceres::ITERATIVE_SCHUR;
-    // // options.minimizer_progress_to_stdout = true;
-    // // options.linear_solver_ordering = ordering;
-    // options.function_tolerance = 1e-5;
-    // options.gradient_tolerance = 1e-4 * options.function_tolerance;
-    // 禁止调用glog??
-    // options.logging_type = ceres::LoggingType::SILENT;
-
+    options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
+    options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+    options.minimizer_progress_to_stdout = true;
+    options.linear_solver_ordering = ordering;
+    options.function_tolerance = 1e-5;
+    options.gradient_tolerance = 1e-4 * options.function_tolerance;
+    // 禁止调用glog
+    options.logging_type = ceres::LoggingType::SILENT;
+*/
     // 运行优化
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
@@ -1168,6 +1174,96 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
     }
 
     return sqrt(info.meanCost) < config->maxMeanProjectResidual2CreateKF;
+}
+
+bool Optimizer::OptimizeCurFrameCeres(Pose& Twc2, const int curFid,
+                                      int& totalPointNum, int& usefulPointNum,
+                                      ResidualInfo& info) {
+    // 构建优化问题所需观测
+    vector<shared_ptr<Landmark>> preLks;
+    vector<Eigen::Vector2d> preObvs;
+    vector<Eigen::Vector3d> stablePws;
+    vector<Eigen::Vector2d> stableObvs;
+    ResidualInfo lastCost;
+    {
+        lock_guard<mutex> lock(globalOptFlwMutex);
+        PreSelectLandmarkForTracking(preLks, preObvs);
+        totalPointNum = preLks.size();
+
+        if (preLks.empty()) {
+            cout << "useful landmark num for opt is: " << preLks.size()
+                 << " Error! may be no initialized???\n";
+            //exit(-1);
+            return false;
+        }
+
+#if defined(WRITE_MATCH_PAIR_IMAGE)
+        //WriteDebugTriangulateCase2Video(curFid);
+#endif
+        // 此处globalOptFlw只访问图像的size，不修改其内容，不需要加锁
+        // 注意：前端只能访问globalOptFlw，不能修改它
+        lastCost = SetOptimizeLandmarkForTracking(
+            preLks, preObvs, Twc2, globalOptFlw.prevImg_, usefulPointNum,
+            stablePws, stableObvs);
+    }
+
+    if (stablePws.size() < 100) {
+        cout << "use " << stablePws.size() << " landmarks to optimize!\n";
+    }
+
+    if (lastCost.usefulLandmarkNum < 20) {
+        cout << fmt::format("Error first useful constrint num: {}\n",
+                            lastCost.usefulLandmarkNum);
+        return false;
+    }
+
+    const auto& q = Twc2.q_wb_;
+    const auto& p = Twc2.t_wb_;
+    array<double, 7> optTwc2{q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z()};
+    ceres::Problem problem;
+    // 1、先指定需要参与优化的参数块对象
+    ceres::Manifold* poseParameterization = new PoseParameterization;
+    problem.AddParameterBlock(optTwc2.data(), 7, poseParameterization);
+
+    ceres::LossFunction* huberLoss = new ceres::HuberLoss(config->huberDelta);
+    for (size_t i = 0; i < stablePws.size(); ++i) {
+        const Eigen::Vector3d& pw = stablePws[i];
+        const Eigen::Vector2d& obv = stableObvs[i];
+        ceres::CostFunction* costFunc =
+            new ProjectionResidual(pw, obv, cam_->K_[0]);
+        problem.AddResidualBlock(costFunc, huberLoss, optTwc2.data());
+    }
+
+    // 2. 优化器配置
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 100;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+
+    options.minimizer_type = ceres::TRUST_REGION;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+
+    options.function_tolerance = 1e-12;
+    options.gradient_tolerance = 1e-16;
+    options.parameter_tolerance = 1e-12;
+
+    // 3. 运行优化
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    // 输出结果
+    std::cout << "Frame BA: " << summary.BriefReport() << std::endl;
+
+    const Eigen::Quaterniond q2(optTwc2[0], optTwc2[1], optTwc2[2], optTwc2[3]);
+    const Eigen::Vector3d p2(optTwc2[4], optTwc2[5], optTwc2[6]);
+    Twc2.q_wb_ = q2;
+    Twc2.t_wb_ = p2;
+
+    info = SetOptimizeLandmarkForTracking(preLks, preObvs, Twc2,
+                                          globalOptFlw.prevImg_, usefulPointNum,
+                                          stablePws, stableObvs);
+
+    return true;
 }
 
 void Optimizer::AddOneKeyFeame(KeyFrame* kf) {
@@ -2444,8 +2540,13 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
     int usefulPointNum = 0;
     ResidualInfo info;
     onlyPoseUpdate_ = true;
+#if USE_CERES2
+    const bool optSuccess = OptimizeCurFrameCeres(Twc2, kf2->id_, totalPointNum,
+                                                  usefulPointNum, info);
+#else
     const bool optSuccess =
         OptimizeCurFrame(Twc2, kf2->id_, totalPointNum, usefulPointNum, info);
+#endif
     onlyPoseUpdate_ = false;
     const double usefulRatio = double(usefulPointNum) / totalPointNum;
     cout << fmt::format(

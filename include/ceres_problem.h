@@ -96,3 +96,16 @@ class ProjectInvDepthResidual : public ceres::SizedCostFunction<2, 7, 7, 1> {
     Eigen::Vector2d obvFrame_;
     Eigen::Matrix3d K_;
 };
+
+class ProjectionResidual : public ceres::SizedCostFunction<2, 7> {
+   public:
+    ProjectionResidual(const Eigen::Vector3d& pw, const Eigen::Vector2d& obv,
+                       const Eigen::Matrix3d& K);
+    virtual bool Evaluate(double const* const* parameters, double* residuals,
+                          double** jacobians) const override;
+
+   private:
+    Eigen::Vector3d pw_;
+    Eigen::Vector2d obv_;
+    Eigen::Matrix3d K_;
+};

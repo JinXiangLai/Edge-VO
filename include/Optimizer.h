@@ -37,6 +37,9 @@ class Optimizer {
     bool OptimizeCurFrame(Pose& Twc2, const int curFid, int& totalPointNum,
                           int& usefulPointNum, ResidualInfo& info);
 
+    bool OptimizeCurFrameCeres(Pose& Twc2, const int curFid, int& totalPointNum,
+                          int& usefulPointNum, ResidualInfo& info);
+
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Eigen::Vector3d>& lk1s,
         const std::vector<Eigen::Vector2d>& obvs, const Pose& Twc2);
