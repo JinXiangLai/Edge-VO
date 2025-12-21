@@ -38,14 +38,18 @@ add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/tensorrtbuffer)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV 4 REQUIRED)
 
-add_definitions(-DUSE_SUPERPOINT_AND_LIGHTGLUE)
+#add_definitions(-DUSE_SUPERPOINT_AND_LIGHTGLUE)
+add_definitions(-DUSE_CERES2)
 find_package(CUDA REQUIRED)
+
+find_package(Ceres 2 REQUIRED)
 
 include_directories(
     ${PROJECT_SOURCE_DIR}/include
     ${EIGEN3_INCLUDE_DIR}
     ${OpenCV_INCLUDE_DIRS}
     ${CUDA_INCLUDE_DIRS}
+    ${Ceres_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/3rdparty/tensorrtbuffer/include
 )
 
@@ -62,13 +66,15 @@ add_library(edge_slam SHARED
     src/SuperPoint.cpp
     src/LightGlue.cpp
     src/OpticalFlowStruct.cpp
+    src/ceres_problem.cpp
 )
 target_link_libraries(edge_slam
     ${OpenCV_LIBS}
     ${EIGEN3_LIBS}
     -lyaml-cpp
     -lfmt
-    
+    Ceres::ceres # 若是使用ceres会与opencv的冲突，所以必须要命名空间，这里的命名空间就是存放libceres.a的文件夹名字
+
     ${CUDA_LIBRARIES}
     nvinfer
     nvonnxparser
