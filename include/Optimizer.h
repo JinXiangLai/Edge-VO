@@ -99,6 +99,8 @@ class Optimizer {
 
     bool ExecuteWindowOptimize();
 
+    bool ExecuteWindowOptimizeCeres();
+
     ResidualInfo CalculateResidualWindow(const bool useBackUpStatus = false);
 
     ResidualInfo SetOptimizeStatusVariableForWindowBA(

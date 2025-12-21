@@ -11,6 +11,7 @@
 #include "KeyFrame.h"
 #include "Landmark.h"
 #include "Utils.h"
+#include "ceres_problem.h"
 
 using namespace std;
 using namespace cv;
@@ -694,12 +695,14 @@ bool Optimizer::ExecuteWindowOptimize() {
     int continousNoImprovementNum = 0;
     bool acceptNewVariableStatus = true;
     WinBApreAssignMatrixMemory();
+    int lastAcceptBAupdateTime = 0;
     for (int i = 0; i < maxIte_; ++i) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
 
         if (acceptNewVariableStatus) {
             // 只在状态量更新时需要重新计算信息矩阵和梯度，以节省大量的计算时间
             ConstructJ_H_b_g(i == 0);
+            lastAcceptBAupdateTime = i;
         }
 
         if (i == 0) {
@@ -853,14 +856,123 @@ bool Optimizer::ExecuteWindowOptimize() {
         "priorConstraintChi2: {:.1f}, usefulLandmark num: {}, "
         "cost decrease ratio: {:.1f}%, usefulNum ratio: {:.1f}%, total "
         "optimize "
-        "spend: {:.3f}ms in window\n",
+        "spend: {:.3f}ms in window, lastAcceptBAupdateTime: {}\n",
         firstCost.cost, lastCost.cost, firstCost.meanCost, lastCost.meanCost,
         g_.norm(), lastCost.priorConstraintChi2, lastCost.usefulLandmarkNum,
         ((firstCost.cost - lastCost.cost) / firstCost.cost) * 100,
         double(lastCost.usefulLandmarkNum) / optLandmark_.size() * 100,
-        spendTime);
+        spendTime, lastAcceptBAupdateTime);
 
     return lastCost.cost < firstCost.cost;
+}
+
+bool Optimizer::ExecuteWindowOptimizeCeres() {
+    ResidualInfo lastCost = SetOptimizeStatusVariableForWindowBA();
+
+    // 丢失追踪，重新进行
+    if (lastCost.usefulLandmarkNum < 10) {
+        cerr << fmt::format("lastCost.usefulLandmarkNum: {} too small!!!\n",
+                            lastCost.usefulLandmarkNum);
+        return false;
+    }
+
+    // 构建优化问题
+    ceres::Problem problem;
+    // 1、先指定需要参与优化的参数块对象
+    ceres::Manifold* poseParameterization = new PoseParameterization;
+    // qw, qx, qy, qz, qw
+    unordered_map<KeyFrame*, array<double, 7>> vecTwc;
+    for (KeyFrame* kf : window_) {
+        const Eigen::Quaterniond& q = kf->Twc_.q_wb_;
+        const Eigen::Vector3d& p = kf->Twc_.t_wb_;
+        vecTwc.insert({kf, {q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z()}});
+        problem.AddParameterBlock(vecTwc[kf].data(), 7, poseParameterization);
+    }
+    problem.SetParameterBlockConstant(vecTwc[window_[0]].data());
+    const bool canFixSecondKF =
+        window_.size() >
+        static_cast<size_t>(config->maxKFnumInWindow / 2.0 + 0.5);
+    if (canFixSecondKF) {
+        problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
+    }
+
+    vector<double> vecInvZ1(optLandmark_.size());
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        auto p = optLandmark_[i];
+        vecInvZ1[i] = p->invZ_;
+        if (p->NoUsed()) {
+            continue;
+        }
+
+        // 注意，必须确保每个landmark都能构建残差以成为状态变量，否则优化变量位置会有问题，导致最终更新出错
+        KeyFrame* host = p->host_;
+        bool depthParameterAdd = false;
+        for (const auto& kf2obv : p->target_) {
+            // 需要注意每个关键帧、每个landmark在H矩阵中的位置
+            KeyFrame* target = kf2obv.first;
+            if (target == host) {
+                continue;
+            }
+            const auto& p2 = target->kpts_.row(kf2obv.second);
+            ceres::CostFunction* costFunction = new ProjectInvDepthResidual(
+                p->GetHostFrameObv(), Eigen::Vector2d(p2[0], p2[1]),
+                cam_->K_[0]);
+            if (!depthParameterAdd) {
+                depthParameterAdd = true;
+                problem.AddParameterBlock(&vecInvZ1[i], 1);
+            }
+            problem.AddResidualBlock(costFunction, nullptr, vecTwc[host].data(),
+                                     vecTwc[target].data(), &vecInvZ1[i]);
+        }
+    }
+
+    // 配置优化选项
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 100;
+    //options.linear_solver_type = ceres::SPARSE_SCHUR;
+    //options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+
+    options.minimizer_type = ceres::TRUST_REGION;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
+    //options.logging_type =
+    //    ceres::PER_MINIMIZER_ITERATION;  // 设置输出log便于bug排查
+
+    // Openvins 配置
+    // options.linear_solver_type = ceres::DENSE_SCHUR;
+    // options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    // // options.linear_solver_type = ceres::SPARSE_SCHUR;
+    // // options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    // // options.preconditioner_type = ceres::SCHUR_JACOBI;
+    // // options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+    // // options.minimizer_progress_to_stdout = true;
+    // // options.linear_solver_ordering = ordering;
+    // options.function_tolerance = 1e-5;
+    // options.gradient_tolerance = 1e-4 * options.function_tolerance;
+    // 禁止调用glog??
+    // options.logging_type = ceres::LoggingType::SILENT;
+
+    // 运行优化
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+
+    // 输出结果
+    std::cout << summary.BriefReport() << std::endl;
+
+    for (auto& kf2Pose : vecTwc) {
+        const auto& d = kf2Pose.second;
+        const Eigen::Quaterniond q(d[0], d[1], d[2], d[3]);
+        const Eigen::Vector3d p(d[4], d[5], d[6]);
+        kf2Pose.first->SetTwc(Pose(q, p));
+    }
+
+    for (size_t i = 0; i < optLandmark_.size(); ++i) {
+        optLandmark_[i]->SetInvZvalue(vecInvZ1[i]);
+    }
+
+    return true;
 }
 
 void Optimizer::PreSelectLandmarkForTracking(vector<shared_ptr<Landmark>>& lk1s,
@@ -1006,7 +1118,8 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
                 cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
                      << ", norm: " << delta_x.norm() << "\n";
                 cout << fmt::format(
-                    "CurF BA iterate {} times, firstCost: {:.1f}, lastCost: "
+                    "CurF BA iterate {} times, firstCost: {:.1f}, "
+                    "lastCost: "
                     "{:.1f}, newCost: "
                     "{:.1f}, "
                     "useful landmark: {}, "
@@ -1452,7 +1565,8 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
         max(config->maxProjectError * config->maxProjectError,
             sumErrorVec[static_cast<int>(kMaxErrorRatio * usefulIdx)]);
     cout << fmt::format(
-        "win BA error range: [{:.1f}, {:.1f}], usefulIdx: {}, maxChi2: {:.1f}, "
+        "win BA error range: [{:.1f}, {:.1f}], usefulIdx: {}, maxChi2: "
+        "{:.1f}, "
         "sumErrorVec.size: {}\n",
         sumErrorVec.front(), sumErrorVec.back(), usefulIdx, maxChi2,
         sumErrorVec.size());
@@ -1474,7 +1588,8 @@ Optimizer::ResidualInfo Optimizer::SetOptimizeStatusVariableForWindowBA(
     }
 
     cout << fmt::format(
-        "window BA: totalSelectConstraintNum: {}, set opt variable residual "
+        "window BA: totalSelectConstraintNum: {}, set opt variable "
+        "residual "
         "info.all.cost: {:.1f}, useful "
         "landmark num: {}, "
         "total constraint num: {}, mean cost: {:.1f}\n",
@@ -2155,7 +2270,11 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
 
     SetInitLambda(10.0);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+#if USE_CERES2
+    const bool winOptSuccess = ExecuteWindowOptimizeCeres();
+#else
     const bool winOptSuccess = ExecuteWindowOptimize();
+#endif
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
     cout << fmt::format("win size: {}, win BA spend {:.3f}ms!\n",
@@ -2281,7 +2400,8 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
             minTrackFeatureNum > kMinTrackFeatureNum) {
             smallId = static_cast<int>(window_.size() - 1);
             cout << fmt::format(
-                "will remove the last kf, for minTrackFeatureNum: {} > {}.\n",
+                "will remove the last kf, for minTrackFeatureNum: {} > "
+                "{}.\n",
                 minTrackFeatureNum, kMinTrackFeatureNum);
         }
 
