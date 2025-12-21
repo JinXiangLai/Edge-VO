@@ -35,6 +35,7 @@ string KeyFrame::poseFilePath, KeyFrame::kfPoseFilePath;
 vector<pair<double, string>> KeyFrame::vecTime2Pose;
 shared_ptr<SuperPoint> KeyFrame::superpointPtr;
 shared_ptr<LightGlue> KeyFrame::lightgluePtr;
+cv::Mat KeyFrame::superpointLocation;
 
 class Landmark;
 
@@ -263,7 +264,7 @@ void KeyFrame::ExtractSuperpoint() {
             kpts_.rows(), ChronoMillisecTimeDuration(t0, t1));
         for (int i = 0; i < kpts_.rows(); ++i) {
             const cv::Point2f p(kpts_(i, 0), kpts_(i, 1));
-            cv::circle(debugGrayImg_, p, 2, kColor.at("white"));
+            cv::circle(debugGrayImg_, p, 2, kColor.at("orange"));
         }
     }
 }
@@ -365,15 +366,19 @@ void KeyFrame::ExtractFastPoints() {
     }
 
     // 需要把之前帧在当前帧的匹配特征点加上，注意，此时已经移除optflw中所有无效Landmark*
-    kpts_.resize(newPtsIdx.size() + globalOptFlw.prevPts_.size(), 2);
+    const int fastPointNum = newPtsIdx.size() + globalOptFlw.prevPts_.size();
+    kpts_.conservativeResize(desc_.rows() + fastPointNum, 2);
+    //kpts_.resize(newPtsIdx.size() + globalOptFlw.prevPts_.size(), 2);
+    int startRow = desc_.rows();
     for (size_t i = 0; i < globalOptFlw.prevPts_.size(); ++i) {
         const cv::Point2f& p = globalOptFlw.prevPts_[i];
-        kpts_.row(i) << p.x, p.y;
+        kpts_.row(startRow + i) << p.x, p.y;
     }
 
+    startRow += int(globalOptFlw.prevPts_.size());
     for (size_t i = 0; i < newPtsIdx.size(); ++i) {
         const cv::Point2f& p = pts[newPtsIdx[i]];
-        kpts_.row(globalOptFlw.prevPts_.size() + i) << p.x, p.y;
+        kpts_.row(startRow + i) << p.x, p.y;
     }
 
     cout << fmt::format(
@@ -384,6 +389,15 @@ void KeyFrame::ExtractFastPoints() {
 }
 
 vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
+    if (superpointLocation.empty()) {
+        superpointLocation = cv::Mat::zeros(grayImg_.size(), 0);
+    } else {
+        superpointLocation.setTo(0);
+    }
+    for (int i = 0; i < kpts_.rows(); ++i) {
+        const auto& p = kpts_.row(i);
+        superpointLocation.ptr<uchar>(int(p[1]))[int(p[0])] = 1;
+    }
     vector<cv::Point2f> res;
     res.reserve(config->extractFastNumEachFrame);
     for (int i = 0; i < grayImg_.rows; i += eachGridSize.height) {
@@ -391,6 +405,9 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
 
             const int w = min(eachGridSize.width, grayImg_.cols - j);
             const int h = min(eachGridSize.height, grayImg_.rows - i);
+            //if (cv::countNonZero(superpointLocation(cv::Rect2i(j, i, w, h)))) {
+            //    continue;
+            //}
             const cv::Mat& gridImg = grayImg_(cv::Rect2i(j, i, w, h));
             vector<cv::KeyPoint> pts;
             detectorTh1->detect(gridImg, pts);
@@ -410,7 +427,10 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
             // res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
             // 故可以全部添加，影响不大
             for (const auto& p : pts) {
-                res.emplace_back(j + p.pt.x, i + p.pt.y);
+                if (!cv::countNonZero(superpointLocation(
+                        cv::Rect2i(p.pt.x - 2, p.pt.y - 2, 4, 4)))) {
+                    res.emplace_back(j + p.pt.x, i + p.pt.y);
+                }
             }
         }
     }
@@ -441,6 +461,7 @@ void KeyFrame::ExtractFeaturetPoints() {
 #ifdef USE_SUPERPOINT_AND_LIGHTGLUE
     ExtractSuperpoint();
 #else
+    ExtractSuperpoint();
     ExtractFastPoints();
 #endif
 
@@ -598,18 +619,26 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         lock_guard<mutex> lock(globalOptFlwMutex);
         globalOptFlw.historyLandmarkNum_ = globalOptFlw.prevPts_.size();
         // 历史关键点在当前帧的跟踪结果需要进行相互观测赋值
+        int startRow = desc_.rows();
         for (size_t i = 0; i < globalOptFlw.prevPts_.size(); ++i) {
-            landmark_[i] = globalOptFlw.trackLandmark_[i];
-            landmark_[i]->AddNewKFobservation(this, i);
+            const int row = startRow + i;
+            landmark_[row] = globalOptFlw.trackLandmark_[i];
+            landmark_[row]->AddNewKFobservation(this, row);
         }
 
         // 初始化当前新建关键帧进行光流跟踪所需的结构，仅针对当前KF
-        for (int i = static_cast<int>(optFlw.prevPts_.size()); i < kpts_.rows();
-             ++i) {
+        startRow += int(globalOptFlw.prevPts_.size());
+        for (int i = startRow; i < kpts_.rows(); ++i) {
             // 当前帧新提取的关键帧加入结果
             landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
-            optFlw.trackLandmark_.emplace_back(landmark_[i]);
-            optFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
+            globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
+            globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
+        }
+
+        for (int i = 0; i < desc_.rows(); ++i) {
+            landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+            globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
+            globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
 
         globalOptFlw.SetTotalFeatureCreated();

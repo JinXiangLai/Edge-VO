@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
             (findMatchRatio < 0.7);
 
         const bool frequentInsertKf =
-            curF.timestamp_ - win.back()->timestamp_ > 0.15;
+            curF.timestamp_ - win.back()->timestamp_ > 1.0;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "

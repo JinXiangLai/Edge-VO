@@ -175,6 +175,8 @@ class KeyFrame {
     // superpoint和lightglue
     static std::shared_ptr<SuperPoint> superpointPtr;
     static std::shared_ptr<LightGlue> lightgluePtr;
+
+    static cv::Mat superpointLocation;
 };
 
 #endif
