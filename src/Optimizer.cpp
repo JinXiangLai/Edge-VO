@@ -2434,13 +2434,16 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
                 globalOptFlw.GetHistoryTrackFeatureRatio())
          << endl;
     // 历史地图点足够多，并且历史跟踪特征点足够多时，才把最新帧用作三角化
-    if (historyTrackInitLandmarkNum > 200 &&
-        globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5) {
-        // 直接移除最新帧，但会导致BA优化无效
-        return window_.size();
-    }
+    bool canRemoveNewestKf = historyTrackInitLandmarkNum > 200 &&
+                             globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5;
+    //if (historyTrackInitLandmarkNum > 200 &&
+    //    globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5) {
+    //    // 直接移除最新帧，但会导致BA优化无效
+    //    return window_.size();
+    //}
 
     int smallId = 0;
+    size_t minTrackFeatureNum = 1e10;
     // 说明预设关键帧数量较少，直接移除最老帧
     if (window_.size() > 3) {
 #if 0
@@ -2480,9 +2483,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
             ++trackFeatNumEachKF[kfIdx];
         }
 #endif
-
         // 找出最小值
-        size_t minTrackFeatureNum = trackFeatNumEachKF[smallId];
         for (size_t i = 0; i < trackFeatNumEachKF.size(); ++i) {
             if (trackFeatNumEachKF[i] < minTrackFeatureNum) {
                 smallId = i;
@@ -2517,6 +2518,10 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
             fmt::format("; will delete window[{}], minTrackFeatureNum: {}\n",
                         smallId, trackFeatNumEachKF[smallId]));
         cout << logInfo;
+    }
+
+    if (canRemoveNewestKf && minTrackFeatureNum > 50) {
+        return window_.size();
     }
 
     return smallId;

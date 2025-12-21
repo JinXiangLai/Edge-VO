@@ -428,7 +428,7 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
             // 故可以全部添加，影响不大
             for (const auto& p : pts) {
                 if (!cv::countNonZero(superpointLocation(
-                        cv::Rect2i(p.pt.x - 2, p.pt.y - 2, 4, 4)))) {
+                        cv::Rect2i(p.pt.x - 1, p.pt.y - 1, 3, 3)))) {
                     res.emplace_back(j + p.pt.x, i + p.pt.y);
                 }
             }

@@ -18,7 +18,7 @@ Pcg: [0, 0, 0] # tx ty tz
 Camera.imageScale: 1.0
 wheelRadius: 0
 
-maxDepth: 50.0 # 影响重投影匹配，需要设置大点
+maxDepth: 150.0 # 影响重投影匹配，需要设置大点
 minDepth: 0.01
 
 matchNoise: 3.0 # 沿极线方向的匹配误差像素
@@ -70,8 +70,8 @@ showDebugImg: false
 firstImgIdx: 10
 loopClosureImgIdx: 10
 
-cannyLowerTh: 80 # 150
-cannyupperTh: 120 # 160
+cannyLowerTh: 60 # 150
+cannyupperTh: 90 # 160
 
 # 存在相邻边缘像素被匹配的情况
 minSearchStep: 1 # 与深度有关系，深度大时，视野大，增大该值，深度小时，视野小减小该值，但是由于有边缘特征，所以还是直接按逐个像素点搜索？
@@ -118,7 +118,7 @@ debugKFpointSet: [97_167]
 # 显示相关flag
 debugShowGlobalMap: false # 默认显示局部地图
 debugShowOnlineResult3D: true # 是否显示viz3d窗口
-debugRunSerially: false
+debugRunSerially: true
 
 # 若修改了代码中的engine配置，则需要重新生成
 superpoint.onnxFilePath: ../src/onnx_weights/superpoint_480x640.onnx
