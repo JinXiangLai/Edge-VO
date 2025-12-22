@@ -41,6 +41,43 @@ find_package(OpenCV 4 REQUIRED)
 #add_definitions(-DUSE_SUPERPOINT_AND_LIGHTGLUE)
 add_definitions(-DUSE_CERES2)
 find_package(CUDA REQUIRED)
+# ============ 添加：为旧版 CMake 创建 CUDA 目标 ============
+if(CMAKE_VERSION VERSION_LESS "3.17" AND CUDA_FOUND)
+    message(STATUS "Creating legacy CUDA targets for CMake ${CMAKE_VERSION}")
+    
+    # 创建 CUDA::cudart 目标
+    if(NOT TARGET CUDA::cudart)
+        add_library(CUDA::cudart INTERFACE IMPORTED)
+        set_target_properties(CUDA::cudart PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS}"
+            INTERFACE_LINK_LIBRARIES "cudart")
+    endif()
+    
+    # 创建 CUDA::cublas 目标
+    if(NOT TARGET CUDA::cublas)
+        add_library(CUDA::cublas INTERFACE IMPORTED)
+        set_target_properties(CUDA::cublas PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS}"
+            INTERFACE_LINK_LIBRARIES "cublas")
+    endif()
+    
+    # 创建 CUDA::cusolver 目标
+    if(NOT TARGET CUDA::cusolver)
+        add_library(CUDA::cusolver INTERFACE IMPORTED)
+        set_target_properties(CUDA::cusolver PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS}"
+            INTERFACE_LINK_LIBRARIES "cusolver")
+    endif()
+    
+    # 创建 CUDA::cusparse 目标
+    if(NOT TARGET CUDA::cusparse)
+        add_library(CUDA::cusparse INTERFACE IMPORTED)
+        set_target_properties(CUDA::cusparse PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS}"
+            INTERFACE_LINK_LIBRARIES "cusparse")
+    endif()
+endif()
+# ============ 结束创建目标 ============
 
 find_package(Ceres 2 REQUIRED)
 
