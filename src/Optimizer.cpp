@@ -2435,7 +2435,7 @@ int Optimizer::SelectOneKF2Marginalization(const KeyFrame& curKF) {
          << endl;
     // 历史地图点足够多，并且历史跟踪特征点足够多时，才把最新帧用作三角化
     bool canRemoveNewestKf = historyTrackInitLandmarkNum > 200 &&
-                             globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5;
+                             globalOptFlw.GetHistoryTrackFeatureRatio() > 0.7;
     //if (historyTrackInitLandmarkNum > 200 &&
     //    globalOptFlw.GetHistoryTrackFeatureRatio() > 0.5) {
     //    // 直接移除最新帧，但会导致BA优化无效
