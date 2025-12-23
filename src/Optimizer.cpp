@@ -23,12 +23,7 @@ constexpr double kMaxErrorRatio = 0.5;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
-    : lambda_(lambda),
-      maxIte_(maxIte),
-      onlyPoseUpdate_(onlyPoseUpdate),
-      cam_(cam) {
-    maxIte_ = config->maxIterationLM;
-}
+    : onlyPoseUpdate_(onlyPoseUpdate), cam_(cam) {}
 
 Optimizer::~Optimizer() {
     if (debugTrackLostStatusVideoWriter_.isOpened()) {
@@ -696,18 +691,20 @@ bool Optimizer::ExecuteWindowOptimize() {
     bool acceptNewVariableStatus = true;
     WinBApreAssignMatrixMemory();
     int lastAcceptBAupdateTime = 0;
-    for (int i = 0; i < maxIte_; ++i) {
+    double lambda = config->initLambda;
+    bool converge = false;
+    int inerIte = -1;
+    for (int acceptIte = 0; acceptIte < config->maxIterationLM;) {
         chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-
+        ++inerIte;
         if (acceptNewVariableStatus) {
             // 只在状态量更新时需要重新计算信息矩阵和梯度，以节省大量的计算时间
-            ConstructJ_H_b_g(i == 0);
-            lastAcceptBAupdateTime = i;
+            ConstructJ_H_b_g(inerIte == 0);
+            lastAcceptBAupdateTime = acceptIte;
         }
 
-        if (i == 0) {
-            AdaptSetInitLambda();
-            // SetInitLambda(10.0);
+        if (inerIte == 0) {
+            AdaptSetInitLambda(H_, lambda);
             cout << "window BA: H_.diag: " << H_.diagonal().head(12).transpose()
                  << "\ng_: " << g_.head(12).transpose() << "\n";
         }
@@ -735,15 +732,15 @@ bool Optimizer::ExecuteWindowOptimize() {
             //_lambda.head(6).setConstant(
             //    g_.head(6).cwiseAbs().maxCoeff() * 1e4);  // 首帧的约束足够大，但不能使矩阵病态
             //_lambda[0] = 1e20;
-            if (i == 0) {
-                cout << "Fixed First Frame!!! lambda_: " << lambda_ << endl;
+            if (inerIte == 0) {
+                cout << "Fixed First Frame!!! lambda: " << lambda << endl;
             }
         }
         for (int i = 0; i < H_.rows(); ++i) {
 #if USE_SPARSE_H_MATRIX
-            *(colMajorSparseMatrixRowId2DataPtr_[i][i]) += lambda_;
+            *(colMajorSparseMatrixRowId2DataPtr_[i][i]) += lambda;
 #else
-            H_(i, i) += lambda_;
+            H_(i, i) += lambda;
 #endif
         }
 
@@ -751,12 +748,13 @@ bool Optimizer::ExecuteWindowOptimize() {
 
         chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
 #if USE_SPARSE_H_MATRIX
+        delta_x = SchurCompleteSolve(H_, g_, window_.size(),
+                                     lastCost.usefulLandmarkNum, inerIte == 0,
+                                     inerIte % 20 == 0);
+#else
         delta_x =
             SchurCompleteSolve(H_, g_, window_.size(),
-                               lastCost.usefulLandmarkNum, i == 0, i % 20 == 0);
-#else
-        delta_x = SchurCompleteSolve(H_, g_, window_.size(),
-                                     lastCost.usefulLandmarkNum, i % 20 == 0);
+                               lastCost.usefulLandmarkNum, inerIte % 20 == 0);
 #endif
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
@@ -782,16 +780,15 @@ bool Optimizer::ExecuteWindowOptimize() {
         if (margKFstatus_) {
             // 需要考虑先验残差约束
             newCost.priorConstraintChi2 = CalculatePriorCost(delta_x);
+            newCost.cost += newCost.priorConstraintChi2;
         }
-        newCost.cost += newCost.priorConstraintChi2;
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
-        double costRelativeAbsDiff = 100;
         const double predictReduction =
-            ComputePredictionReduction(delta_x, g_, H_);
+            ComputePredictionReduction(lambda, delta_x, g_, H_);
         UpdateLMlambda(lastCost, newCost, predictReduction,
                        acceptNewVariableStatus, continousNoImprovementNum,
-                       costRelativeAbsDiff, lambda_);
+                       lambda);
         if (!acceptNewVariableStatus) {
             for (size_t i = 0; i < optLandmark_.size(); ++i) {
                 if (!optLandmark_[i]->NoUsed()) {
@@ -802,20 +799,24 @@ bool Optimizer::ExecuteWindowOptimize() {
                 window_[i]->BackUpStatus();
             }
         } else {
+            converge = LMstopJudge(continousNoImprovementNum, lambda, lastCost,
+                                   newCost, delta_x);
             lastCost = newCost;
             // 更新先验残差构成信息项
             if (margKFstatus_) {
                 UpdatePriorDeltaX0(delta_x);
             }
+            ++acceptIte;  // 一次迭代成功
         }
 
-        if (config->iterateLogFreqLM > 0 && i % config->iterateLogFreqLM == 0) {
+        if (config->iterateLogFreqLM > 0 &&
+            inerIte % config->iterateLogFreqLM == 0) {
             cout << fmt::format(
                 "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
                 "{:.1f}, useful lk num: {}, "
                 "lambda: {}.\n",
-                i, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
-                lambda_);
+                inerIte, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
+                lambda);
             chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
             cout << fmt::format(
                 "ConstructJ_H_b_g spend: {:.3f}ms, Add lambda spend: {:.3f}, "
@@ -834,8 +835,7 @@ bool Optimizer::ExecuteWindowOptimize() {
                 ChronoMillisecTimeDuration(t1, t8));
         }
 
-        if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff, lambda_,
-                        delta_x)) {
+        if (converge || lambda > config->maxLambdaValueLM) {
             break;
         }
     }
@@ -1093,26 +1093,25 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
         bool acceptNewVariableStatus = true;
         Eigen::Matrix<double, 6, 6> hessianMatrix;
         Eigen::Matrix<double, 6, 1> gradient;
-        for (int i = 0; i < maxIte_; ++i) {
+        constexpr int kMaxIterativeTime = 100;
+        bool converge = false;
+        int inerIte = -1;
+        for (int acceptIte = 0; acceptIte < kMaxIterativeTime;) {
+            ++inerIte;
             if (acceptNewVariableStatus) {
                 // 只需要在状态量更新的时候重新线性化一次即可，以节省计算时间
                 CalculateHandGradiantCurFrame(stablePws, stableObvs, Twc2,
                                               hessianMatrix, gradient);
             }
-            if (i == 0) {
+            if (inerIte == 0) {
                 cout << "frame BA: hessianMatrix.diag: "
                      << hessianMatrix.diagonal().transpose()
                      << "\ng: " << gradient.transpose() << "\n";
-            }
-
-            Eigen::Matrix<double, 6, 1> _lambda;
-            _lambda.setConstant(lambda);
-            if (hessianMatrix.diagonal().head(6).isApproxToConstant(0)) {
-                _lambda.head(6).setConstant(0);
+                AdaptSetInitLambda(hessianMatrix, lambda);
             }
 
             // debug, 返回J, 判断H, g计算的正确性
-            hessianMatrix.diagonal() += _lambda;
+            hessianMatrix.diagonal().array() += lambda;
             const Eigen::Matrix<double, 6, 1> delta_x =
                 hessianMatrix.ldlt().solve(gradient);
 
@@ -1126,7 +1125,7 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
                 CalculateResidualCurFrame(stablePws, stableObvs, Twc2);
 
             if (config->iterateLogFreqLM > 0 &&
-                i % config->iterateLogFreqLM == 0) {
+                acceptIte % config->iterateLogFreqLM == 0) {
                 cout << setprecision(5) << "delta_pose: " << delta_x.transpose()
                      << ", norm: " << delta_x.norm() << "\n";
                 cout << fmt::format(
@@ -1136,27 +1135,29 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
                     "{:.1f}, "
                     "useful landmark: {}, "
                     "lambda: {}.\n",
-                    i, firstCost.cost, lastCost.cost, newCost.cost,
+                    acceptIte, firstCost.cost, lastCost.cost, newCost.cost,
                     newCost.usefulLandmarkNum, lambda);
             }
 
-            double costRelativeAbsDiff = 100;
             const double predictReduction = ComputePredictionReductionFrame(
                 lambda, delta_x, gradient, hessianMatrix);
             UpdateLMlambda(lastCost, newCost, predictReduction,
                            acceptNewVariableStatus, continousNoImprovementNum,
-                           costRelativeAbsDiff, lambda);
+                           lambda);
             // LM 方法
             if (!acceptNewVariableStatus) {
                 Twc2 = poseBackup;
             } else {
+                converge = LMstopJudge(continousNoImprovementNum, lambda,
+                                       lastCost, newCost, delta_x);
                 lastCost = newCost;
+                ++acceptIte;  // 更新成功才算一次迭代
             }
 
-            if (LMstopJudge(continousNoImprovementNum, costRelativeAbsDiff,
-                            lambda, delta_x)) {
+            if (converge || lambda > config->maxLambdaValueLM) {
                 cout << fmt::format(
-                    "frame BA iterative info: ite: {}, stop i: {}\n", ite, i);
+                    "frame BA iterative info: ite: {}, stop i: {}\n", ite,
+                    acceptIte);
                 break;
             }
         }
@@ -1896,21 +1897,22 @@ bool Optimizer::CalculatePriorCostChi2(const Eigen::VectorXd& deltaX) {
 
 #if USE_SPARSE_H_MATRIX
 double Optimizer::ComputePredictionReduction(
-    const Eigen::VectorXd& deltaX, const Eigen::VectorXd& g,
-    const Eigen::SparseMatrix<double>& H) {
+    const double lambda, const Eigen::VectorXd& deltaX,
+    const Eigen::VectorXd& g, const Eigen::SparseMatrix<double>& H) {
     // 实际下降值为： lastCost - newCost
     // g = -J.T * r
     return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
-           0.5 * lambda_ * deltaX.squaredNorm();
+           0.5 * lambda * deltaX.squaredNorm();
 }
 #else
-double Optimizer::ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+double Optimizer::ComputePredictionReduction(const double lambda,
+                                             const Eigen::VectorXd& deltaX,
                                              const Eigen::VectorXd& g,
                                              const Eigen::MatrixXd& H) {
     // 实际下降值为： lastCost - newCost
     // g = -J.T * r
     return -0.5 * deltaX.dot(H * deltaX) + deltaX.dot(g) -
-           0.5 * lambda_ * deltaX.squaredNorm();
+           0.5 * lambda * deltaX.squaredNorm();
 }
 #endif
 
@@ -1927,16 +1929,14 @@ double Optimizer::ComputePredictionReductionFrame(
 void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
                                const Optimizer::ResidualInfo& newCost,
                                const double predictReduction, bool& accept,
-                               int& continousNoImprovementNum,
-                               double& costRelativeAbsDiff, double& lambda) {
-    // TODO: 使用更好的LM更新方式
-    costRelativeAbsDiff = lastCost.cost - newCost.cost;
+                               int& continousNoImprovementNum, double& lambda) {
+    const double costRelativeAbsDiff = lastCost.cost - newCost.cost;
     const double rho = costRelativeAbsDiff / (predictReduction + 1e-12);
     if (rho > 0) {
         if (rho > 0.75) {
             lambda = max(0.3 * lambda, 1e-9);
         } else {
-            lambda = max(0.99 * lambda, 1e-9);
+            lambda = max(lambda, 1e-9);
         }
         accept = true;
         continousNoImprovementNum = 0;
@@ -1945,15 +1945,15 @@ void Optimizer::UpdateLMlambda(const Optimizer::ResidualInfo& lastCost,
         accept = false;
         ++continousNoImprovementNum;
     }
-    costRelativeAbsDiff = abs(costRelativeAbsDiff);
 }
 
 bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
-                            const double& costRelativeAbsDiff,
-                            const double lambda, const Eigen::VectorXd& delta) {
-    const bool lambdaTestEnough = lambda > config->maxLambdaValueLM ||
-                                  lambda < (1.0 / config->maxLambdaValueLM);
-    if (costRelativeAbsDiff < config->convergeCostDiffLM && lambdaTestEnough) {
+                            const double lambda, const ResidualInfo& last,
+                            const ResidualInfo& cur,
+                            const Eigen::VectorXd& delta) {
+    const double costRelativeAbsDiff =
+        last.cost - cur.cost;  // cur一定要比last小
+    if (costRelativeAbsDiff < config->convergeCostDiffLM * last.cost) {
         cout << fmt::format("LM cost diff: {} converge!\n",
                             costRelativeAbsDiff);
         return true;
@@ -1962,13 +1962,7 @@ bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
         cout << fmt::format("lambad too large: {}\n", lambda);
         return true;
     }
-    if (continousNoImprovementNum > config->maxNoImprovementCountLM &&
-        lambdaTestEnough) {
-        cout << fmt::format("continousNoImprovementNum: {}, lambda: {}\n",
-                            continousNoImprovementNum, lambda);
-        return true;
-    }
-    if (delta.norm() < 1e-5 && lambdaTestEnough) {
+    if (delta.maxCoeff() < 1e-9) {
         return true;
     }
 
@@ -2370,7 +2364,6 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     //    }
     //}
 
-    SetInitLambda(10.0);
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
 #if USE_CERES2
     const bool winOptSuccess = ExecuteWindowOptimizeCeres();
@@ -2576,9 +2569,9 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
     return optSuccess;
 }
 
-void Optimizer::AdaptSetInitLambda() {
+void Optimizer::AdaptSetInitLambda(const Eigen::MatrixXd& H, double& lambda) {
     // lambda_ = 1.0;
-    lambda_ = config->initLambda;
+    lambda = min(H.diagonal().maxCoeff(), config->initLambda);
 }
 
 void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {

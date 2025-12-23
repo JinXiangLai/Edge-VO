@@ -38,7 +38,7 @@ class Optimizer {
                           int& usefulPointNum, ResidualInfo& info);
 
     bool OptimizeCurFrameCeres(Pose& Twc2, const int curFid, int& totalPointNum,
-                          int& usefulPointNum, ResidualInfo& info);
+                               int& usefulPointNum, ResidualInfo& info);
 
     ResidualInfo CalculateResidualCurFrame(
         const std::vector<Eigen::Vector3d>& lk1s,
@@ -127,9 +127,7 @@ class Optimizer {
 
     bool TrackLocalMap(KeyFrame* kf2, bool& needNewKFbySight);
 
-    void SetInitLambda(const double lambda) { lambda_ = lambda; }
-
-    void AdaptSetInitLambda();
+    void AdaptSetInitLambda(const Eigen::MatrixXd& H, double& lambda);
 
     void AssignTrackedFeature(
         const std::vector<std::shared_ptr<Landmark>>& lk1s, const Pose& T12,
@@ -155,15 +153,16 @@ class Optimizer {
     void UpdateLMlambda(const ResidualInfo& lastCost,
                         const ResidualInfo& newCost,
                         const double predictReduction, bool& accept,
-                        int& continousNoImprovementNum,
-                        double& costRelativeAbsDiff, double& lambda);
+                        int& continousNoImprovementNum, double& lambda);
 
 #if USE_SPARSE_H_MATRIX
-    double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+    double ComputePredictionReduction(const double lambda,
+                                      const Eigen::VectorXd& deltaX,
                                       const Eigen::VectorXd& g,
                                       const Eigen::SparseMatrix<double>& H);
 #else
-    double ComputePredictionReduction(const Eigen::VectorXd& deltaX,
+    double ComputePredictionReduction(const double lambda,
+                                      const Eigen::VectorXd& deltaX,
                                       const Eigen::VectorXd& g,
                                       const Eigen::MatrixXd& H);
 #endif
@@ -173,8 +172,8 @@ class Optimizer {
         const Eigen::Matrix<double, kPoseDim, 1>& g,
         const Eigen::Matrix<double, kPoseDim, kPoseDim>& H);
 
-    bool LMstopJudge(const int& continousNoImprovementNum,
-                     const double& costRelativeAbsDiff, const double lambda,
+    bool LMstopJudge(const int& continousNoImprovementNum, const double lambda,
+                     const ResidualInfo& last, const ResidualInfo& cur,
                      const Eigen::VectorXd& delta);
 
     void PreSelectLandmarkForTracking(
@@ -217,9 +216,9 @@ class Optimizer {
    private:
     // 等价于在成本函数中增加了 0.5*λ*ΔX'*ΔX这一正则项，
     // 因此，λ越大，ΔX须越小
-    double lambda_ = 0.;
+    // double lambda_ = 0.;
     // 普通帧位姿优化使用
-    int maxIte_ = 100;
+    // int maxIte_ = 100;
     bool onlyPoseUpdate_ = false;
     std::shared_ptr<Camera> cam_;
     double lastKFmeanDepth_ = 0.;
