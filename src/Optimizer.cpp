@@ -931,18 +931,24 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     // 配置优化选项
     ceres::Solver::Options options;
     options.minimizer_progress_to_stdout = true;
-    options.max_num_iterations = 100;
+    options.max_num_iterations = 50;
     options.linear_solver_type = ceres::SPARSE_SCHUR;
     //options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.linear_solver_type = ceres::ITERATIVE_SCHUR;
     options.preconditioner_type = ceres::SCHUR_JACOBI;
 
     options.minimizer_type = ceres::TRUST_REGION;
-    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    options.trust_region_strategy_type = ceres::DOGLEG;
 
-    options.function_tolerance = 1e-12;
-    options.gradient_tolerance = 1e-16;
-    options.parameter_tolerance = 1e-12;
+    // options.function_tolerance = 1e-12;
+    // options.gradient_tolerance = 1e-16;
+    // options.parameter_tolerance = 1e-12;
+
+    options.use_explicit_schur_complement = true;
+
+    options.num_threads = 4;
+
+    options.max_solver_time_in_seconds = 0.5;
 
     //options.logging_type =
     //    ceres::PER_MINIMIZER_ITERATION;  // 设置输出log便于bug排查
@@ -1243,9 +1249,9 @@ bool Optimizer::OptimizeCurFrameCeres(Pose& Twc2, const int curFid,
     options.minimizer_type = ceres::TRUST_REGION;
     options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
 
-    options.function_tolerance = 1e-12;
-    options.gradient_tolerance = 1e-16;
-    options.parameter_tolerance = 1e-12;
+    // options.function_tolerance = 1e-12;
+    // options.gradient_tolerance = 1e-16;
+    // options.parameter_tolerance = 1e-12;
 
     // 3. 运行优化
     ceres::Solver::Summary summary;

@@ -400,16 +400,16 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
     }
     vector<cv::Point2f> res;
     res.reserve(config->extractFastNumEachFrame);
-    constexpr int kNoSuperpointRangeLen = 7; // 须是奇数
+    constexpr int kNoSuperpointRangeLen = 7;  // 须是奇数
     constexpr int kDiff = kNoSuperpointRangeLen / 2;
     for (int i = 0; i < grayImg_.rows; i += eachGridSize.height) {
         for (int j = 0; j < grayImg_.cols; j += eachGridSize.width) {
 
             const int w = min(eachGridSize.width, grayImg_.cols - j);
             const int h = min(eachGridSize.height, grayImg_.rows - i);
-            // if (cv::countNonZero(superpointLocation(cv::Rect2i(j, i, w, h)))) {
-            //     continue;
-            // }
+            if (cv::countNonZero(superpointLocation(cv::Rect2i(j, i, w, h)))) {
+                continue;
+            }
             const cv::Mat& gridImg = grayImg_(cv::Rect2i(j, i, w, h));
             vector<cv::KeyPoint> pts;
             detectorTh1->detect(gridImg, pts);
@@ -426,15 +426,20 @@ vector<cv::Point2f> KeyFrame::ExtractFastPointEachGridImage() {
                      });
             }
             // 只添加响应值最大的，但由于已经进行了极大值抑制，
-            // res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
-            // 故可以全部添加，影响不大
-            for (const auto& p : pts) {
-                if (!cv::countNonZero(superpointLocation(cv::Rect2i(
-                        p.pt.x - kDiff, p.pt.y - kDiff, kNoSuperpointRangeLen,
-                        kNoSuperpointRangeLen)))) {
-                    res.emplace_back(j + p.pt.x, i + p.pt.y);
-                }
+            if (pts.size() > 1) {
+                res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
+                res.emplace_back(j + pts[1].pt.x, i + pts[1].pt.y);
+            } else {
+                res.emplace_back(j + pts[0].pt.x, i + pts[0].pt.y);
             }
+            // 故可以全部添加，影响不大
+            // for (const auto& p : pts) {
+            //     if (!cv::countNonZero(superpointLocation(cv::Rect2i(
+            //             p.pt.x - kDiff, p.pt.y - kDiff, kNoSuperpointRangeLen,
+            //             kNoSuperpointRangeLen)))) {
+            //         res.emplace_back(j + p.pt.x, i + p.pt.y);
+            //     }
+            // }
         }
     }
 

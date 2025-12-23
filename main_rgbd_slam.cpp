@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     vector<double> vTimeStamps;
     vector<string> vDepthImgs;
     vector<double> vDepthImgTimes;
+    double lastAddKFtime = 0.;
 
     // TODO:需要将轮速系转换为相机系，所以倒不如直接在ORBSLAM3下的框架进行开发呢！！！
     vector<Eigen::Matrix<double, 8, 1>> vPriorPose;
@@ -134,6 +135,7 @@ int main(int argc, char** argv) {
             initFrame->depthImage_ = depthImg;
             lastF = *initFrame;
             optimizer.AddOneKeyFeame(initFrame);
+            lastAddKFtime = curF.timestamp_;
             interaction->visualLastKF = *win.back();
 
             if (config->debugShowOnlineResult3D && !viewerThread) {
@@ -188,6 +190,7 @@ int main(int argc, char** argv) {
                 cv::imwrite(savePath, initer.debugMatchImg_);
 
                 optimizer.AddOneKeyFeame(new KeyFrame(curF));
+                lastAddKFtime = curF.timestamp_;
                 interaction->visualCurF = curF;  // 记录优化pose后的当前帧
                 // 初始化深度图已经生成，后续需要对每一帧进行深度图传播
                 isInitialized = true;
@@ -275,13 +278,12 @@ int main(int argc, char** argv) {
         const bool hasHorMove = (horDist > 0.05 * meanDepth);
 
         const double frameDuration =
-            (curF.timestamp_ - win.back()->timestamp_) * 1e3;  // ms
+            (curF.timestamp_ - lastAddKFtime) * 1e3;  // ms
         const bool longTimeNoInsertKF =
             frameDuration > min(1000.0, 1.5 * optimizer.lastWinBAspendTime_) &&
             (findMatchRatio < 0.7);
 
-        const bool frequentInsertKf =
-            curF.timestamp_ - win.back()->timestamp_ > 1.0;
+        const bool frequentInsertKf = curF.timestamp_ - lastAddKFtime > 1.0;
         // 必须保证当前KF收敛足够多的点了
         cout << fmt::format(
             "Need KF check: findMatchRatio:{:.1f}, findMatchNum: {}, "
@@ -304,6 +306,7 @@ int main(int argc, char** argv) {
                 caseFastInsertKF, longTimeNoInsertKF);
 
             optimizer.AddOneKeyFeame(new KeyFrame(curF));
+            lastAddKFtime = curF.timestamp_;
             // TODO：当前帧被选为关键帧时，需要进行多帧的局部BA优化，因此需要添加互观测
             cout << "Add new keyframe id: " << curF.id_ << "\n";
             interaction->visualLastKF = *win.back();
