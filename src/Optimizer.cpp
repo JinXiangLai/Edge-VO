@@ -784,8 +784,11 @@ bool Optimizer::ExecuteWindowOptimize() {
         }
 
         // 使用LM方法，考虑存在由于图像模糊投影不上的问题，因此newCost不能小于0
-        const double predictReduction =
-            ComputePredictionReduction(lambda, delta_x, g_, H_);
+        double predictReduction = 1.0;
+        if (newCost.cost < lastCost.cost) {
+            predictReduction =
+                ComputePredictionReduction(lambda, delta_x, g_, H_);
+        }
         UpdateLMlambda(lastCost, newCost, predictReduction,
                        acceptNewVariableStatus, continousNoImprovementNum,
                        lambda);
@@ -1139,8 +1142,11 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
                     newCost.usefulLandmarkNum, lambda);
             }
 
-            const double predictReduction = ComputePredictionReductionFrame(
-                lambda, delta_x, gradient, hessianMatrix);
+            double predictReduction = 1.0;
+            if (newCost.cost < lastCost.cost) {
+                predictReduction = ComputePredictionReductionFrame(
+                    lambda, delta_x, gradient, hessianMatrix);
+            }
             UpdateLMlambda(lastCost, newCost, predictReduction,
                            acceptNewVariableStatus, continousNoImprovementNum,
                            lambda);
