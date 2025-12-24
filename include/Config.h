@@ -66,7 +66,7 @@ class Config {
     double filterPixelError;
     int messageLevel;
     int maxIterationLM;
-    double convergeCostDiffLM;
+    double convergeCostDiffLM, convergeMaxDeltaXValueLM;
     double maxLambdaValueLM;
     int maxNoImprovementCountLM;
     int iterateLogFreqLM;

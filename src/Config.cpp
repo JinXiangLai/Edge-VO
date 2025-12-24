@@ -55,6 +55,7 @@ Config::Config(const std::string& yamlFilePath) {
     messageLevel = f["messageLevel"].as<int>();
     maxIterationLM = f["maxIterationLM"].as<int>();
     convergeCostDiffLM = f["convergeCostDiffLM"].as<double>();
+    convergeMaxDeltaXValueLM = f["convergeMaxDeltaXValueLM"].as<double>();
     maxLambdaValueLM = f["maxLambdaValueLM"].as<double>();
     maxNoImprovementCountLM = f["maxNoImprovementCountLM"].as<int>();
     iterateLogFreqLM = f["iterateLogFreqLM"].as<int>();

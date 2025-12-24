@@ -1,4 +1,4 @@
-dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_desk
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg1_xyz
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -45,6 +45,7 @@ filterPixelError: 10 # 按1个像素误差推导深度三角化不确定度
 
 maxIterationLM: 100 # LM算法迭代次数
 convergeCostDiffLM: 1e-5
+convergeMaxDeltaXValueLM: 1e-6
 maxLambdaValueLM: 1e14
 maxNoImprovementCountLM: 25 # 没有下降的最大次数
 iterateLogFreqLM: 30 # 迭代输出频率

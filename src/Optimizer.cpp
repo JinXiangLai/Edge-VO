@@ -447,6 +447,7 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     Eigen::VectorXd deltaX = Eigen::VectorXd::Zero(poseSize + pointSize);
     // 求pose增量
     newA_ = A + E_ * C;
+    chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
     //cout << "newA:\n" << newA << endl;
     // 根据leftMatrix矩阵的稀疏性，这里不需要其完整形式即可计算出new_b
     //Eigen::VectorXd new_b = leftMatrix * b;
@@ -454,10 +455,11 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     // | 0  I| * b
     Eigen::VectorXd new_b = b;
     new_b.head(poseSize) = b.head(poseSize) + E_ * b.tail(pointSize);
+    chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
 
     deltaX.head(poseSize) =
         newA_.colPivHouseholderQr().solve(new_b.head(poseSize));
-    chrono::steady_clock::time_point t3 = chrono::steady_clock::now();
+    chrono::steady_clock::time_point t5 = chrono::steady_clock::now();
     //cout << "b: " << b.transpose() << endl
     //     << "newb: " << new_b.transpose() << endl;
     // 求point增量
@@ -469,22 +471,24 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     //     Dinv_ * (new_b.tail(pointSize) - C * deltaPose);
     deltaX.tail(pointSize) =
         Dinv_.cwiseProduct(new_b.tail(pointSize) - C * deltaX.head(poseSize));
-    chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
+    chrono::steady_clock::time_point t6 = chrono::steady_clock::now();
 
     if (logOut) {
         cout << fmt::format(
-            "reference memory spend: {:.1f}ms,  "
-            "calculate D.inv spend: {:.1f}ms, "
-            "calculate E mat spend: {:.1f}ms, "
-            "calculate dPose spend: {:.1f}ms, "
-            "calculate dPoint spend: {:.1f}ms, "
-            "total spend: {:.1f}\n",
-            ChronoMillisecTimeDuration(tStart, t0),
+            "cal D.inv spend: {:.1f}ms, "
+            "cal E mat: {:.1f}ms, "
+            "cal newA mat: {:.1f}ms, "
+            "cal new_b vec: {:.1f}ms, "
+            "cal dPose: {:.1f}ms, "
+            "cal dPoint: {:.1f}ms, "
+            "total spend: {:.1f}ms\n",
             ChronoMillisecTimeDuration(t0, t1),
             ChronoMillisecTimeDuration(t1, t2),
             ChronoMillisecTimeDuration(t2, t3),
             ChronoMillisecTimeDuration(t3, t4),
-            ChronoMillisecTimeDuration(tStart, t4));
+            ChronoMillisecTimeDuration(t4, t5),
+            ChronoMillisecTimeDuration(t5, t6),
+            ChronoMillisecTimeDuration(tStart, t6));
     }
 
     return deltaX;
@@ -841,22 +845,18 @@ bool Optimizer::ExecuteWindowOptimize() {
             ++acceptIte;  // 一次迭代成功
         }
 
-        if (config->iterateLogFreqLM > 0 &&
-            inerIte % config->iterateLogFreqLM == 0) {
-            cout << fmt::format(
-                "Window BA iterate {} times, lastCost: {:.1f}, newCost: "
-                "{:.1f}, useful lk num: {}, "
-                "lambda: {}.\n",
-                inerIte, lastCost.cost, newCost.cost, newCost.usefulLandmarkNum,
-                lambda);
+        if (acceptNewVariableStatus) {
             chrono::steady_clock::time_point t8 = chrono::steady_clock::now();
             cout << fmt::format(
-                "ConstructJ_H_b_g spend: {:.3f}ms, Add lambda spend: {:.3f}, "
-                "SchurCompleteSolve spend: {:.3f}ms, Copy status spend: "
-                "{:.3f}ms, UpdateStatusVariables "
-                "spend: {:.3f}ms, CalculateResidualWindow spend: {:.3f}ms, "
-                "ComputePredictionReduction and Update spend: {:.3f}ms, LM "
-                "one iteration spend: {:.3f}ms\n",
+                "useful lk num: {}, acceptIte: {}, inerIte: {}, "
+                "ConstructJ_H_b_g spend: {:.1f}ms, Add "
+                "lambda: {:.1f}, "
+                "SchurCompleteSolve: {:.1f}ms, Copy status: "
+                "{:.3f}ms, UpdateStatusVariables: {:.1f}ms, "
+                "CalculateResidualWindow: {:.1f}ms, "
+                "ComputePredictionReduction and Update: {:.1f}ms, LM "
+                "one iteration: {:.1f}ms\n",
+                newCost.usefulLandmarkNum, acceptIte, inerIte,
                 ChronoMillisecTimeDuration(t1, t2),
                 ChronoMillisecTimeDuration(t2, t3),
                 ChronoMillisecTimeDuration(t3, t4),
@@ -1997,7 +1997,7 @@ bool Optimizer::LMstopJudge(const int& continousNoImprovementNum,
         cout << fmt::format("lambad too large: {}\n", lambda);
         return true;
     }
-    if (delta.maxCoeff() < 1e-9) {
+    if (delta.norm() < config->convergeMaxDeltaXValueLM) {
         return true;
     }
 
@@ -2606,7 +2606,7 @@ bool Optimizer::TrackLocalMap(KeyFrame* kf2, bool& trackLocalMapLow) {
 
 void Optimizer::AdaptSetInitLambda(const Eigen::MatrixXd& H, double& lambda) {
     // lambda_ = 1.0;
-    lambda = min(H.diagonal().maxCoeff(), config->initLambda);
+    lambda = max(H.diagonal().maxCoeff() * 1e-4, config->initLambda);
 }
 
 void Optimizer::RemoveOneKeyframe(const KeyFrame& curF) {
