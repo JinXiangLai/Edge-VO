@@ -14,6 +14,7 @@
 #include "Pose.h"
 #include "Utils.h"
 #include "WheelCameraCalib.h"
+#include "ceres_problem.h"
 
 #include <opencv2/cudacodec.hpp>  // CUDA 视频编码器
 
@@ -48,6 +49,9 @@ bool RecoveryPose(const shared_ptr<Camera> cam, const KeyFrame& lastKf,
 
 bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
                                int loopClosureIndex);
+
+bool Sim3PoseGraphOptimizationCeres2(vector<KeyFrame*>& allKeyframe,
+                                     int fixedIndex, int loopClosureIndex);
 
 bool CalculateRelativeSim3Transform(const KeyFrame* fixedKF,
                                     const KeyFrame* loopClosureKF,
@@ -306,8 +310,13 @@ int main(int argc, char** argv) {
                     cout << fmt::format("Find loop closure id range: [{}, {}]",
                                         fixedIndex, loopClosureIndex)
                          << endl;
+#ifdef CERES2
+                    Sim3PoseGraphOptimizationCeres2(allKeyframe, fixedIndex,
+                                                    loopClosureIndex);
+#else
                     Sim3PoseGraphOptimization(allKeyframe, fixedIndex,
-                                              loopClosureIndex);
+                                                    loopClosureIndex);
+#endif
                     break;
                 }
             }
@@ -616,6 +625,115 @@ bool Sim3PoseGraphOptimization(vector<KeyFrame*>& allKeyframe, int fixedIndex,
         of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
     }
     of.close();
+    return true;
+}
+
+bool Sim3PoseGraphOptimizationCeres2(vector<KeyFrame*>& allKeyframe,
+                                     int fixedIndex, int loopClosureIndex) {
+    Sim3Pose relativeSim3T12;
+    if (!CalculateRelativeSim3Transform(allKeyframe[fixedIndex],
+                                        allKeyframe[loopClosureIndex],
+                                        relativeSim3T12)) {
+        cout << "CalculateRelativeSim3Transform failed!" << endl;
+        return false;
+    } else {
+        cout << "fixed and loop closure frame sim3 sT12: "
+             << relativeSim3T12.QwbString() << ", "
+             << relativeSim3T12.PwbString() << endl;
+    }
+
+    // 构建位姿图
+    // 1. 选择闭环内的帧
+    vector<KeyFrame*> selectKFresult;
+    SelectKeyframeInLoopClosure(allKeyframe, fixedIndex, loopClosureIndex,
+                                selectKFresult);
+    cout << "Select selectKFresult size: " << selectKFresult.size() << endl;
+
+    // 2. 保留帧间位姿先验
+    vector<Sim3Pose> loopClosurePoseTwc;
+    vector<Sim3Pose> sT12Constraint;
+    CalculateLoopClosureSim3PoseAndConstraint(
+        relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint);
+    ofstream of;
+    of.open(kBeforeLoopClosurePoseFilePath);
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        cout << "init sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
+             << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+        of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
+    }
+    of.close();
+
+    for (size_t i = 0; i < sT12Constraint.size(); ++i) {
+        cout << fmt::format("constraint[{}]: {}, {}", i,
+                            sT12Constraint[i].QwbString(),
+                            sT12Constraint[i].PwbString())
+             << endl;
+    }
+    cout << "Construct sT12Constraint size: " << sT12Constraint.size() << endl;
+
+    ceres::Problem problem;
+    // 指定大小，避免内存重分配
+    vector<array<double, 8>> vecSim3Pose(loopClosurePoseTwc.size());
+    Sim3Parameterization* sim3PoseParameterization = new Sim3Parameterization;
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        const auto& q = loopClosurePoseTwc[i].q_wb_;
+        const auto& p = loopClosurePoseTwc[i].t_wb_;
+        const double s = loopClosurePoseTwc[i].scale_;
+        vecSim3Pose[i] = {q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z(), s};
+    }
+    // 不要在上一个循环就添加，应该等内存地址完全确定后再添加
+    for (size_t i = 0; i < vecSim3Pose.size(); ++i) {
+        problem.AddParameterBlock(vecSim3Pose[i].data(), 8,
+                                  sim3PoseParameterization);
+    }
+    problem.SetParameterBlockConstant(vecSim3Pose[0].data());
+
+    for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
+        // 添加帧间相对约束
+        ceres::CostFunction* cost =
+            new RelativeConstraintResidual(sT12Constraint[i]);
+        problem.AddResidualBlock(cost, nullptr, vecSim3Pose[i].data(),
+                                 vecSim3Pose[i + 1].data());
+    }
+    // 最后一帧是闭环约束
+    ceres::CostFunction* cost =
+        new RelativeConstraintResidual(sT12Constraint.back());
+    problem.AddResidualBlock(cost, nullptr, vecSim3Pose[0].data(),
+                             vecSim3Pose.back().data());
+
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 500;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
+    options.minimizer_type = ceres::TRUST_REGION;
+    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.num_threads = 1;
+    // options.max_solver_time_in_seconds = 0.5;
+
+    // 运行优化
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    std::cout << summary.BriefReport() << std::endl;
+
+    for (size_t i = 0; i < vecSim3Pose.size(); ++i) {
+        const auto& d = vecSim3Pose[i];
+        const Eigen::Quaterniond q(d[0], d[1], d[2], d[3]);
+        const Eigen::Vector3d p(d[4], d[5], d[6]);
+        const double s = d[7];
+        const double time = loopClosurePoseTwc[i].debugTimestamp_;
+        loopClosurePoseTwc[i] = Sim3Pose(q, p, s);
+        loopClosurePoseTwc[i].debugTimestamp_ = time;
+    }
+
+    of.open(kClosurePoseFilePath);
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        // cout << "sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
+        //      << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+        of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
+    }
+    of.close();
+
     return true;
 }
 
@@ -960,7 +1078,7 @@ void ConstructPoseGraphSparseHessianandGradiant(
         const double invS1 = 1.0 / s1;
         const Eigen::Vector3d dPw = Pw2 - Pw1;
         residual.segment<3>(3) = invS1 * Rw1.transpose() * dPw - dP;
-        residual(6) = s1 * s2 - ds;
+        residual(6) = 1.0 / s1 * s2 - ds;
 
 #if DEBUG_POSE_GRAPH_SE3
         residual(6) = 0.;
@@ -999,7 +1117,7 @@ void ConstructPoseGraphSparseHessianandGradiant(
 
         // Δs w.r.t Rw1, Rw2, Pw1, Pw2 = 0
         // Δs w.r.t s1
-        A1(6, 6) = s2 * w[2];
+        A1(6, 6) = -s2 * invS1 * invS1 * w[2];
         // Δs w.r.t s2
         A2(6, 6) = s1 * w[2];
 

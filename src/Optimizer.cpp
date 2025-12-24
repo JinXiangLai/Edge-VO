@@ -911,14 +911,14 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     // 构建优化问题
     ceres::Problem problem;
     // 1、先指定需要参与优化的参数块对象
-    ceres::Manifold* poseParameterization = new PoseParameterization;
+    ceres::Manifold* se3Parameterization = new SE3Parameterization;
     // qw, qx, qy, qz, qw
     unordered_map<KeyFrame*, array<double, 7>> vecTwc;
     for (KeyFrame* kf : window_) {
         const Eigen::Quaterniond& q = kf->Twc_.q_wb_;
         const Eigen::Vector3d& p = kf->Twc_.t_wb_;
         vecTwc.insert({kf, {q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z()}});
-        problem.AddParameterBlock(vecTwc[kf].data(), 7, poseParameterization);
+        problem.AddParameterBlock(vecTwc[kf].data(), 7, se3Parameterization);
     }
     problem.SetParameterBlockConstant(vecTwc[window_[0]].data());
     const bool canFixSecondKF =
@@ -1264,8 +1264,8 @@ bool Optimizer::OptimizeCurFrameCeres(Pose& Twc2, const int curFid,
     array<double, 7> optTwc2{q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z()};
     ceres::Problem problem;
     // 1、先指定需要参与优化的参数块对象
-    ceres::Manifold* poseParameterization = new PoseParameterization;
-    problem.AddParameterBlock(optTwc2.data(), 7, poseParameterization);
+    ceres::Manifold* se3Parameterization = new SE3Parameterization;
+    problem.AddParameterBlock(optTwc2.data(), 7, se3Parameterization);
 
     ceres::LossFunction* huberLoss = new ceres::HuberLoss(config->huberDelta);
     for (size_t i = 0; i < stablePws.size(); ++i) {

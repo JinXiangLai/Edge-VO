@@ -186,3 +186,110 @@ bool ProjectionResidual::Evaluate(double const* const* parameters,
 
     return true;
 }
+
+RelativeConstraintResidual::RelativeConstraintResidual(
+    const Sim3Pose& sPriorT12)
+    : sPriorT12_(sPriorT12) {}
+
+bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
+                                          double* residuals,
+                                          double** jacobians) const {
+    const double* q1 = parameters[0];
+    const double* p1 = parameters[0] + 4;
+    const double s1 = *(parameters[0] + 7);
+    const Eigen::Quaterniond Qwc1(q1[0], q1[1], q1[2], q1[3]);
+    const Eigen::Matrix3d Rwc1 = Qwc1.toRotationMatrix();
+    const Eigen::Vector3d Pwc1(p1[0], p1[1], p1[2]);
+    const double invS1 = 1.0 / s1;
+
+    const double* q2 = parameters[1];
+    const double* p2 = parameters[1] + 4;
+    const double s2 = *(parameters[1] + 7);
+    const Eigen::Quaterniond Qwc2(q2[0], q2[1], q2[2], q2[3]);
+    const Eigen::Matrix3d Rwc2 = Qwc2.toRotationMatrix();
+    const Eigen::Vector3d Pwc2(p2[0], p2[1], p2[2]);
+
+    // |s1R1, t1|   |s2R2, t2|
+    // |  0,  1 | * |   0,  1| =
+    //
+    // |s1*s2*R1*R2, s1R1*t2+t1|
+    // |          0, 1         |
+    // ΔR = LogSO3(R1 * R2)
+    // Δt = s1*R1*t2 + t1
+    // 需保证和雅可比计算的顺序一致
+    // 计算残差向量
+    // 注意取逆
+    const Eigen::Matrix3d dR = sPriorT12_.q_wb_.toRotationMatrix().transpose();
+    const Eigen::Vector3d& dP = sPriorT12_.t_wb_;
+    const double ds = sPriorT12_.scale_;
+    const Eigen::Vector3d dr = LogSO3(dR * (Rwc1.transpose() * Rwc2));
+    residuals[0] = dr[0];
+    residuals[1] = dr[1];
+    residuals[2] = dr[2];
+
+    // |1/s1*R1.inv, -1/s1*R1.inv*t1|   |s2R2, t2|
+    // |          0,               1| * |   0,  1|
+    const Eigen::Vector3d dPw = Pwc2 - Pwc1;
+    const Eigen::Vector3d sP12 = invS1 * (Qwc1.inverse() * dPw);
+    const Eigen::Vector3d dp = sP12 - dP;
+    residuals[3] = dp[0];
+    residuals[4] = dp[1];
+    residuals[5] = dp[2];
+
+    // 注意：这里实现存在的问题是量纲不统一，且scale一定是非负数
+    residuals[6] = invS1 * s2 - ds;  // 相邻帧间尺度漂移比例应该接近于1.0
+
+    // ΔR = LogSO3(dR * Rw1.inv * Rw2)
+    // ΔT = Twc1.inv * Twc2
+    // ΔP = 1/s1 * Rw1.inv * Pw2 - 1/s1 * Rw1.inv * Pw1 - dP
+    //    = 1/s1 * Rw1.inv * (Pw2 - Pw1) - dP
+    // Δs = 1.0/s1*s2 - ds
+    if (jacobians) {
+        // 使用"BCH近似"之前，需要通过"伴随性质"将扰动量换到右边
+        // dLogSO3(dR * R1.T*R2) ---> 微分扰动
+        // = LogSO3(dR * exp(-ε1^)*R1.T*R2) ---> 使用伴随: Exp(ε1)*R = R * Exp(R.T * ε1)
+        // = LogSO3(dR*R1.T*R2 * Exp(R2.T*R1*-ε1)) ---> Exp{小量}，使用BCH近似
+        // = [Jr(dR*R1.T*R2).inv * -R2.T*R1*ε1] + LogSo3(dR*R1.T*R2)
+        // 关于Rw2，易得最终的BCH近似为：
+        // [Jr(dR*R1.T*R2).inv * ε2] + LogSo3(dR*R1.T*R2)
+        const Eigen::Matrix3d invJr = InverseRightJacobianSO3(dr);
+        if (jacobians[0]) {
+            Eigen::Map<Eigen::Matrix<double, 7, 8, Eigen::RowMajor>> A1(
+                jacobians[0]);
+            A1.setZero();
+            // ΔR w.r.t Pw1, s1 = 0
+            // ΔR w.r.t Rw1
+            A1.block<3, 3>(0, 0) = -invJr * Rwc2.transpose() * Rwc1;
+
+            // ΔP w.r.t Rw1
+            A1.block<3, 3>(3, 0) =
+                invS1 * SkewSymmetric(Rwc1.transpose() * dPw);
+            // ΔP w.r.t Pw1
+            A1.block<3, 3>(3, 3) = -invS1 * Rwc1.transpose();
+            // ΔP w.r.t s1
+            A1.block<3, 1>(3, 6) = -invS1 * invS1 * Rwc1.transpose() * dPw;
+
+            // Δs w.r.t Rw1, Rw2, Pw1, Pw2 = 0
+            // Δs w.r.t s1
+            A1(6, 6) = -s2 * invS1 * invS1;
+        }
+        if (jacobians[1]) {
+            Eigen::Map<Eigen::Matrix<double, 7, 8, Eigen::RowMajor>> A2(
+                jacobians[1]);
+            A2.setZero();
+            // ΔR w.r.t Pw2, s2 = 0
+            // ΔR w.r.t Rw2
+            A2.block<3, 3>(0, 0) = invJr * dR.transpose();
+
+            // ΔP w.r.t Rw2 = 0
+            // ΔP w.r.t s2 = 0
+            // ΔP w.r.t Pw2
+            A2.block<3, 3>(3, 3) = invS1 * Rwc1.transpose();
+
+            // Δs w.r.t s2
+            A2(6, 6) = s1;
+        }
+    }
+
+    return true;
+}
