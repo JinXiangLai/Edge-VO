@@ -405,10 +405,39 @@ Eigen::VectorXd Optimizer::SchurCompleteSolve(
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     //const Eigen::MatrixXd E = -B * Dinv;
     // E的计算耗时最长，利用Dinv是稀疏矩阵这一特性加速
+#if 0
     for (int i = 0; i < B.rows(); ++i) {
         for (int j = 0; j < B.cols(); ++j)
             E_(i, j) = -B.coeff(i, j) * Dinv_[j];
     }
+#else
+    // 利用B矩阵的稀疏性进行遍历
+    E_.setZero();
+    int* m_outerStarts = H_.outerIndexPtr();
+    int* m_innerRowId = H_.innerIndexPtr();
+    double* m_Values = H_.valuePtr();
+
+    // #pragma omp parallel for schedule(static)
+    for (int j = poseSize; j < H_.outerSize(); ++j) {
+        // 第col列的非零元素范围
+        // m_outerStarts记录到j这一列时，一共消耗了多少innerIndex数量，即有多少个非0元素
+        const int start = m_outerStarts[j];
+        const int end = m_outerStarts[j + 1];
+        const double s = -Dinv_[j - poseSize];
+        // 遍历当前第j列的innerIndex行索引
+        for (int k = start; k < end; ++k) {
+            const int rowId = m_innerRowId[k];
+            if (rowId < poseSize) {
+                const double value = m_Values[k];
+                // E_是[poseSize x pointSize]维度矩阵，
+                // B也是[poseSize x pointSize]，注意填充位置变化
+                E_(rowId, j - poseSize) = value * s;
+            } else {
+                break;
+            }
+        }
+    }
+#endif
     // E_.noalias() = -B;
     // for (int j = 0; j < E_.cols(); ++j) {
     //     E_.col(j) *= Dinv_(j, j);
