@@ -130,6 +130,14 @@ target_link_libraries(loop_closure_main
     -lfmt
 )
 
+add_executable(sim3_pose_slover_main sim3_pose_slover_main.cpp)
+target_link_libraries(sim3_pose_slover_main
+    edge_slam
+    -lpthread
+    -lyaml-cpp
+    -lfmt
+)
+
 # add_executable(ut unit_test.cpp)
 # target_link_libraries(ut 
 #     edge_slam

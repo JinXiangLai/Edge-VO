@@ -113,8 +113,15 @@ Eigen::Vector3d Quat2RPY(const Eigen::Quaterniond& _q) {
 
 ostream& operator<<(ostream& cout, const Pose& T) {
     cout << setprecision(5)
-         << "RPY | t: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg << " deg"
-         << " | " << T.t_wb_.transpose() << " m";
+         << "RPY: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg
+         << " deg, Pos: " << T.t_wb_.transpose() << " m.";
+    return cout;
+}
+
+ostream& operator<<(ostream& cout, const Sim3Pose& T) {
+    cout << setprecision(5)
+         << "RPY: " << Quat2RPY(T.q_wb_).transpose() * kRad2Deg
+         << " deg, Pos: " << T.t_wb_.transpose() << " m, scale: " << T.scale_;
     return cout;
 }
 
@@ -1370,7 +1377,7 @@ void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps1,
 
     auto Generate = [](const vector<std::shared_ptr<Landmark>>& ps,
                        vector<Point3d>& points) {
-        for (const auto &p : ps) {
+        for (const auto& p : ps) {
             if (p == nullptr || !p->Converge()) {
                 continue;
             }
@@ -1475,10 +1482,10 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,
-                          &curKFimg](unordered_set<std::shared_ptr<Landmark>>& ps,
-                                     const cv::Vec3b& color,
-                                     vector<Point3d>& points,
-                                     vector<cv::Vec3b>& colors) {
+                          &curKFimg](
+                             unordered_set<std::shared_ptr<Landmark>>& ps,
+                             const cv::Vec3b& color, vector<Point3d>& points,
+                             vector<cv::Vec3b>& colors) {
         points.reserve(10000);
 
         for (auto p : ps) {
