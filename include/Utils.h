@@ -374,6 +374,16 @@ int CalculateInnerNum(const DynamicPointMatrix& Pc1,
 bool CalculateSim3PoseT12(const DynamicPointMatrix& Pc1,
                           const DynamicPointMatrix& Pc2, Sim3Pose& sT12);
 
+bool SelectKeyframeInLoopClosure(std::vector<KeyFrame*>& allKeyframe,
+                                 int fixedIndex, int loopClosureIndex,
+                                 std::vector<KeyFrame*>& selectResult);
+
+int CalculateLoopClosureSim3PoseAndConstraint(
+    const Sim3Pose& relativeSim3T12,
+    const std::vector<KeyFrame*>& selectKFresult,
+    std::vector<Sim3Pose>& loopClosurePoseTwc,
+    std::vector<Sim3Pose>& relativePoseConstraint);
+
 inline double CalculateParallax(const Eigen::Vector2d& p1,
                                 const Eigen::Vector2d& p2,
                                 const Eigen::Vector2d& c) {

@@ -21,6 +21,10 @@ constexpr int kMinUsefulObvNumWithHost = kMinUsefulObvNum + 1;
 constexpr double kMaxSetError = 1e12;
 constexpr double kMaxErrorRatio = 0.5;
 
+const char* const kBeforeLoopClosurePoseFilePath =
+    "./opt_before_loop_closure_pose.txt";
+const char* const kClosurePoseFilePath = "./opt_loop_closure_pose.txt";
+
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
     : onlyPoseUpdate_(onlyPoseUpdate), cam_(cam) {
@@ -2816,7 +2820,7 @@ void Optimizer::RunLoopClosure() {
             continue;
         }
 
-        KeyFrame* kf1 = nullptr;
+        int kf1Index = -1;
         {
             // 排序加锁，更新时另外加锁，或者更新放在BA线程后？
             lock_guard<mutex> lock(vecMargKfMutex_);
@@ -2824,7 +2828,7 @@ void Optimizer::RunLoopClosure() {
                  [](const KeyFrame* a, const KeyFrame* b) {
                      return a->id_ < b->id_;
                  });
-            const int kf1Index = FindLoopClosureKF();
+            kf1Index = FindLoopClosureKF();
             if (kf1Index < 0) {
                 // 是否可能存在死锁？win ba是串行的，应该不会
                 lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
@@ -2836,11 +2840,11 @@ void Optimizer::RunLoopClosure() {
                      << endl;
                 continue;
             }
-            kf1 = vecMargKf_[kf1Index];
         }
 
         DynamicPointMatrix Pc1, Pc2;
-        if (FindMatchSuperpoint3Dpos(kf1, lastTryLoopNewKf_, Pc1, Pc2) < 100) {
+        if (FindMatchSuperpoint3Dpos(vecMargKf_[kf1Index], lastTryLoopNewKf_,
+                                     Pc1, Pc2) < 100) {
             lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
             lastTryLoopNewKf_ = nullptr;
             continue;
@@ -2851,12 +2855,16 @@ void Optimizer::RunLoopClosure() {
         const double innerRatio = 0.55;
         if (CalculateSim3PosesT12RANSAC(Pc1, Pc2, sT12, 3, 0.999, innerRatio)) {
             cout << "Solve sim3Pose sT12 succeed! sT12:\n" << sT12 << endl;
+            // 求解位姿图优化
+            vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
+                                          vecMargKf_.end());
+            allKeyframe.emplace_back(lastTryLoopNewKf_);
+            Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1, sT12,
+                                            allKeyframe);
         } else {
             cout << "Solve sim3Pose sT12 failed!" << endl;
             continue;
         }
-
-        // 求解位姿图优化
 
         lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
         lastTryLoopNewKf_ = nullptr;
@@ -2950,6 +2958,104 @@ void Optimizer::StopRunLoopClosure() {
     keepRunLoopClosure_ = false;
     cout << fmt::format("Loop closure BA keepRunLoopClosure_: {}.\n",
                         keepRunLoopClosure_);
+}
+
+bool Optimizer::Sim3PoseGraphOptimizationCeres2(
+    int fixedIndex, int loopClosureIndex, const Sim3Pose& relativeSim3T12,
+    vector<KeyFrame*>& allKeyframe) {
+    // 构建位姿图
+    // 1. 选择闭环内的帧
+    vector<KeyFrame*> selectKFresult;
+    SelectKeyframeInLoopClosure(allKeyframe, fixedIndex, loopClosureIndex,
+                                selectKFresult);
+    cout << "Select selectKFresult size: " << selectKFresult.size() << endl;
+
+    // 2. 保留帧间位姿先验
+    vector<Sim3Pose> loopClosurePoseTwc;
+    vector<Sim3Pose> sT12Constraint;
+    CalculateLoopClosureSim3PoseAndConstraint(
+        relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint);
+    ofstream of;
+    of.open(kBeforeLoopClosurePoseFilePath);
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        cout << "init sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
+             << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+        of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
+    }
+    of.close();
+
+    for (size_t i = 0; i < sT12Constraint.size(); ++i) {
+        cout << fmt::format("constraint[{}]: {}, {}", i,
+                            sT12Constraint[i].QwbString(),
+                            sT12Constraint[i].PwbString())
+             << endl;
+    }
+    cout << "Construct sT12Constraint size: " << sT12Constraint.size() << endl;
+
+    ceres::Problem problem;
+    // 指定大小，避免内存重分配
+    vector<array<double, 8>> vecSim3Pose(loopClosurePoseTwc.size());
+    Sim3Parameterization* sim3PoseParameterization = new Sim3Parameterization;
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        const auto& q = loopClosurePoseTwc[i].q_wb_;
+        const auto& p = loopClosurePoseTwc[i].t_wb_;
+        const double s = loopClosurePoseTwc[i].scale_;
+        vecSim3Pose[i] = {q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z(), s};
+    }
+    // 不要在上一个循环就添加，应该等内存地址完全确定后再添加
+    for (size_t i = 0; i < vecSim3Pose.size(); ++i) {
+        problem.AddParameterBlock(vecSim3Pose[i].data(), 8,
+                                  sim3PoseParameterization);
+    }
+    problem.SetParameterBlockConstant(vecSim3Pose[0].data());
+
+    for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
+        // 添加帧间相对约束
+        ceres::CostFunction* cost =
+            new RelativeConstraintResidual(sT12Constraint[i]);
+        problem.AddResidualBlock(cost, nullptr, vecSim3Pose[i].data(),
+                                 vecSim3Pose[i + 1].data());
+    }
+    // 最后一帧是闭环约束
+    ceres::CostFunction* cost =
+        new RelativeConstraintResidual(sT12Constraint.back());
+    problem.AddResidualBlock(cost, nullptr, vecSim3Pose[0].data(),
+                             vecSim3Pose.back().data());
+
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 500;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
+    options.minimizer_type = ceres::TRUST_REGION;
+    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.num_threads = 1;
+    // options.max_solver_time_in_seconds = 0.5;
+
+    // 运行优化
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    std::cout << summary.BriefReport() << std::endl;
+
+    for (size_t i = 0; i < vecSim3Pose.size(); ++i) {
+        const auto& d = vecSim3Pose[i];
+        const Eigen::Quaterniond q(d[0], d[1], d[2], d[3]);
+        const Eigen::Vector3d p(d[4], d[5], d[6]);
+        const double s = d[7];
+        const double time = loopClosurePoseTwc[i].debugTimestamp_;
+        loopClosurePoseTwc[i] = Sim3Pose(q, p, s);
+        loopClosurePoseTwc[i].debugTimestamp_ = time;
+    }
+
+    of.open(kClosurePoseFilePath);
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        // cout << "sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
+        //      << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+        of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
+    }
+    of.close();
+
+    return true;
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {

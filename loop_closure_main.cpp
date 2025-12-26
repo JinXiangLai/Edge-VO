@@ -60,11 +60,6 @@ bool CalculateRelativeSim3Transform(const KeyFrame* fixedKF,
 bool UmeyamaSim3Transform(const vector<Eigen::Vector3d>& ps1,
                           const vector<Eigen::Vector3d>& ps2, Sim3Pose& T12);
 
-int CalculateLoopClosureSim3PoseAndConstraint(
-    const Sim3Pose& relativeSim3T12, const vector<KeyFrame*>& selectKFresult,
-    vector<Sim3Pose>& loopClosurePoseTwc,
-    vector<Sim3Pose>& relativePoseConstraint);
-
 // 需保证首帧为参考帧，未帧为回环帧
 void ConstructPoseGraphHessianandGradiant(
     const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint,
@@ -74,10 +69,6 @@ void ConstructPoseGraphSparseHessianandGradiant(
     const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint,
     vector<Eigen::Triplet<double>>& triplets, Eigen::SparseMatrix<double>& H,
     Eigen::VectorXd& g);
-
-bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
-                                 int loopClosureIndex,
-                                 vector<KeyFrame*>& selectResult);
 
 Optimizer::ResidualInfo CalculatePoseGraphResidualInfo(
     const vector<Sim3Pose>& sTwc, const vector<Sim3Pose>& sT12Constraint);
@@ -310,12 +301,12 @@ int main(int argc, char** argv) {
                     cout << fmt::format("Find loop closure id range: [{}, {}]",
                                         fixedIndex, loopClosureIndex)
                          << endl;
-#ifdef CERES2
+#ifdef USE_CERES2
                     Sim3PoseGraphOptimizationCeres2(allKeyframe, fixedIndex,
                                                     loopClosureIndex);
 #else
                     Sim3PoseGraphOptimization(allKeyframe, fixedIndex,
-                                                    loopClosureIndex);
+                                              loopClosureIndex);
 #endif
                     break;
                 }
@@ -815,36 +806,6 @@ bool CalculateRelativeSim3Transform(const KeyFrame* fixedKF,
     return false;
 }
 
-int CalculateLoopClosureSim3PoseAndConstraint(
-    const Sim3Pose& relativeSim3T12, const vector<KeyFrame*>& selectKFresult,
-    vector<Sim3Pose>& loopClosurePoseTwc,
-    vector<Sim3Pose>& relativePoseConstraint) {
-
-    // 初始化各关键帧的sim3 pose
-    loopClosurePoseTwc.reserve(selectKFresult.size());
-    for (size_t i = 0; i < selectKFresult.size(); ++i) {
-        loopClosurePoseTwc.emplace_back(
-            Sim3Pose(selectKFresult[i]->Twc_, 1.0 + 0.1 * i));
-        loopClosurePoseTwc.back().debugTimestamp_ =
-            selectKFresult[i]->timestamp_;
-    }
-
-    // 添加连续帧间相对位姿约束
-    relativePoseConstraint.reserve((loopClosurePoseTwc.size()));
-    for (size_t i = 1; i < loopClosurePoseTwc.size(); ++i) {
-        // const Sim3Pose Twc1 = loopClosurePoseTwc[i - 1];
-        // const Sim3Pose Twc2 = loopClosurePoseTwc[i];
-        // relativePoseConstraint.emplace_back(Twc1.Inverse() * Twc2);
-        relativePoseConstraint.emplace_back(
-            selectKFresult[i - 1]->priorTwc_.Inverse() *
-                selectKFresult[i]->priorTwc_,
-            1.0);
-    }
-    // 添加回环首、末帧约束，这里添加的是T21作为先验约束
-    relativePoseConstraint.emplace_back(relativeSim3T12);
-    return relativePoseConstraint.size();
-}
-
 double RelativePoseHuberLoss(const Eigen::Matrix<double, 7, 1>& residual) {
     Eigen::Matrix<double, 7, 1> w;
     w << kW[0], kW[0], kW[0], kW[1], kW[1], kW[1], kW[2], kW[2], kW[2];
@@ -1171,39 +1132,6 @@ void ConstructPoseGraphSparseHessianandGradiant(
         }
     }
     // cout << "Sparse matrix H:\n" << H << endl;
-}
-
-bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
-                                 int loopClosureIndex,
-                                 vector<KeyFrame*>& selectResult) {
-    const int fixKFid = allKeyframe[fixedIndex]->id_;
-    const int loopClosureKFid = allKeyframe[loopClosureIndex]->id_;
-
-    selectResult.reserve(allKeyframe.size());
-    for (KeyFrame* kf : allKeyframe) {
-        if (kf->id_ < fixKFid || kf->id_ > loopClosureKFid) {
-            continue;
-        }
-        selectResult.emplace_back(kf);
-    }
-
-    // fixed帧为首帧
-    sort(selectResult.begin(), selectResult.end(),
-         [](const KeyFrame* f1, const KeyFrame* f2) {
-             return f1->id_ < f2->id_;
-         });
-
-    if (selectResult.front()->id_ != fixKFid ||
-        selectResult.back()->id_ != loopClosureKFid) {
-        cout << fmt::format(
-            "Error while collect loop closure, except kf id range: [{}, {}], "
-            "result range: [{}, {}]\n",
-            fixKFid, loopClosureKFid, selectResult.front()->id_,
-            selectResult.back()->id_);
-        return false;
-    }
-
-    return true;
 }
 
 bool UmeyamaSim3Transform(const vector<Eigen::Vector3d>& ps1,
