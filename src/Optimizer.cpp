@@ -1462,9 +1462,31 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
 
     int transformLandmarkNum = 0;
     int newAddOptimizeLandmarkNum = 0;
-    for (auto lk : oldest->landmark_) {
-        if (lk == nullptr || lk->host_ != oldest) {
+    // 保留superpoint点集的深度值，用于闭环sim3计算
+    oldest->depth_.resize(oldest->desc_.rows());
+    oldest->depth_.setConstant(-1.0);
+    for (int i = 0; i < oldest->kpts_.rows(); ++i) {
+        auto lk = oldest->landmark_[i];
+        if (lk == nullptr) {
             continue;
+        }
+
+        if (lk->host_ != oldest) {
+            if (i < oldest->desc_.rows() && lk->initialized_ &&
+                !lk->CanBeDelete()) {
+                const Eigen::Vector3d pc = oldest->Tcw_ * lk->GetPw();
+                if (pc.z() > config->minDepth && pc.z() < config->maxDepth) {
+                    oldest->depth_[i] = pc.z();
+                }
+            }
+
+            continue;  // 不需要转换
+        } else if (i < oldest->desc_.rows() && lk->invZ_ > 0 &&
+                   lk->initialized_ && !lk->CanBeDelete()) {
+            const double z = 1.0 / lk->invZ_;
+            if (z > config->minDepth && z < config->maxDepth) {
+                oldest->depth_[i] = z;
+            }
         }
         bool transformSucceed = false;
 
@@ -2808,7 +2830,8 @@ void Optimizer::RunLoopClosure() {
                 lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
                 lastTryLoopNewKf_ = nullptr;
                 cout << fmt::format(
-                            "LP find loop closure kf failed! vecMargKf_ size: {}",
+                            "LP find loop closure kf failed! vecMargKf_ size: "
+                            "{}",
                             vecMargKf_.size())
                      << endl;
                 continue;
@@ -2834,6 +2857,9 @@ void Optimizer::RunLoopClosure() {
         }
 
         // 求解位姿图优化
+
+        lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
+        lastTryLoopNewKf_ = nullptr;
     }
 }
 
@@ -2845,7 +2871,8 @@ int Optimizer::FindLoopClosureKF() {
 
     // 寻找开头5帧，，不能处理大回环内有小回环的情况
     constexpr int kMaxSearchRange = 5;
-    constexpr double kMaxLoopClosureDist = 0.2; // 尺度漂移时只能由lightglue确定
+    constexpr double kMaxLoopClosureDist =
+        0.2;  // 尺度漂移时只能由lightglue确定
     for (size_t i = 0; i < kMaxSearchRange; ++i) {
         const KeyFrame* kf = vecMargKf_[i];
         const double posDiff =
@@ -2854,7 +2881,8 @@ int Optimizer::FindLoopClosureKF() {
         if (posDiff < kMaxLoopClosureDist) {
             // 还是需要lightglue寻找匹配点
             cout << fmt::format(
-                        "LP find loop closure kf id: {}, in vecMargKf_ index: {}",
+                        "LP find loop closure kf id: {}, in vecMargKf_ index: "
+                        "{}",
                         vecMargKf_[i]->id_, i)
                  << endl;
             return i;
@@ -2882,31 +2910,34 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
     for (size_t i = 0; i < matches.size(); ++i) {
         int idx1 = matches[i].queryIdx;
         int idx2 = matches[i].trainIdx;
-        const auto lk1 = kf1->landmark_[idx1];
+        const double depth1 = kf1->depth_[idx1];
         const auto lk2 = kf2->landmark_[idx2];
-        if (!lk1 || !lk2 || lk1->CanBeDelete() || lk2->CanBeDelete()) {
+        if (depth1 <= 0 || !lk2 || lk2->CanBeDelete()) {
             continue;
         }
         ++usefulNum;
     }
+
     Pc1.resize(3, usefulNum);
     Pc2.resize(3, usefulNum);
-    const Pose& Tc1w = kf1->Tcw_;
     const Pose& Tc2w = kf2->Tcw_;
     int idx = 0;
     for (size_t i = 0; i < matches.size(); ++i) {
         int idx1 = matches[i].queryIdx;
         int idx2 = matches[i].trainIdx;
-        const auto lk1 = kf1->landmark_[idx1];
+        const double depth1 = kf1->depth_[idx1];
         const auto lk2 = kf2->landmark_[idx2];
-        if (!lk1 || !lk2 || lk1->CanBeDelete() || lk2->CanBeDelete()) {
+        if (depth1 <= 0 || !lk2 || lk2->CanBeDelete()) {
             continue;
         }
-        Pc1.col(idx) = Tc1w * lk1->GetPw();
+        Pc1.col(idx) = cam_->InverseProject(
+            {kf1->kpts_.row(idx1)[0], kf1->kpts_.row(idx1)[1]}, depth1);
         Pc2.col(idx) = Tc2w * lk2->GetPw();
         ++idx;
     }
-    cout << "LP lightglue find useful 3d match num: " << usefulNum << endl;
+    cout << fmt::format("LP lightglue find useful 3d match num: {} = idx: {}",
+                        usefulNum, idx)
+         << endl;
     return usefulNum;
 }
 

@@ -109,6 +109,7 @@ class KeyFrame {
 
     Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> kpts_;
     Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor> desc_;
+    Eigen::VectorXd depth_;
     Eigen::Vector2d GetObv(const int kpRow) const {
         return {kpts_(kpRow, 0), kpts_(kpRow, 1)};
     }
