@@ -95,6 +95,7 @@ int main(int argc, char** argv) {
 
     thread* viewerThread = nullptr;
     thread* runWindowBAthread = nullptr;
+    thread* runLoopClosureThread = nullptr;
 
     bool isInitialized = false;
     int trackLostCount = 0;
@@ -144,6 +145,10 @@ int main(int argc, char** argv) {
             if (!runWindowBAthread) {
                 runWindowBAthread =
                     new thread(&Optimizer::RunWindowBA, &optimizer);
+            }
+            if (!runLoopClosureThread) {
+                runLoopClosureThread =
+                    new thread(&Optimizer::RunLoopClosure, &optimizer);
             }
             KeyFrame::InitPoseFileMessage();
             cout << "Set initFrame with frame id: " << i << endl;
@@ -388,6 +393,12 @@ int main(int argc, char** argv) {
     runWindowBAthread->join();
     delete runWindowBAthread;
     cout << "Window BA thread recycled!" << endl;
+
+    optimizer.StopRunLoopClosure();
+    runLoopClosureThread->join();
+    delete runLoopClosureThread;
+    cout << "Loop closure BA thread recycled!" << endl;
+
 
     for (const KeyFrame* kf : win) {
         KeyFrame::WritePoseMessage2File(*kf);

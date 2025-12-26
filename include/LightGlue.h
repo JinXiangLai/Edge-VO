@@ -25,8 +25,8 @@ constexpr const char* kOutputTensorNames[1] = {"mscores0"};
 
 constexpr int kImageHeight = 480;
 constexpr int kImageWidth = 640;
-constexpr float kMatchThreshold = 0.01; // 有双向匹配约束，可以设置小
-};  // namespace LightGlueConfig
+constexpr float kMatchThreshold = 0.01;  // 有双向匹配约束，可以设置小
+};                                       // namespace LightGlueConfig
 
 class LightGlue {
    public:
@@ -45,10 +45,10 @@ class LightGlue {
         Eigen::VectorXf& mscores);
 
     int MatchKeypoints(
-        Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
-        Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
-        Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,
-        Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc1,
+        const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
+        const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
+        const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,
+        const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc1,
         Eigen::VectorXf& mscores, std::vector<cv::DMatch>& matches,
         bool outlier_rejection = false);
 

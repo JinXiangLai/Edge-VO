@@ -39,7 +39,7 @@ find_package(Eigen3 REQUIRED)
 find_package(OpenCV 4 REQUIRED)
 
 #add_definitions(-DUSE_SUPERPOINT_AND_LIGHTGLUE)
-# add_definitions(-DUSE_CERES2)
+add_definitions(-DUSE_CERES2)
 find_package(CUDA REQUIRED)
 # ============ 添加：为旧版 CMake 创建 CUDA 目标 ============
 # 如果你的 CMake 版本 < 3.17，需要创建 CUDA 目标

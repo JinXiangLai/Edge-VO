@@ -486,10 +486,10 @@ bool LightGlue::DeserializeEngine() {
 }
 
 int LightGlue::MatchKeypoints(
-    Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
-    Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
-    Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,
-    Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc1,
+    const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts0,
+    const Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor>& kpts1,
+    const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc0,
+    const Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor>& desc1,
     Eigen::VectorXf& mscores, vector<cv::DMatch>& matches,
     bool outlier_rejection) {
     matches.clear();

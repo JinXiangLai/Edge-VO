@@ -17,6 +17,8 @@
 constexpr int kPoseDim = 6;
 constexpr int kPointDim = 1;
 constexpr int kMaxNewKFinQueue = 2;
+typedef Eigen::Matrix<double, 3, Eigen::Dynamic> DynamicPointMatrix;
+
 class Optimizer {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -277,6 +279,23 @@ class Optimizer {
     }
     double lastWinBAspendTime_ = 1e12;  // ms
     std::queue<KeyFrame*> newKFqueue_;
+
+    // 闭环优化参数
+    std::vector<KeyFrame*> vecMargKf_;
+    std::mutex vecMargKfMutex_;
+    KeyFrame* lastTryLoopNewKf_ = nullptr;  // 避免重复找闭环，由BA线程设置
+    std::mutex lastTryLoopNewKfMutex_;
+    bool keepRunLoopClosure_ = true;
+    int FindLoopClosureKF();
+    int FindMatchSuperpoint3Dpos(const KeyFrame* kf1, const KeyFrame* kf2,
+                                 DynamicPointMatrix& Pc1,
+                                 DynamicPointMatrix& Pc2);
+    void RunLoopClosure();
+    void StopRunLoopClosure();
+    // 找到闭环后，应该清空经过闭环优化的帧后再检测新闭环
+    // 本质上需要使用词袋来快速找候选帧，然后再使用lightglue确认闭环，因lightglue耗时较长
+    // 否则只能检验开头的几帧关键帧
+    // 2. 被边缘化的如果是最新帧，那么就不应该加入寻找闭环，因为有很多帧能看到它，且只能在边缘化后的帧找闭环
 };
 
 #endif

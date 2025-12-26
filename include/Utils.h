@@ -31,6 +31,8 @@ constexpr double kMinSceneDepthInCamera = 0.01;      // meter
 constexpr double kMinParallaxAng = 30.0 * kDeg2Rad;  // rad
 const double kMaxCosValue = cos(kMinParallaxAng);
 
+typedef Eigen::Matrix<double, 3, Eigen::Dynamic> DynamicPointMatrix;
+
 inline const std::map<std::string, cv::Vec3b, std::less<>> kColor = {
     {"red", {0, 0, 255}},       {"green", {0, 255, 0}},
     {"blue", {255, 0, 0}},      {"white", {255, 255, 255}},
@@ -358,6 +360,19 @@ inline double ChronoMillisecTimeDuration(
     const std::chrono::steady_clock::time_point& t2) {
     return std::chrono::duration<double>(t2 - t1).count() * 1e3;
 }
+
+bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
+                                 const DynamicPointMatrix& Pc2, Sim3Pose& sT12,
+                                 const int minSet = 3,
+                                 const double prob = 0.999,
+                                 const double inerProb = 0.5);
+
+int CalculateInnerNum(const DynamicPointMatrix& Pc1,
+                      const DynamicPointMatrix& Pc2, const Sim3Pose& sT12,
+                      const double diffRatio);
+
+bool CalculateSim3PoseT12(const DynamicPointMatrix& Pc1,
+                          const DynamicPointMatrix& Pc2, Sim3Pose& sT12);
 
 inline double CalculateParallax(const Eigen::Vector2d& p1,
                                 const Eigen::Vector2d& p2,

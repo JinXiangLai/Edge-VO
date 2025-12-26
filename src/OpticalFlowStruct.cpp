@@ -6,6 +6,8 @@ using namespace std;
 // 全局变量定义
 std::mutex globalOptFlwMutex;
 OpticalFlowStruct globalOptFlw;
+shared_ptr<SuperPoint> superpointPtr;
+shared_ptr<LightGlue> lightgluePtr;
 
 void OpticalFlowStruct::RemoveUselessLandmark() {
     std::vector<cv::Point2f> tempPts;

@@ -9,10 +9,8 @@
 
 #include "Camera.h"
 #include "Landmark.h"
-#include "LightGlue.h"
 #include "OpticalFlowStruct.h"
 #include "Pose.h"
-#include "SuperPoint.h"
 
 #define USE_POINT_MAP_ID 0
 
@@ -171,10 +169,6 @@ class KeyFrame {
     static void InitPoseFileMessage();
     static void WritePoseMessage2File(const KeyFrame& f);
     static void ProcessPoseFile();
-
-    // superpoint和lightglue
-    static std::shared_ptr<SuperPoint> superpointPtr;
-    static std::shared_ptr<LightGlue> lightgluePtr;
 
     static cv::Mat superpointLocation;
 };

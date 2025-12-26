@@ -23,7 +23,9 @@ constexpr double kMaxErrorRatio = 0.5;
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
-    : onlyPoseUpdate_(onlyPoseUpdate), cam_(cam) {}
+    : onlyPoseUpdate_(onlyPoseUpdate), cam_(cam) {
+    vecMargKf_.reserve(1e4);
+}
 
 Optimizer::~Optimizer() {
     if (debugTrackLostStatusVideoWriter_.isOpened()) {
@@ -1540,9 +1542,17 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
                                             globalOptFlw.prevPts_);
     }
 
-    // 删除老帧看看是否会有影响
-    // delete oldest;
-    delayEraseKeyframe_.push_back(oldest);
+    // 有可能闭环在更新pose
+    if (margKFid != config->maxKFnumInWindow) {
+        lock_guard<mutex> lock(vecMargKfMutex_);  // 更新耗时可忽略
+        // 当前实现只会遍历前几帧，push_back不影响，但要预申请内存，避免扩容导致异常
+        vecMargKf_.emplace_back(oldest);
+        cout << "vecMargKf_ size: " << vecMargKf_.size() << endl;
+    } else {
+        // 删除老帧看看是否会有影响
+        delayEraseKeyframe_.push_back(oldest);
+    }
+
     if (delayEraseKeyframe_.size() > 1) {
         lock_guard<mutex> lock(KeyFrame::mutexForSyncView3Dstatus);
         if (!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
@@ -2414,6 +2424,14 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         MoveMargKF2FirstPosInWindow(margKFid);
         TransformLandmarkOwnerFromOldestKF(margKFid);
         RemoveOldestKeyFrame(margKFid);
+
+        // 意味着最新KF被接受，由于闭环优化耗时长，这里不等待
+        if (lastTryLoopNewKf_ == nullptr &&
+            margKFid != config->maxKFnumInWindow &&
+            lastTryLoopNewKfMutex_.try_lock()) {
+            lastTryLoopNewKf_ = window_.back();
+            lastTryLoopNewKfMutex_.unlock();
+        }
     }
     const int markDeleteNum = MarkBigResidualLandmarkDelete();
     cout << fmt::format("markDeleteNum: {}, winOptSuccess: {}\n", markDeleteNum,
@@ -2767,6 +2785,140 @@ void Optimizer::StopRunBA() {
     }
     keepRunWindowBA_ = false;
     cout << fmt::format("Window BA keepRunWindowBA_: {}.\n", keepRunWindowBA_);
+}
+
+void Optimizer::RunLoopClosure() {
+    while (keepRunLoopClosure_) {
+        if (lastTryLoopNewKf_ == nullptr) {
+            usleep(10 * 1e3);
+            continue;
+        }
+
+        KeyFrame* kf1 = nullptr;
+        {
+            // 排序加锁，更新时另外加锁，或者更新放在BA线程后？
+            lock_guard<mutex> lock(vecMargKfMutex_);
+            sort(vecMargKf_.begin(), vecMargKf_.end(),
+                 [](const KeyFrame* a, const KeyFrame* b) {
+                     return a->id_ < b->id_;
+                 });
+            const int kf1Index = FindLoopClosureKF();
+            if (kf1Index < 0) {
+                // 是否可能存在死锁？win ba是串行的，应该不会
+                lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
+                lastTryLoopNewKf_ = nullptr;
+                cout << fmt::format(
+                            "LP find loop closure kf failed! vecMargKf_ size: {}",
+                            vecMargKf_.size())
+                     << endl;
+                continue;
+            }
+            kf1 = vecMargKf_[kf1Index];
+        }
+
+        DynamicPointMatrix Pc1, Pc2;
+        if (FindMatchSuperpoint3Dpos(kf1, lastTryLoopNewKf_, Pc1, Pc2) < 100) {
+            lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
+            lastTryLoopNewKf_ = nullptr;
+            continue;
+        }
+
+        // 解闭环相对位姿约束
+        Sim3Pose sT12;
+        const double innerRatio = 0.55;
+        if (CalculateSim3PosesT12RANSAC(Pc1, Pc2, sT12, 3, 0.999, innerRatio)) {
+            cout << "Solve sim3Pose sT12 succeed! sT12:\n" << sT12 << endl;
+        } else {
+            cout << "Solve sim3Pose sT12 failed!" << endl;
+            continue;
+        }
+
+        // 求解位姿图优化
+    }
+}
+
+int Optimizer::FindLoopClosureKF() {
+    // TODO： 使用lightglue寻找，这里暂时使用先验poes实现寻找
+    if (vecMargKf_.size() < 50) {
+        return -1;
+    }
+
+    // 寻找开头5帧，，不能处理大回环内有小回环的情况
+    constexpr int kMaxSearchRange = 5;
+    constexpr double kMaxLoopClosureDist = 0.2; // 尺度漂移时只能由lightglue确定
+    for (size_t i = 0; i < kMaxSearchRange; ++i) {
+        const KeyFrame* kf = vecMargKf_[i];
+        const double posDiff =
+            (kf->priorTwc_.Inverse() * lastTryLoopNewKf_->priorTwc_)
+                .t_wb_.norm();
+        if (posDiff < kMaxLoopClosureDist) {
+            // 还是需要lightglue寻找匹配点
+            cout << fmt::format(
+                        "LP find loop closure kf id: {}, in vecMargKf_ index: {}",
+                        vecMargKf_[i]->id_, i)
+                 << endl;
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
+                                        const KeyFrame* kf2,
+                                        DynamicPointMatrix& Pc1,
+                                        DynamicPointMatrix& Pc2) {
+    auto& kpts1 = kf1->kpts_.middleRows(0, kf1->desc_.rows());
+    auto& kpts2 = kf2->kpts_.middleRows(0, kf2->desc_.rows());
+    Eigen::VectorXf mscores;
+    vector<cv::DMatch> matches;
+    lightgluePtr->MatchKeypoints(kpts1, kpts2, kf1->desc_, kf2->desc_, mscores,
+                                 matches);
+    cout << "LP lightglue find 2d match num: " << matches.size() << endl;
+    if (matches.size() < 200) {
+        return 0;
+    }
+    int usefulNum = 0;
+    for (size_t i = 0; i < matches.size(); ++i) {
+        int idx1 = matches[i].queryIdx;
+        int idx2 = matches[i].trainIdx;
+        const auto lk1 = kf1->landmark_[idx1];
+        const auto lk2 = kf2->landmark_[idx2];
+        if (!lk1 || !lk2 || lk1->CanBeDelete() || lk2->CanBeDelete()) {
+            continue;
+        }
+        ++usefulNum;
+    }
+    Pc1.resize(3, usefulNum);
+    Pc2.resize(3, usefulNum);
+    const Pose& Tc1w = kf1->Tcw_;
+    const Pose& Tc2w = kf2->Tcw_;
+    int idx = 0;
+    for (size_t i = 0; i < matches.size(); ++i) {
+        int idx1 = matches[i].queryIdx;
+        int idx2 = matches[i].trainIdx;
+        const auto lk1 = kf1->landmark_[idx1];
+        const auto lk2 = kf2->landmark_[idx2];
+        if (!lk1 || !lk2 || lk1->CanBeDelete() || lk2->CanBeDelete()) {
+            continue;
+        }
+        Pc1.col(idx) = Tc1w * lk1->GetPw();
+        Pc2.col(idx) = Tc2w * lk2->GetPw();
+        ++idx;
+    }
+    cout << "LP lightglue find useful 3d match num: " << usefulNum << endl;
+    return usefulNum;
+}
+
+void Optimizer::StopRunLoopClosure() {
+    int tryCount = 0;
+    while (lastTryLoopNewKf_ != nullptr) {
+        usleep(10 * 1e3);
+        cout << fmt::format("try stop loop closure BA count: {}\n", ++tryCount);
+    }
+    keepRunLoopClosure_ = false;
+    cout << fmt::format("Loop closure BA keepRunLoopClosure_: {}.\n",
+                        keepRunLoopClosure_);
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {

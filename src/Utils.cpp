@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <numeric>  // 用于 std::accumulate
+#include <random>
 
 using namespace cv;
 using namespace std;
@@ -157,6 +158,123 @@ vector<double> CalculateDescriptor(const cv::Mat& grayImg,
         des[4] = BilinearInterpolate<uchar>(grayImg, px - 2 * epNorm);
     }
     return des;
+}
+
+int CalculateInnerNum(const DynamicPointMatrix& Pc1,
+                      const DynamicPointMatrix& Pc2, const Sim3Pose& sT12,
+                      const double diffRatio) {
+    int innerNum = 0;
+    for (int j = 0; j < Pc1.cols(); ++j) {
+        const Eigen::Vector3d pc1 = sT12 * Pc2.col(j);
+        const double diff = (Pc1.col(j) - pc1).norm();
+        if (diff / Pc1.col(j).norm() < diffRatio) {
+            ++innerNum;
+        }
+    }
+
+    return innerNum;
+}
+
+bool CalculateSim3PoseT12(const DynamicPointMatrix& Pc1,
+                          const DynamicPointMatrix& Pc2, Sim3Pose& sT12) {
+
+    // 直接调用Eigen库实现
+    Eigen::Matrix4d transformT12 = Eigen::umeyama(Pc2, Pc1, true);
+    // 方法1：通过行列式计算尺度（3D情况）
+    // 因为 det(sR) = s^3 * det(R) = s^3 （det(R)=1）
+    const double scale = cbrt(transformT12.determinant());
+    transformT12.block<3, 3>(0, 0) /= scale;
+    sT12 = Sim3Pose(Eigen::Quaterniond(transformT12.block<3, 3>(0, 0)),
+                    transformT12.block<3, 1>(0, 3), scale);
+
+    // debug信息
+    // DynamicPointMatrix Pc1FromPc2 = Pc2;
+    // for (int j = 0; j < Pc2.cols(); ++j) {
+    //     Pc1FromPc2.col(j) = sT12 * Pc2.col(j);
+    // }
+    // cout << "Pc1:\n" << Pc1 << endl;
+    // cout << "Pc1FromPc2:\n" << Pc1FromPc2 << endl;
+
+    /*
+    // 1. 去点集中心
+    const Eigen::Vector3d c1 = Pc1.rowwise().sum() / 3;
+    const Eigen::Vector3d c2 = Pc2.rowwise().sum() / 3;
+
+    // cout << "Pc1:\n" << Pc1 << "\n center1: " << c1.transpose() << endl;
+    const DynamicPointMatrix mPc1 = Pc1.colwise() - c1;
+    const DynamicPointMatrix mPc2 = Pc2.colwise() - c2;
+
+    // 2. 计算尺度变化
+    // pc1 = s * R12 * pc2 + t12
+    double scale = 0;
+    for (int j = 1; j < Pc1.cols(); ++j) {
+        double dist1 = (Pc1.col(j) - Pc1.col(j - 1)).norm();
+        double dist2 = (Pc2.col(j) - Pc1.col(j - 1)).norm();
+        scale += dist1 / dist2;
+    }
+    scale /= (Pc1.cols() - 1);
+
+    // 3. 应用尺度变化
+    const DynamicPointMatrix sPc2 = scale * Pc2;  // 应用尺度
+
+    // 4. 计算旋转，使用Umeyama方法
+    // 去完中心后，相当于把点集放到了原点，两点集之间差一个旋转
+    // Pc1 = s * R12 * Pc2
+*/
+    return true;
+}
+
+bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
+                                 const DynamicPointMatrix& Pc2, Sim3Pose& sT12,
+                                 const int minSet, const double prob,
+                                 const double inerProb) {
+    if (Pc1.size() != Pc2.size() || Pc1.cols() != Pc2.cols() ||
+        Pc1.cols() < minSet) {
+        return false;
+    }
+    // 1. 计算需迭代次数:
+    // 1.0 - fail^n > prob
+    const double testOneTimeSucceedProb = pow(inerProb, minSet);
+    const double testOneTimeFailProb = 1.0 - testOneTimeSucceedProb;
+    const int testTime = int(log(1.0 - prob) / log(testOneTimeFailProb) + 0.5);
+    cout << "RANSAC need test time: " << testTime << endl;
+
+    mt19937 rng;
+    uniform_int_distribution<int> dist(0, Pc1.cols() - 1);
+    auto RandomSelectMinSet = [&minSet, &rng, &dist]() -> vector<int> {
+        set<int> selected;
+        while (selected.size() < minSet) {
+            selected.insert(dist(rng));
+        }
+        return vector<int>(selected.begin(), selected.end());
+    };
+
+    // pc1 = s * R12 * pc2 + t12
+    int maxInner = 0;
+    for (int i = 0; i < testTime; ++i) {
+        vector<int> colIndex = RandomSelectMinSet();
+        DynamicPointMatrix samplePc1(3, minSet);
+        DynamicPointMatrix samplePc2(3, minSet);
+        for (int j = 0; j < colIndex.size(); ++j) {
+            samplePc1.col(j) = Pc1.col(colIndex[j]);
+            samplePc2.col(j) = Pc2.col(colIndex[j]);
+        }
+
+        Sim3Pose sT12Temp;
+        CalculateSim3PoseT12(samplePc1, samplePc2, sT12Temp);
+        const int innerNum = CalculateInnerNum(Pc1, Pc2, sT12Temp, 0.1);
+        cout << fmt::format(
+                    "Ransac ite: {}th, innerNum: {}, maxInner: {}, total Point "
+                    "num: {}",
+                    i, innerNum, maxInner, Pc1.cols())
+             << endl;
+        if (innerNum > maxInner) {
+            sT12 = sT12Temp;
+            maxInner = innerNum;
+        }
+    }
+
+    return maxInner > Pc1.cols() * inerProb - 1;
 }
 
 Mat DrawMatch(const Mat& img1, const Mat& img2,

@@ -5,6 +5,8 @@
 
 #include <opencv2/opencv.hpp>
 #include "Landmark.h"
+#include "LightGlue.h"
+#include "SuperPoint.h"
 
 class Landmark;
 
@@ -39,11 +41,13 @@ struct OpticalFlowStruct {
              const int totalFeatureCreated, const int historyLandmarkNum);
     void RemoveUselessLandmark();
     void GetFundamentalMatrixF12(const std::shared_ptr<Camera> cam,
-                               Eigen::Matrix3f& e);
+                                 Eigen::Matrix3f& e);
 };
 
 // 全局变量声明
 extern std::mutex globalOptFlwMutex;
 extern OpticalFlowStruct globalOptFlw;
-
+// superpoint和lightglue
+extern std::shared_ptr<SuperPoint> superpointPtr;
+extern std::shared_ptr<LightGlue> lightgluePtr;
 #endif

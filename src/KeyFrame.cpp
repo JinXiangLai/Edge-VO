@@ -33,8 +33,6 @@ ofstream KeyFrame::poseFile;
 ofstream KeyFrame::kfPoseFile;
 string KeyFrame::poseFilePath, KeyFrame::kfPoseFilePath;
 vector<pair<double, string>> KeyFrame::vecTime2Pose;
-shared_ptr<SuperPoint> KeyFrame::superpointPtr;
-shared_ptr<LightGlue> KeyFrame::lightgluePtr;
 cv::Mat KeyFrame::superpointLocation;
 
 class Landmark;
