@@ -2863,7 +2863,6 @@ void Optimizer::RunLoopClosure() {
                                             allKeyframe);
         } else {
             cout << "Solve sim3Pose sT12 failed!" << endl;
-            continue;
         }
 
         lock_guard<mutex> lock(lastTryLoopNewKfMutex_);

@@ -262,7 +262,7 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
 
         Sim3Pose sT12Temp;
         CalculateSim3PoseT12(samplePc1, samplePc2, sT12Temp);
-        const int innerNum = CalculateInnerNum(Pc1, Pc2, sT12Temp, 0.1);
+        const int innerNum = CalculateInnerNum(Pc1, Pc2, sT12Temp, 0.15);
         cout << fmt::format(
                     "Ransac ite: {}th, innerNum: {}, maxInner: {}, total Point "
                     "num: {}",
@@ -274,7 +274,7 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
         }
     }
 
-    return maxInner > Pc1.cols() * inerProb - 1;
+    return (maxInner > Pc1.cols() * inerProb - 1) || maxInner > 120;
 }
 
 bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
