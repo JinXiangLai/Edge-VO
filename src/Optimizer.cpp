@@ -2863,7 +2863,7 @@ void Optimizer::RunLoopClosure() {
             vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
                                           vecMargKf_.end());
             allKeyframe.emplace_back(lastTryLoopNewKf_);
-#if DEBUG_LOOP_CLOSURE_USE_PRIOR
+#if DEBUG_LOOP_CLOSURE_USE_PRIOR || 1
             const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
                              lastTryLoopNewKf_->priorTwc_;
             sT12 = Sim3Pose(T12, 1.0);
