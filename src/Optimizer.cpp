@@ -25,6 +25,8 @@ const char* const kBeforeLoopClosurePoseFilePath =
     "./opt_before_loop_closure_pose.txt";
 const char* const kClosurePoseFilePath = "./opt_loop_closure_pose.txt";
 
+#define DEBUG_LOOP_CLOSURE_USE_PRIOR 0
+
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
                      const int maxIte, const bool onlyPoseUpdate)
     : onlyPoseUpdate_(onlyPoseUpdate), cam_(cam) {
@@ -2845,6 +2847,8 @@ void Optimizer::RunLoopClosure() {
         DynamicPointMatrix Pc1, Pc2;
         if (FindMatchSuperpoint3Dpos(vecMargKf_[kf1Index], lastTryLoopNewKf_,
                                      Pc1, Pc2) < 100) {
+            cout << "FindMatchSuperpoint3Dpos num: " << Pc1.cols()
+                 << ", too small!" << endl;
             lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
             lastTryLoopNewKf_ = nullptr;
             continue;
@@ -2859,6 +2863,11 @@ void Optimizer::RunLoopClosure() {
             vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
                                           vecMargKf_.end());
             allKeyframe.emplace_back(lastTryLoopNewKf_);
+#if DEBUG_LOOP_CLOSURE_USE_PRIOR
+            const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
+                             lastTryLoopNewKf_->priorTwc_;
+            sT12 = Sim3Pose(T12, 1.0);
+#endif
             Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1, sT12,
                                             allKeyframe);
         } else {
@@ -2976,7 +2985,8 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     vector<Sim3Pose> loopClosurePoseTwc;
     vector<Sim3Pose> sT12Constraint;
     CalculateLoopClosureSim3PoseAndConstraint(
-        relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint);
+        relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint,
+        DEBUG_LOOP_CLOSURE_USE_PRIOR);
     ofstream of;
     of.open(kBeforeLoopClosurePoseFilePath);
     for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
@@ -3015,7 +3025,7 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
         ceres::CostFunction* cost =
-            new RelativeConstraintResidual(1.0, 0.50, 1.0, sT12Constraint[i]);
+            new RelativeConstraintResidual(0.1, 0.050, 1.0, sT12Constraint[i]);
         problem.AddResidualBlock(cost, loss, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }

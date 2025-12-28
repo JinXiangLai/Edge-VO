@@ -382,7 +382,8 @@ int CalculateLoopClosureSim3PoseAndConstraint(
     const Sim3Pose& relativeSim3T12,
     const std::vector<KeyFrame*>& selectKFresult,
     std::vector<Sim3Pose>& loopClosurePoseTwc,
-    std::vector<Sim3Pose>& relativePoseConstraint);
+    std::vector<Sim3Pose>& relativePoseConstraint,
+    const bool use_priorTwc = true);
 
 inline double CalculateParallax(const Eigen::Vector2d& p1,
                                 const Eigen::Vector2d& p2,

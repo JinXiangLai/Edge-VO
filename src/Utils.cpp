@@ -313,7 +313,7 @@ bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,
 int CalculateLoopClosureSim3PoseAndConstraint(
     const Sim3Pose& relativeSim3T12, const vector<KeyFrame*>& selectKFresult,
     vector<Sim3Pose>& loopClosurePoseTwc,
-    vector<Sim3Pose>& relativePoseConstraint) {
+    vector<Sim3Pose>& relativePoseConstraint, const bool use_priorTwc) {
 
     // 初始化各关键帧的sim3 pose
     loopClosurePoseTwc.reserve(selectKFresult.size());
@@ -329,9 +329,15 @@ int CalculateLoopClosureSim3PoseAndConstraint(
         // const Sim3Pose Twc1 = loopClosurePoseTwc[i - 1];
         // const Sim3Pose Twc2 = loopClosurePoseTwc[i];
         // relativePoseConstraint.emplace_back(Twc1.Inverse() * Twc2);
-        relativePoseConstraint.emplace_back(
-            selectKFresult[i - 1]->Twc_.Inverse() * selectKFresult[i]->Twc_,
-            1.0);
+        if (use_priorTwc) {
+            relativePoseConstraint.emplace_back(
+                selectKFresult[i - 1]->priorTwc_.Inverse() *
+                    selectKFresult[i]->priorTwc_,
+                1.0);
+        } else {
+            relativePoseConstraint.emplace_back(
+                loopClosurePoseTwc[i - 1].Inverse() * loopClosurePoseTwc[i]);
+        }
     }
     // 添加回环首、末帧约束，这里添加的是T21作为先验约束
     relativePoseConstraint.emplace_back(relativeSim3T12);
