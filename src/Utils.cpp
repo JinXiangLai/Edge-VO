@@ -330,8 +330,7 @@ int CalculateLoopClosureSim3PoseAndConstraint(
         // const Sim3Pose Twc2 = loopClosurePoseTwc[i];
         // relativePoseConstraint.emplace_back(Twc1.Inverse() * Twc2);
         relativePoseConstraint.emplace_back(
-            selectKFresult[i - 1]->priorTwc_.Inverse() *
-                selectKFresult[i]->priorTwc_,
+            selectKFresult[i - 1]->Twc_.Inverse() * selectKFresult[i]->Twc_,
             1.0);
     }
     // 添加回环首、末帧约束，这里添加的是T21作为先验约束

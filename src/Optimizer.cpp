@@ -2965,8 +2965,11 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     // 构建位姿图
     // 1. 选择闭环内的帧
     vector<KeyFrame*> selectKFresult;
-    SelectKeyframeInLoopClosure(allKeyframe, fixedIndex, loopClosureIndex,
-                                selectKFresult);
+    if (!SelectKeyframeInLoopClosure(allKeyframe, fixedIndex, loopClosureIndex,
+                                     selectKFresult)) {
+        cout << "Error while SelectKeyframeInLoopClosure!" << endl;
+        return false;
+    }
     cout << "Select selectKFresult size: " << selectKFresult.size() << endl;
 
     // 2. 保留帧间位姿先验
@@ -3017,8 +3020,8 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
                                  vecSim3Pose[i + 1].data());
     }
     // 最后一帧是闭环约束
-    ceres::CostFunction* cost = new RelativeConstraintResidual(
-        1.0, 1.10, 1.10, sT12Constraint.back());
+    ceres::CostFunction* cost =
+        new RelativeConstraintResidual(1.0, 1.10, 1.10, sT12Constraint.back());
     problem.AddResidualBlock(cost, loss, vecSim3Pose[0].data(),
                              vecSim3Pose.back().data());
 
