@@ -188,8 +188,12 @@ bool ProjectionResidual::Evaluate(double const* const* parameters,
 }
 
 RelativeConstraintResidual::RelativeConstraintResidual(
+    const double rotWeight, const double transWeight, const double scaleWeight,
     const Sim3Pose& sPriorT12)
-    : sPriorT12_(sPriorT12) {}
+    : rotWeight_(rotWeight),
+      transWeight_(transWeight),
+      scaleWeight_(scaleWeight),
+      sPriorT12_(sPriorT12) {}
 
 bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
                                           double* residuals,
@@ -223,21 +227,22 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
     const Eigen::Vector3d& dP = sPriorT12_.t_wb_;
     const double ds = sPriorT12_.scale_;
     const Eigen::Vector3d dr = LogSO3(dR * (Rwc1.transpose() * Rwc2));
-    residuals[0] = dr[0];
-    residuals[1] = dr[1];
-    residuals[2] = dr[2];
+    residuals[0] = dr[0] * rotWeight_;
+    residuals[1] = dr[1] * rotWeight_;
+    residuals[2] = dr[2] * rotWeight_;
 
     // |1/s1*R1.inv, -1/s1*R1.inv*t1|   |s2R2, t2|
     // |          0,               1| * |   0,  1|
     const Eigen::Vector3d dPw = Pwc2 - Pwc1;
     const Eigen::Vector3d sP12 = invS1 * (Qwc1.inverse() * dPw);
     const Eigen::Vector3d dp = sP12 - dP;
-    residuals[3] = dp[0];
-    residuals[4] = dp[1];
-    residuals[5] = dp[2];
+    residuals[3] = dp[0] * transWeight_;
+    residuals[4] = dp[1] * transWeight_;
+    residuals[5] = dp[2] * transWeight_;
 
     // 注意：这里实现存在的问题是量纲不统一，且scale一定是非负数
-    residuals[6] = invS1 * s2 - ds;  // 相邻帧间尺度漂移比例应该接近于1.0
+    residuals[6] =
+        (invS1 * s2 - ds) * scaleWeight_;  // 相邻帧间尺度漂移比例应该接近于1.0
 
     // ΔR = LogSO3(dR * Rw1.inv * Rw2)
     // ΔT = Twc1.inv * Twc2
@@ -259,19 +264,21 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
             A1.setZero();
             // ΔR w.r.t Pw1, s1 = 0
             // ΔR w.r.t Rw1
-            A1.block<3, 3>(0, 0) = -invJr * Rwc2.transpose() * Rwc1;
+            A1.block<3, 3>(0, 0) =
+                -invJr * Rwc2.transpose() * Rwc1 * rotWeight_;
 
             // ΔP w.r.t Rw1
             A1.block<3, 3>(3, 0) =
-                invS1 * SkewSymmetric(Rwc1.transpose() * dPw);
+                invS1 * SkewSymmetric(Rwc1.transpose() * dPw) * transWeight_;
             // ΔP w.r.t Pw1
-            A1.block<3, 3>(3, 3) = -invS1 * Rwc1.transpose();
+            A1.block<3, 3>(3, 3) = -invS1 * Rwc1.transpose() * transWeight_;
             // ΔP w.r.t s1
-            A1.block<3, 1>(3, 6) = -invS1 * invS1 * Rwc1.transpose() * dPw;
+            A1.block<3, 1>(3, 6) =
+                -invS1 * invS1 * Rwc1.transpose() * dPw * transWeight_;
 
             // Δs w.r.t Rw1, Rw2, Pw1, Pw2 = 0
             // Δs w.r.t s1
-            A1(6, 6) = -s2 * invS1 * invS1;
+            A1(6, 6) = -s2 * invS1 * invS1 * scaleWeight_;
         }
         if (jacobians[1]) {
             Eigen::Map<Eigen::Matrix<double, 7, 8, Eigen::RowMajor>> A2(
@@ -279,15 +286,15 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
             A2.setZero();
             // ΔR w.r.t Pw2, s2 = 0
             // ΔR w.r.t Rw2
-            A2.block<3, 3>(0, 0) = invJr * dR.transpose();
+            A2.block<3, 3>(0, 0) = invJr * dR.transpose() * rotWeight_;
 
             // ΔP w.r.t Rw2 = 0
             // ΔP w.r.t s2 = 0
             // ΔP w.r.t Pw2
-            A2.block<3, 3>(3, 3) = invS1 * Rwc1.transpose();
+            A2.block<3, 3>(3, 3) = invS1 * Rwc1.transpose() * transWeight_;
 
             // Δs w.r.t s2
-            A2(6, 6) = s1;
+            A2(6, 6) = s1 * scaleWeight_;
         }
     }
 

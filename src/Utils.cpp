@@ -318,8 +318,7 @@ int CalculateLoopClosureSim3PoseAndConstraint(
     // 初始化各关键帧的sim3 pose
     loopClosurePoseTwc.reserve(selectKFresult.size());
     for (size_t i = 0; i < selectKFresult.size(); ++i) {
-        loopClosurePoseTwc.emplace_back(
-            Sim3Pose(selectKFresult[i]->Twc_, 1.0 + 0.1 * i));
+        loopClosurePoseTwc.emplace_back(Sim3Pose(selectKFresult[i]->Twc_, 1.0));
         loopClosurePoseTwc.back().debugTimestamp_ =
             selectKFresult[i]->timestamp_;
     }

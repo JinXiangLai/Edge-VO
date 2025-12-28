@@ -53,17 +53,17 @@ if(CMAKE_VERSION VERSION_LESS 3.17 AND NOT TARGET CUDA::cudart)
     find_library(CUDA_CUSPARSE cusparse PATHS ${CUDA_TOOLKIT_ROOT_DIR}/lib64)
     
     # 创建导入目标
-    add_library(CUDA::cublas INTERFACE IMPORTED)
-    target_link_libraries(CUDA::cublas INTERFACE ${CUDA_CUBLAS})
+    #add_library(CUDA::cublas INTERFACE IMPORTED)
+    #target_link_libraries(CUDA::cublas INTERFACE ${CUDA_CUBLAS})
     
-    add_library(CUDA::cudart INTERFACE IMPORTED)
-    target_link_libraries(CUDA::cudart INTERFACE ${CUDA_CUDART})
+    #add_library(CUDA::cudart INTERFACE IMPORTED)
+    #target_link_libraries(CUDA::cudart INTERFACE ${CUDA_CUDART})
     
-    add_library(CUDA::cusolver INTERFACE IMPORTED)
-    target_link_libraries(CUDA::cusolver INTERFACE ${CUDA_CUSOLVER})
+    #add_library(CUDA::cusolver INTERFACE IMPORTED)
+    #target_link_libraries(CUDA::cusolver INTERFACE ${CUDA_CUSOLVER})
     
-    add_library(CUDA::cusparse INTERFACE IMPORTED)
-    target_link_libraries(CUDA::cusparse INTERFACE ${CUDA_CUSPARSE})
+    #add_library(CUDA::cusparse INTERFACE IMPORTED)
+    #target_link_libraries(CUDA::cusparse INTERFACE ${CUDA_CUSPARSE})
 endif()
 # ============ 结束创建目标 ============
 

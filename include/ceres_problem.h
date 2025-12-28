@@ -193,10 +193,15 @@ class ProjectionResidual : public ceres::SizedCostFunction<2, 7> {
 // 8表示实际需要的参数个数，主要是四元数需要4个表示
 class RelativeConstraintResidual : public ceres::SizedCostFunction<7, 8, 8> {
    public:
-    RelativeConstraintResidual(const Sim3Pose& sPriorT12);
+    RelativeConstraintResidual(const double rotWeight, const double transWeight,
+                               const double scaleWeight,
+                               const Sim3Pose& sPriorT12);
     virtual bool Evaluate(double const* const* parameters, double* residuals,
                           double** jacobians) const override;
 
    private:
+    double rotWeight_ = 1.0;
+    double transWeight_ = 0.1;
+    double scaleWeight_ = 1.0;
     Sim3Pose sPriorT12_;
 };

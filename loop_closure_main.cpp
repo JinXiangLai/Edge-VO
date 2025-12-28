@@ -682,13 +682,13 @@ bool Sim3PoseGraphOptimizationCeres2(vector<KeyFrame*>& allKeyframe,
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
         ceres::CostFunction* cost =
-            new RelativeConstraintResidual(sT12Constraint[i]);
+            new RelativeConstraintResidual(1.0, 1.0, 1.0, sT12Constraint[i]);
         problem.AddResidualBlock(cost, nullptr, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }
     // 最后一帧是闭环约束
     ceres::CostFunction* cost =
-        new RelativeConstraintResidual(sT12Constraint.back());
+        new RelativeConstraintResidual(1.0, 1.0, 1.0, sT12Constraint.back());
     problem.AddResidualBlock(cost, nullptr, vecSim3Pose[0].data(),
                              vecSim3Pose.back().data());
 
