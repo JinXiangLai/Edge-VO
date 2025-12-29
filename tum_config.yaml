@@ -107,7 +107,7 @@ drawAllEpipolarMatch: false
 drawEpipolarMatchStartCol: 300
 maxFailObvTimeBeforeCreateDepth: 10
 
-useDepthImage: true # 验证位姿估计算法
+useDepthImage: false # 验证位姿估计算法
 depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
 initWithTrueDepth: false
 
