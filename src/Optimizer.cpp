@@ -1477,23 +1477,37 @@ bool Optimizer::TransformLandmarkOwnerFromOldestKF(const int margKFid) {
             continue;
         }
 
-        if (lk->host_ != oldest) {
-            if (i < oldest->desc_.rows() && lk->initialized_ &&
+        if (config->useDepthImage) {
+            if (i < oldest->desc_.rows() && lk->invZ_ > 0 && lk->initialized_ &&
                 !lk->CanBeDelete()) {
-                const Eigen::Vector3d pc = oldest->Tcw_ * lk->GetPw();
-                if (pc.z() > config->minDepth && pc.z() < config->maxDepth) {
-                    oldest->depth_[i] = pc.z();
+                // 直接从本帧获取真值深度
+                const int x = static_cast<int>(oldest->kpts_.row(i)[0]);
+                const int y = static_cast<int>(oldest->kpts_.row(i)[1]);
+                double d =
+                    static_cast<double>(oldest->depthImage_.ptr<ushort>(y)[x]);
+                oldest->depth_[i] = d / config->depthFactor;
+            }
+        } else {
+            if (lk->host_ != oldest) {
+                if (i < oldest->desc_.rows() && lk->initialized_ &&
+                    !lk->CanBeDelete()) {
+                    const Eigen::Vector3d pc = oldest->Tcw_ * lk->GetPw();
+                    if (pc.z() > config->minDepth &&
+                        pc.z() < config->maxDepth) {
+                        oldest->depth_[i] = pc.z();
+                    }
+                }
+
+                continue;  // 不需要转换
+            } else if (i < oldest->desc_.rows() && lk->invZ_ > 0 &&
+                       lk->initialized_ && !lk->CanBeDelete()) {
+                const double z = 1.0 / lk->invZ_;
+                if (z > config->minDepth && z < config->maxDepth) {
+                    oldest->depth_[i] = z;
                 }
             }
-
-            continue;  // 不需要转换
-        } else if (i < oldest->desc_.rows() && lk->invZ_ > 0 &&
-                   lk->initialized_ && !lk->CanBeDelete()) {
-            const double z = 1.0 / lk->invZ_;
-            if (z > config->minDepth && z < config->maxDepth) {
-                oldest->depth_[i] = z;
-            }
         }
+
         bool transformSucceed = false;
 
         // 把地图点的所有权转移到最新KF，其余的不要
@@ -2863,7 +2877,7 @@ void Optimizer::RunLoopClosure() {
             vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
                                           vecMargKf_.end());
             allKeyframe.emplace_back(lastTryLoopNewKf_);
-#if DEBUG_LOOP_CLOSURE_USE_PRIOR || 1
+#if DEBUG_LOOP_CLOSURE_USE_PRIOR
             const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
                              lastTryLoopNewKf_->priorTwc_;
             sT12 = Sim3Pose(T12, 1.0);
@@ -2923,6 +2937,9 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
         return 0;
     }
     int usefulNum = 0;
+    vector<double> vecDepth2(matches.size(), 0.0);
+    const Pose& Tc2w = kf2->Tcw_;
+
     for (size_t i = 0; i < matches.size(); ++i) {
         int idx1 = matches[i].queryIdx;
         int idx2 = matches[i].trainIdx;
@@ -2931,24 +2948,36 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
         if (depth1 <= 0 || !lk2 || lk2->CanBeDelete()) {
             continue;
         }
-        ++usefulNum;
+        double z2 = 0;
+        if (config->useDepthImage) {
+            const int x = static_cast<int>(kf2->kpts_.row(idx2)[0]);
+            const int y = static_cast<int>(kf2->kpts_.row(idx2)[1]);
+            z2 = static_cast<double>(kf2->depthImage_.ptr<ushort>(y)[x]) /
+                 config->depthFactor;
+        } else {
+            z2 = (Tc2w * lk2->GetPw()).z();
+        }
+        vecDepth2[i] = z2 > config->minDepth && z2 < config->maxDepth ? z2 : 0.;
+        if (vecDepth2[i] > 0) {
+            ++usefulNum;
+        }
     }
 
     Pc1.resize(3, usefulNum);
     Pc2.resize(3, usefulNum);
-    const Pose& Tc2w = kf2->Tcw_;
     int idx = 0;
     for (size_t i = 0; i < matches.size(); ++i) {
         int idx1 = matches[i].queryIdx;
         int idx2 = matches[i].trainIdx;
         const double depth1 = kf1->depth_[idx1];
-        const auto lk2 = kf2->landmark_[idx2];
-        if (depth1 <= 0 || !lk2 || lk2->CanBeDelete()) {
+        const double depth2 = vecDepth2[i];
+        if (depth1 <= 0 || depth2 <= 0) {
             continue;
         }
         Pc1.col(idx) = cam_->InverseProject(
             {kf1->kpts_.row(idx1)[0], kf1->kpts_.row(idx1)[1]}, depth1);
-        Pc2.col(idx) = Tc2w * lk2->GetPw();
+        Pc2.col(idx) = cam_->InverseProject(
+            {kf2->kpts_.row(idx2)[0], kf2->kpts_.row(idx2)[1]}, depth2);
         ++idx;
     }
     cout << fmt::format("LP lightglue find useful 3d match num: {} = idx: {}",

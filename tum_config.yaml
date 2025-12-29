@@ -1,4 +1,4 @@
-dataDir: /media/laijinxiang/Data/UBUNTU/TUM/rgbd_dataset_freiburg2_desk
+dataDir: /home/ht/Opencv_Ceres_Eigen_example/tum_dataset/rgbd_dataset_freiburg2_desk
 # "/home/laijinxiang/edge-slam/bdj3-record_data-i"
 # "/home/laijinxiang/docker-0105/dataset/0524-test-18/bdj3-record_data-i"
 
@@ -107,7 +107,7 @@ drawAllEpipolarMatch: false
 drawEpipolarMatchStartCol: 300
 maxFailObvTimeBeforeCreateDepth: 10
 
-useDepthImage: false # 验证位姿估计算法
+useDepthImage: true # 验证位姿估计算法
 depthFactor: 5000 # 深度图的尺度，深度图存储单位为200mm
 initWithTrueDepth: false
 
@@ -118,7 +118,7 @@ debugKFpointSet: [97_167]
 
 # 显示相关flag
 debugShowGlobalMap: false # 默认显示局部地图
-debugShowOnlineResult3D: true # 是否显示viz3d窗口
+debugShowOnlineResult3D: false # 是否显示viz3d窗口
 debugRunSerially: true
 
 # 若修改了代码中的engine配置，则需要重新生成

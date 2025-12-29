@@ -488,6 +488,12 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         // 初始化世界帧
         for (int i = 0; i < kpts_.rows(); ++i) {
             landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+            if (config->useDepthImage) {
+                int x = static_cast<int>(kpts_.row(i)[0]);
+                int y = static_cast<int>(kpts_.row(i)[1]);
+                double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
+                landmark_[i]->trueDepth_ = d > 0 ? d /= config->depthFactor : 0;
+            }
             globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
             globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
@@ -597,6 +603,12 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
             continue;
         }
         landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+        if (config->useDepthImage) {
+            int x = static_cast<int>(kpts_.row(i)[0]);
+            int y = static_cast<int>(kpts_.row(i)[1]);
+            double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
+            landmark_[i]->trueDepth_ = d > 0 ? d /= config->depthFactor : 0;
+        }
         glueMatch.trackLandmark_.emplace_back(landmark_[i]);
         glueMatch.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
     }
@@ -637,12 +649,24 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         for (int i = startRow; i < kpts_.rows(); ++i) {
             // 当前帧新提取的关键帧加入结果
             landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+            if (config->useDepthImage) {
+                int x = static_cast<int>(kpts_.row(i)[0]);
+                int y = static_cast<int>(kpts_.row(i)[1]);
+                double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
+                landmark_[i]->trueDepth_ = d > 0 ? d /= config->depthFactor : 0;
+            }
             globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
             globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
 
         for (int i = 0; i < desc_.rows(); ++i) {
             landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
+            if (config->useDepthImage) {
+                int x = static_cast<int>(kpts_.row(i)[0]);
+                int y = static_cast<int>(kpts_.row(i)[1]);
+                double d = static_cast<double>(depthImage_.ptr<ushort>(y)[x]);
+                landmark_[i]->trueDepth_ = d > 0 ? d /= config->depthFactor : 0;
+            }
             globalOptFlw.trackLandmark_.emplace_back(landmark_[i]);
             globalOptFlw.prevPts_.emplace_back(kpts_(i, 0), kpts_(i, 1));
         }
