@@ -205,3 +205,15 @@ class RelativeConstraintResidual : public ceres::SizedCostFunction<7, 8, 8> {
     double scaleWeight_ = 1.0;
     Sim3Pose sPriorT12_;
 };
+
+class Sim3TransformResidual : public ceres::SizedCostFunction<3, 8> {
+   public:
+    Sim3TransformResidual(const Eigen::Vector3d& pc1,
+                          const Eigen::Vector3d& pc2);
+    virtual bool Evaluate(double const* const* parameters, double* residuals,
+                          double** jacobians) const override;
+
+   private:
+    Eigen::Vector3d pc1_;
+    Eigen::Vector3d pc2_;
+};

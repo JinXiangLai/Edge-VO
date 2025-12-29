@@ -25,6 +25,9 @@ const char* const kBeforeLoopClosurePoseFilePath =
     "./opt_before_loop_closure_pose.txt";
 const char* const kClosurePoseFilePath = "./opt_loop_closure_pose.txt";
 
+const char* const kDebugPGOSim3PoseFilePath = "./pgo_sim3_pose.txt";
+const char* const kDebugPGOConstraintFilePath = "./pgo_constraint.txt";
+
 #define DEBUG_LOOP_CLOSURE_USE_PRIOR 0
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
@@ -2836,6 +2839,7 @@ void Optimizer::RunLoopClosure() {
             continue;
         }
 
+        chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
         int kf1Index = -1;
         {
             // 排序加锁，更新时另外加锁，或者更新放在BA线程后？
@@ -2872,7 +2876,10 @@ void Optimizer::RunLoopClosure() {
         Sim3Pose sT12;
         const double innerRatio = 0.55;
         if (CalculateSim3PosesT12RANSAC(Pc1, Pc2, sT12, 3, 0.999, innerRatio)) {
-            cout << "Solve sim3Pose sT12 succeed! sT12:\n" << sT12 << endl;
+            cout << "LP Solve sim3Pose sT12 succeed! sT12:\n" << sT12 << endl;
+
+            UpdateRelativeSim3POSEsT12Ceres2(Pc1, Pc2, sT12);
+
             // 求解位姿图优化
             vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
                                           vecMargKf_.end());
@@ -2884,6 +2891,10 @@ void Optimizer::RunLoopClosure() {
 #endif
             Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1, sT12,
                                             allKeyframe);
+            chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+            cout << fmt::format("LP PGO spend: {:.1f}ms",
+                                ChronoMillisecTimeDuration(t0, t1))
+                 << endl;
         } else {
             cout << "Solve sim3Pose sT12 failed!" << endl;
         }
@@ -2926,12 +2937,13 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
                                         const KeyFrame* kf2,
                                         DynamicPointMatrix& Pc1,
                                         DynamicPointMatrix& Pc2) {
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     auto& kpts1 = kf1->kpts_.middleRows(0, kf1->desc_.rows());
     auto& kpts2 = kf2->kpts_.middleRows(0, kf2->desc_.rows());
     Eigen::VectorXf mscores;
     vector<cv::DMatch> matches;
     lightgluePtr->MatchKeypoints(kpts1, kpts2, kf1->desc_, kf2->desc_, mscores,
-                                 matches);
+                                 matches, true);
     cout << "LP lightglue find 2d match num: " << matches.size() << endl;
     if (matches.size() < 200) {
         return 0;
@@ -2983,6 +2995,14 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
     cout << fmt::format("LP lightglue find useful 3d match num: {} = idx: {}",
                         usefulNum, idx)
          << endl;
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout << fmt::format("LP lightglue match find Point cloud spend: {:.1f}ms",
+                        ChronoMillisecTimeDuration(t0, t1))
+         << endl;
+    SaveEigenVectorToTXT(
+        Pc1, fmt::format("./Pc1_useDepth_{}.pcd", config->useDepthImage));
+    SaveEigenVectorToTXT(
+        Pc1, fmt::format("./Pc2_useDepth_{}.pcd", config->useDepthImage));
     return usefulNum;
 }
 
@@ -3016,23 +3036,38 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     CalculateLoopClosureSim3PoseAndConstraint(
         relativeSim3T12, selectKFresult, loopClosurePoseTwc, sT12Constraint,
         DEBUG_LOOP_CLOSURE_USE_PRIOR);
+
     ofstream of;
     of.open(kBeforeLoopClosurePoseFilePath);
     for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
-        cout << "init sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
-             << ", " << loopClosurePoseTwc[i].PwbString() << endl;
         of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
     }
     of.close();
 
-    for (size_t i = 0; i < sT12Constraint.size(); ++i) {
-        cout << fmt::format("constraint[{}]: {}, {}", i,
-                            sT12Constraint[i].QwbString(),
-                            sT12Constraint[i].PwbString())
-             << endl;
+    of.open(kDebugPGOSim3PoseFilePath);
+    of << "#qw, qx, qy, qz, x, y, z, scale\n";
+    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
+        const auto& q = loopClosurePoseTwc[i].q_wb_;
+        const auto& p = loopClosurePoseTwc[i].t_wb_;
+        of << fmt::format("{}, {}, {}, {}, {}, {}, {}, {}\n", q.w(), q.x(),
+                          q.y(), q.z(), p.x(), p.y(), p.z(),
+                          loopClosurePoseTwc[i].scale_);
     }
+    of.close();
+
+    of.open(kDebugPGOConstraintFilePath);
+    of << "#qw, qx, qy, qz, x, y, z, scale\n";
+    for (size_t i = 0; i < sT12Constraint.size(); ++i) {
+        const auto& q = sT12Constraint[i].q_wb_;
+        const auto& p = sT12Constraint[i].t_wb_;
+        of << fmt::format("{}, {}, {}, {}, {}, {}, {}, {}\n", q.w(), q.x(),
+                          q.y(), q.z(), p.x(), p.y(), p.z(),
+                          sT12Constraint[i].scale_);
+    }
+    of.close();
     cout << "Construct sT12Constraint size: " << sT12Constraint.size() << endl;
 
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     ceres::Problem problem;
     // 指定大小，避免内存重分配
     vector<array<double, 8>> vecSim3Pose(loopClosurePoseTwc.size());
@@ -3077,6 +3112,10 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     // 运行优化
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout << fmt::format("LP Solve ceres2 pgo problem spend: {:.1f}ms",
+                        ChronoMillisecTimeDuration(t0, t1))
+         << endl;
     std::cout << summary.BriefReport() << std::endl;
 
     for (size_t i = 0; i < vecSim3Pose.size(); ++i) {
@@ -3098,6 +3137,55 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     of.close();
 
     return true;
+}
+
+void Optimizer::UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1,
+                                                 const DynamicPointMatrix& Pc2,
+                                                 Sim3Pose& sT12) {
+    const auto& q = sT12.q_wb_;
+    const auto& t = sT12.t_wb_;
+    double sim3Pose[8] = {q.w(), q.x(), q.y(), q.z(),
+                          t.x(), t.y(), t.z(), sT12.scale_};
+
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    ceres::Problem problem;
+    Sim3Parameterization* sim3Param = new Sim3Parameterization;
+    problem.AddParameterBlock(sim3Pose, 8, sim3Param);
+    constexpr double kMaxDeltaRatio = 0.2;
+    for (int j = 0; j < Pc1.cols(); ++j) {
+        const auto& pc1 = Pc1.col(j);
+        const auto& pc2 = Pc2.col(j);
+        ceres::HuberLoss* loss = new ceres::HuberLoss(pc1.norm() * kMaxDeltaRatio);
+        ceres::CostFunction* cost = new Sim3TransformResidual(pc1, pc2);
+        problem.AddResidualBlock(cost, loss, sim3Pose);
+    }
+
+    ceres::Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    options.max_num_iterations = 500;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.preconditioner_type = ceres::SCHUR_JACOBI;
+    options.minimizer_type = ceres::TRUST_REGION;
+    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.num_threads = 1;
+
+    // 运行优化
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    std::cout << summary.BriefReport() << std::endl;
+    cout << fmt::format(
+                "LP ceres2 update loop closure relative sim3 sT12 spend: "
+                "{:.1f}ms",
+                ChronoMillisecTimeDuration(t0, t1))
+         << endl;
+
+    Eigen::Quaterniond q12(sim3Pose[0], sim3Pose[1], sim3Pose[2], sim3Pose[3]);
+    Eigen::Vector3d p12(sim3Pose[4], sim3Pose[5], sim3Pose[6]);
+    Sim3Pose sT12New(q12, p12, sim3Pose[7]);
+    cout << "LP ceres2 update sT12, sT12*sT12New.inv:\n"
+         << sT12.Inverse() * sT12New << endl;
+    sT12 = sT12New;
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {

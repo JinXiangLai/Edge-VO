@@ -300,3 +300,43 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
 
     return true;
 }
+
+Sim3TransformResidual::Sim3TransformResidual(const Eigen::Vector3d& pc1,
+                                             const Eigen::Vector3d& pc2)
+    : pc1_(pc1), pc2_(pc2) {}
+
+bool Sim3TransformResidual::Evaluate(double const* const* parameters,
+                                     double* residuals,
+                                     double** jacobians) const {
+    // sT12
+    const double* q = parameters[0];
+    const double* p = parameters[0] + 4;
+    const double s = *(parameters[0] + 7);
+
+    const Eigen::Quaterniond Q12(q[0], q[1], q[2], q[3]);
+    const Eigen::Matrix3d R12 = Q12.toRotationMatrix();
+    const Eigen::Vector3d P12(p[0], p[1], p[2]);
+
+    const Eigen::Vector3d rotPc2 = Q12 * pc2_;
+    const Eigen::Vector3d pc1 = s * rotPc2 + P12;
+    const Eigen::Vector3d r = pc1 - pc1_;
+
+    residuals[0] = r[0];
+    residuals[1] = r[1];
+    residuals[2] = r[2];
+
+    if (jacobians) {
+        if (jacobians[0]) {
+            Eigen::Map<Eigen::Matrix<double, 3, 8, Eigen::RowMajor>> J_res_sT12(jacobians[0]);
+            J_res_sT12.setZero();
+            // res w.r.t R12
+            J_res_sT12.block<3, 3>(0, 0) = -s * R12 * SkewSymmetric(pc2_);
+            // res w.r.t P12
+            J_res_sT12.block<3, 3>(0, 3).setIdentity();
+            // res w.r.t s12
+            J_res_sT12.block<3, 1>(0, 6) = rotPc2;
+        }
+    }
+
+    return true;
+}

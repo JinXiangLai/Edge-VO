@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <numeric>  // 用于 std::accumulate
+#include <numeric>  // 用于 accumulate
 #include <random>
 
 using namespace cv;
@@ -14,7 +14,7 @@ using namespace std;
 
 InteractionParam* interaction = nullptr;
 
-std::map<int, cv::Vec3b> Color;
+map<int, cv::Vec3b> Color;
 void InitColor() {
     Color.insert({COLOR::red, cv::Vec3b(0, 0, 255)});
     Color.insert({COLOR::orange, cv::Vec3b(0, 165, 255)});
@@ -234,6 +234,7 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
     }
     // 1. 计算需迭代次数:
     // 1.0 - fail^n > prob
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     const double testOneTimeSucceedProb = pow(inerProb, minSet);
     const double testOneTimeFailProb = 1.0 - testOneTimeSucceedProb;
     const int testTime = int(log(1.0 - prob) / log(testOneTimeFailProb) + 0.5);
@@ -273,7 +274,12 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
             maxInner = innerNum;
         }
     }
-
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout
+        << fmt::format(
+               "LP Ransac find loop closure relative sim3 pose apend: {:.1f}ms",
+               ChronoMillisecTimeDuration(t0, t1))
+        << endl;
     return (maxInner > Pc1.cols() * inerProb - 1) || maxInner > 120;
 }
 
@@ -429,10 +435,10 @@ Mat DrawMatch(const Mat& img1, const Mat& img2,
 }
 
 char DrawMatch(const cv::Mat& img1, const cv::Mat& img2,
-               const std::vector<Eigen::Vector2i>& trajKp1,
-               const std::vector<Eigen::Vector2i>& trajKp2,
-               const std::vector<Eigen::Vector2i>& goodKp2,
-               const std::string& name, const int ratio, const int jump) {
+               const vector<Eigen::Vector2i>& trajKp1,
+               const vector<Eigen::Vector2i>& trajKp2,
+               const vector<Eigen::Vector2i>& goodKp2, const string& name,
+               const int ratio, const int jump) {
     if (trajKp1.empty() || trajKp2.empty()) {
         cerr << "{" + name << "} Error!" << endl
              << "kp1 & kp2 size: " << trajKp1.size() << " & " << trajKp2.size()
@@ -681,7 +687,7 @@ void varifyTriangulate() {
 }
 
 size_t LoadImages(const string& strDirectory, vector<string>& vstrImages,
-                  vector<double>& vTimeStamps, const std::string& imgSuffix,
+                  vector<double>& vTimeStamps, const string& imgSuffix,
                   const bool readDepth) {
     string imageDirectory = strDirectory + "/image";
     string imageTimestampFile = strDirectory + "/image_timestamp.csv";
@@ -844,9 +850,8 @@ void GetImageAndPose(const int idx, const vector<string>& vstrImages,
     Twc = InterpolatePose(vTimeStamps[idx] + config->imgTimeOffset);
 }
 
-bool GetDepthImage(const double rgbTime,
-                   const std::vector<std::string>& vstrImages,
-                   const std::vector<double> vTimeStamps, cv::Mat& depth) {
+bool GetDepthImage(const double rgbTime, const vector<string>& vstrImages,
+                   const vector<double> vTimeStamps, cv::Mat& depth) {
     // 保证O(1)复杂度
     static int id = 1;
     if (rgbTime < vTimeStamps[id] || rgbTime > vTimeStamps.back()) {
@@ -911,9 +916,8 @@ uint64_t CalculateDescriptor(const Mat& grayImg, const Eigen::Vector2i& px) {
     return des;
 }
 
-double CalculateSSD(const std::vector<double>& v1,
-                    const std::vector<double>& v2, double avg1, double avg2,
-                    const int desLen) {
+double CalculateSSD(const vector<double>& v1, const vector<double>& v2,
+                    double avg1, double avg2, const int desLen) {
     double sum = 0;
     double avg = avg1 - avg2;
     if (!config->useAvgDiff)
@@ -924,11 +928,11 @@ double CalculateSSD(const std::vector<double>& v1,
     return sum;
 }
 
-double CalculateSSD(const std::vector<double>& v1,
-                    const std::vector<double>& v2, const int desLen) {
+double CalculateSSD(const vector<double>& v1, const vector<double>& v2,
+                    const int desLen) {
     double sum = 0;
-    double avg = (std::accumulate(v1.begin(), v1.end(), 0.0) -
-                  std::accumulate(v2.begin(), v2.end(), 0.0)) /
+    double avg = (accumulate(v1.begin(), v1.end(), 0.0) -
+                  accumulate(v2.begin(), v2.end(), 0.0)) /
                  v1.size();
     if (!config->useAvgDiff)
         avg = 0;
@@ -1370,7 +1374,7 @@ Eigen::Vector2d GetEpipolarLineDirection(const Eigen::Vector3d& Pother2this,
     return -ep1 / Pother2this[2];
 }
 
-Eigen::Vector2i ParseKeypointSet(const std::string& s) {
+Eigen::Vector2i ParseKeypointSet(const string& s) {
     // 解析"num_num"为数字
     const int _pos = s.find_first_of('_');
     return {stoi(s.substr(0, _pos)), stoi(s.substr(_pos + 1, s.size()))};
@@ -1490,7 +1494,7 @@ char DrawPerpendicularAndParallelDirectionOFedge(const Mat& edgeImg,
     return cv::waitKey(0);
 }
 
-void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps) {
+void ShowPointCloud(const vector<shared_ptr<Landmark>>& ps) {
     viz::Viz3d window("One Frame Point Cloud Viewer");
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
@@ -1552,15 +1556,15 @@ void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps) {
     window.spin();
 }
 
-void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps1,
-                    const vector<std::shared_ptr<Landmark>>& ps2,
-                    const std::string& windowName, const double zOffset) {
+void ShowPointCloud(const vector<shared_ptr<Landmark>>& ps1,
+                    const vector<shared_ptr<Landmark>>& ps2,
+                    const string& windowName, const double zOffset) {
     viz::Viz3d window(windowName);
     cv::Affine3d viewPose;
     window.setViewerPose(viewPose);
     vector<Point3d> points1, points2;
 
-    auto Generate = [](const vector<std::shared_ptr<Landmark>>& ps,
+    auto Generate = [](const vector<shared_ptr<Landmark>>& ps,
                        vector<Point3d>& points) {
         for (const auto& p : ps) {
             if (p == nullptr || !p->Converge()) {
@@ -1602,7 +1606,7 @@ void ShowPointCloud(const vector<std::shared_ptr<Landmark>>& ps1,
     window.spin();
 }
 
-void ShowPointCloud(const unordered_set<std::shared_ptr<Landmark>>& ps) {
+void ShowPointCloud(const unordered_set<shared_ptr<Landmark>>& ps) {
     if (ps.empty()) {
         return;
     }
@@ -1667,10 +1671,10 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     // 可视化点云
     auto GenerateCloud = [&curf, &curfInit, &curkf, &curImg, &curInitImg,
-                          &curKFimg](
-                             unordered_set<std::shared_ptr<Landmark>>& ps,
-                             const cv::Vec3b& color, vector<Point3d>& points,
-                             vector<cv::Vec3b>& colors) {
+                          &curKFimg](unordered_set<shared_ptr<Landmark>>& ps,
+                                     const cv::Vec3b& color,
+                                     vector<Point3d>& points,
+                                     vector<cv::Vec3b>& colors) {
         points.reserve(10000);
 
         for (auto p : ps) {
@@ -1720,10 +1724,10 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
 
     vector<Point3d> localPoints;
     vector<cv::Vec3b> localColors;
-    std::unordered_set<std::shared_ptr<Landmark>> sactivePoints;
-    std::unordered_set<std::shared_ptr<Landmark>> slocalPoints;
+    unordered_set<shared_ptr<Landmark>> sactivePoints;
+    unordered_set<shared_ptr<Landmark>> slocalPoints;
     {
-        lock_guard<std::mutex> lockPointCloud(interaction->mutPoints);
+        lock_guard<mutex> lockPointCloud(interaction->mutPoints);
         sactivePoints = interaction->activePoints;
         slocalPoints = interaction->localPoints;
     }
@@ -1952,11 +1956,42 @@ void InteractionParam::ShowGlobalMapPoint() {
     window.spin();
 }
 
-bool InteractionParam::SetImgSaveFolderPath(const std::string& path) {
+bool InteractionParam::SetImgSaveFolderPath(const string& path) {
     if (filesystem::exists(path)) {
         filesystem::remove_all(path);
     }
     imgSaveFolderPath = path;
     cout << "imgSaveFolderPath: " << imgSaveFolderPath << "\n";
     return filesystem::create_directory(path);
+}
+
+void SaveEigenVectorToTXT(const DynamicPointMatrix& points,
+                          const string& filename) {
+    ofstream file(filename);
+    if (!file.is_open()) {
+        cerr << "Failed to open file: " << filename << endl;
+        return;
+    }
+
+    // PCD头部
+    file << "# .PCD v0.7 - Point Cloud Data file format\n";
+    file << "VERSION 0.7\n";
+    file << "FIELDS x y z\n";
+    file << "SIZE 4 4 4\n";  // float类型
+    file << "TYPE F F F\n";
+    file << "COUNT 1 1 1\n";
+    file << "WIDTH " << points.cols() << "\n";
+    file << "HEIGHT 1\n";
+    file << "VIEWPOINT 0 0 0 1 0 0 0\n";  // 视点（位置+四元数）
+    file << "POINTS " << points.cols() << "\n";
+    file << "DATA ascii\n";
+
+    // 每行一个点
+    for (int j = 0; j < points.cols(); ++j) {
+        const auto& p = points.col(j);
+        file << p.x() << " " << p.y() << " " << p.z() << "\n";
+    }
+
+    file.close();
+    cout << "Saved " << points.cols() << " points to " << filename << endl;
 }

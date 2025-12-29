@@ -295,6 +295,7 @@ class Optimizer {
     bool Sim3PoseGraphOptimizationCeres2(int fixedIndex, int loopClosureIndex,
                                          const Sim3Pose& relativeSim3T12,
                                          std::vector<KeyFrame*>& allKeyframe);
+    void UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1, const DynamicPointMatrix& Pc2, Sim3Pose& sT12);
     // 找到闭环后，应该清空经过闭环优化的帧后再检测新闭环
     // 本质上需要使用词袋来快速找候选帧，然后再使用lightglue确认闭环，因lightglue耗时较长
     // 否则只能检验开头的几帧关键帧

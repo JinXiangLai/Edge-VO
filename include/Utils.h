@@ -400,6 +400,9 @@ inline double CalculateParallax(const Eigen::Vector2d& p1,
     return -1.0;
 }
 
+void SaveEigenVectorToTXT(const DynamicPointMatrix& points,
+                          const std::string& filename);
+
 template <int rows, int cols>
 void EmplaceBackTriplet(const int startRow, const int startCol,
                         const Eigen::Matrix<double, rows, cols>& blockH,
