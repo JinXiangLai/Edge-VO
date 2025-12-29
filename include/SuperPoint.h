@@ -52,6 +52,8 @@ class SuperPoint {
         eachGridSize_ = size;
     }
 
+    void WarmUp();
+
    private:
     nvinfer1::Dims input_dims_{};
     nvinfer1::Dims semi_dims_{};

@@ -215,6 +215,9 @@ void KeyFrame::InitSuperpointAndLightglueEngine() {
     lightgluePtr->SetThreshold(LightGlueConfig::kMatchThreshold);
     cout << "SuperPoint and lightglue inference engine build success." << endl;
     lightgluePtr->ValidateFP16();
+
+    superpointPtr->WarmUp();
+    lightgluePtr->WarmUp();
 }
 
 void KeyFrame::InitFastDetector() {

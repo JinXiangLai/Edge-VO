@@ -93,6 +93,8 @@ class LightGlue {
     bool ValidateFP16();
     void CheckPerformanceCharacteristics();
 
+    void WarmUp();
+
    private:
     std::vector<int> indices0_;
     std::vector<int> indices1_;

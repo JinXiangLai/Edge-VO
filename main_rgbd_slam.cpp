@@ -206,12 +206,6 @@ int main(int argc, char** argv) {
                     cv::waitKey();
                     cv::destroyWindow("init 2 KF");
                 }
-
-                // 模型预热
-                usleep(1000 * 1e3);
-                while (optimizer.newKF_ != nullptr) {
-                    usleep(100 * 1e3);
-                }
             } else if (findMatchRatio < 0.7 || findMatchNum < 200) {
                 cout << "Few match to initialize! Reset!" << endl;
                 ResetStatus(&optimizer, &isInitialized, &trackLostCount);

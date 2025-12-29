@@ -4,6 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <unordered_map>
 #include <utility>
+#include "Utils.h"
 
 using namespace tensorrt_common;
 using namespace tensorrt_log;
@@ -550,4 +551,15 @@ bool SuperPoint::DeserializeEngine() {
         return true;
     }
     return false;
+}
+
+void SuperPoint::WarmUp() {
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    cv::Mat img = cv::Mat::ones(SuperPointConfig::kImageHeight,
+                                SuperPointConfig::kImageWidth, CV_8UC1);
+    Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> kpts;
+    Eigen::Matrix<float, Eigen::Dynamic, 256, Eigen::RowMajor> desc;
+    Infer(img, kpts, desc);
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout << fmt::format("Superpoint engine warn up spend: {:.1f}", ChronoMillisecTimeDuration(t0, t1)) << endl; 
 }

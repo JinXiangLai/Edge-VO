@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <utility>
 #include "SuperPoint.h"
+#include "Utils.h"
 
 using namespace tensorrt_common;
 using namespace tensorrt_log;
@@ -868,4 +869,21 @@ void LightGlue::CheckPerformanceCharacteristics() {
     } else {
         std::cout << "内存占用较高，可能使用FP32" << std::endl;
     }
+}
+
+void LightGlue::WarmUp() {
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    constexpr int N = SuperPointConfig::kMaxKeypoints;
+    const Eigen::MatrixXf kpts0(N, 2);
+    const Eigen::MatrixXf kpts1(N, 2);
+    const Eigen::MatrixXf desc0(N, 256);
+    const Eigen::MatrixXf desc1(N, 256);
+    Eigen::VectorXi indices0;
+    Eigen::VectorXi indices1;
+    Eigen::VectorXf mscores;
+    Infer(kpts0, kpts1, desc0, desc1, indices0, indices1, mscores);
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout << fmt::format("Lightglue warn up spend: {:.1f}ms",
+                        ChronoMillisecTimeDuration(t0, t1))
+         << endl;
 }
