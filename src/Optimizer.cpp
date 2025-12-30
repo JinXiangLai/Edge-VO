@@ -2474,7 +2474,8 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
         if (lastTryLoopNewKf_ == nullptr &&
             margKFid != config->maxKFnumInWindow &&
             lastTryLoopNewKfMutex_.try_lock()) {
-            lastTryLoopNewKf_ = window_.back();
+            // 最后一帧的superpoint来不及初始化了，因为它没有前一帧的跟踪结果
+            lastTryLoopNewKf_ = window_[2];
             lastTryLoopNewKfMutex_.unlock();
         }
     }
@@ -2913,7 +2914,7 @@ int Optimizer::FindLoopClosureKF() {
     // 寻找开头5帧，，不能处理大回环内有小回环的情况
     constexpr int kMaxSearchRange = 5;
     constexpr double kMaxLoopClosureDist =
-        0.2;  // 尺度漂移时只能由lightglue确定
+        0.5;  // 尺度漂移时只能由lightglue确定
     for (size_t i = 0; i < kMaxSearchRange; ++i) {
         const KeyFrame* kf = vecMargKf_[i];
         const double posDiff =
@@ -2951,13 +2952,12 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
     int usefulNum = 0;
     vector<double> vecDepth2(matches.size(), 0.0);
     const Pose& Tc2w = kf2->Tcw_;
-
     for (size_t i = 0; i < matches.size(); ++i) {
         int idx1 = matches[i].queryIdx;
         int idx2 = matches[i].trainIdx;
         const double depth1 = kf1->depth_[idx1];
         const auto lk2 = kf2->landmark_[idx2];
-        if (depth1 <= 0 || !lk2 || lk2->CanBeDelete()) {
+        if (depth1 <= 0 || !lk2 || lk2->CanBeDelete() || !lk2->initialized_) {
             continue;
         }
         double z2 = 0;
@@ -2967,7 +2967,8 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
             z2 = static_cast<double>(kf2->depthImage_.ptr<ushort>(y)[x]) /
                  config->depthFactor;
         } else {
-            z2 = (Tc2w * lk2->GetPw()).z();
+            const Eigen::Vector3d pc2 = Tc2w * lk2->GetPw();
+            z2 = pc2.z();
         }
         vecDepth2[i] = z2 > config->minDepth && z2 < config->maxDepth ? z2 : 0.;
         if (vecDepth2[i] > 0) {
@@ -3002,7 +3003,7 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
     SaveEigenVectorToTXT(
         Pc1, fmt::format("./Pc1_useDepth_{}.pcd", config->useDepthImage));
     SaveEigenVectorToTXT(
-        Pc1, fmt::format("./Pc2_useDepth_{}.pcd", config->useDepthImage));
+        Pc2, fmt::format("./Pc2_useDepth_{}.pcd", config->useDepthImage));
     return usefulNum;
 }
 
@@ -3089,13 +3090,13 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
         ceres::CostFunction* cost =
-            new RelativeConstraintResidual(0.1, 0.050, 1.0, sT12Constraint[i]);
+            new RelativeConstraintResidual(1.5, 1.0, 1.0, sT12Constraint[i]);
         problem.AddResidualBlock(cost, loss, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }
     // 最后一帧是闭环约束
     ceres::CostFunction* cost =
-        new RelativeConstraintResidual(1.0, 1.10, 1.10, sT12Constraint.back());
+        new RelativeConstraintResidual(1.5, 1.0, 1.10, sT12Constraint.back());
     problem.AddResidualBlock(cost, loss, vecSim3Pose[0].data(),
                              vecSim3Pose.back().data());
 
@@ -3155,7 +3156,8 @@ void Optimizer::UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1,
     for (int j = 0; j < Pc1.cols(); ++j) {
         const auto& pc1 = Pc1.col(j);
         const auto& pc2 = Pc2.col(j);
-        ceres::HuberLoss* loss = new ceres::HuberLoss(pc1.norm() * kMaxDeltaRatio);
+        ceres::HuberLoss* loss =
+            new ceres::HuberLoss(pc1.norm() * kMaxDeltaRatio);
         ceres::CostFunction* cost = new Sim3TransformResidual(pc1, pc2);
         problem.AddResidualBlock(cost, loss, sim3Pose);
     }

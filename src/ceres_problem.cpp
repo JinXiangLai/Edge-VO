@@ -327,7 +327,8 @@ bool Sim3TransformResidual::Evaluate(double const* const* parameters,
 
     if (jacobians) {
         if (jacobians[0]) {
-            Eigen::Map<Eigen::Matrix<double, 3, 8, Eigen::RowMajor>> J_res_sT12(jacobians[0]);
+            Eigen::Map<Eigen::Matrix<double, 3, 8, Eigen::RowMajor>> J_res_sT12(
+                jacobians[0]);
             J_res_sT12.setZero();
             // res w.r.t R12
             J_res_sT12.block<3, 3>(0, 0) = -s * R12 * SkewSymmetric(pc2_);

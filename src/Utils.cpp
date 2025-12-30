@@ -232,6 +232,32 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
         Pc1.cols() < minSet) {
         return false;
     }
+
+    // 直接使用opencv求解旋转
+    /*
+    vector<cv::Point2f> Px1(Pc1.cols()), Px2(Pc2.cols());
+    for (int j = 0; j < Pc1.cols(); ++j) {
+        const auto& pc1 = Pc1.col(j);
+        const auto& pc2 = Pc2.col(j);
+        Px1[j] = {float(pc1[0] / pc1[2]), float(pc1[1] / pc1[2])};
+        Px2[j] = {float(pc2[0] / pc2[2]), float(pc2[1] / pc2[2])};
+    }
+    cv::Mat cvE =
+        cv::findEssentialMat(Px2, Px1, cv::Mat::eye(3, 3, CV_32F), cv::RANSAC);
+
+    // 2. 分解本质矩阵得到R,t
+    cv::Mat cvR, cv_t, mask;
+    int inliers =
+        recoverPose(cvE, Px2, Px1, cv::Mat::eye(3, 3, CV_32F), cvR, cv_t, mask);
+    cout << "LP OpenCV recoverPose found " << inliers << " inliers" << endl;
+    cout << "LP cvR: " << cvR << endl;
+    cout << "LP cv_t: " << cv_t.t() << ", norm: " << cv::norm(cv_t) << endl;
+    Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> R12(
+        cvR.ptr<double>(0));
+    Eigen::Map<Eigen::Matrix<double, 3, 1>> t12(cv_t.ptr<double>(0));
+    Sim3Pose sT12Opencv(Eigen::Quaterniond(R12), t12, 1.0);
+    cout << "LP opencv recovery sT12: " << sT12Opencv << endl;
+*/
     // 1. 计算需迭代次数:
     // 1.0 - fail^n > prob
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
@@ -263,7 +289,7 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
 
         Sim3Pose sT12Temp;
         CalculateSim3PoseT12(samplePc1, samplePc2, sT12Temp);
-        const int innerNum = CalculateInnerNum(Pc1, Pc2, sT12Temp, 0.15);
+        const int innerNum = CalculateInnerNum(Pc1, Pc2, sT12Temp, 0.1);
         cout << fmt::format(
                     "Ransac ite: {}th, innerNum: {}, maxInner: {}, total Point "
                     "num: {}",
@@ -280,7 +306,8 @@ bool CalculateSim3PosesT12RANSAC(const DynamicPointMatrix& Pc1,
                "LP Ransac find loop closure relative sim3 pose apend: {:.1f}ms",
                ChronoMillisecTimeDuration(t0, t1))
         << endl;
-    return (maxInner > Pc1.cols() * inerProb - 1) || maxInner > 120;
+    // sT12.q_wb_ = sT12Opencv.q_wb_;
+    return (maxInner > Pc1.cols() * inerProb - 1) || maxInner > 99;
 }
 
 bool SelectKeyframeInLoopClosure(vector<KeyFrame*>& allKeyframe, int fixedIndex,

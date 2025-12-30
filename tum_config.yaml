@@ -125,4 +125,4 @@ debugRunSerially: true
 superpoint.onnxFilePath: ../src/onnx_weights/superpoint_480x640.onnx
 superpoint.engineFilePath: ../superpoint_480x640.engine
 lightglue.onnxFilePath: ../src/onnx_weights/superpoint_lightglue.onnx
-lightglue.engineFilePath: ../superpoint_lightglue.engine
+lightglue.engineFilePath: ../superpoint_lightglue.engine.768
