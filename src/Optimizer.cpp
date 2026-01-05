@@ -28,6 +28,8 @@ const char* const kClosurePoseFilePath = "./opt_loop_closure_pose.txt";
 const char* const kDebugPGOSim3PoseFilePath = "./pgo_sim3_pose.txt";
 const char* const kDebugPGOConstraintFilePath = "./pgo_constraint.txt";
 
+constexpr int kUseForLoopClosureKFindex = 2;
+
 #define DEBUG_LOOP_CLOSURE_USE_PRIOR 0
 
 Optimizer::Optimizer(shared_ptr<Camera> cam, const double lambda,
@@ -2455,11 +2457,15 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     //}
 
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    bool winOptSuccess = false;
+    {
+        lock_guard<mutex> lock(windowKFposeUpdateMutex);
 #if USE_CERES2
-    const bool winOptSuccess = ExecuteWindowOptimizeCeres();
+        winOptSuccess = ExecuteWindowOptimizeCeres();
 #else
-    const bool winOptSuccess = ExecuteWindowOptimize();
+        winOptSuccess = ExecuteWindowOptimize();
 #endif
+    }
     chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
     const double spendTime = ChronoMillisecTimeDuration(t0, t1);
     cout << fmt::format("win size: {}, win BA spend {:.3f}ms!\n",
@@ -2475,7 +2481,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
             margKFid != config->maxKFnumInWindow &&
             lastTryLoopNewKfMutex_.try_lock()) {
             // 最后一帧的superpoint来不及初始化了，因为它没有前一帧的跟踪结果
-            lastTryLoopNewKf_ = window_[2];
+            lastTryLoopNewKf_ = window_[kUseForLoopClosureKFindex];
             lastTryLoopNewKfMutex_.unlock();
         }
     }
@@ -2884,13 +2890,31 @@ void Optimizer::RunLoopClosure() {
             // 求解位姿图优化
             vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
                                           vecMargKf_.end());
+            // 将滑窗内id小于当前闭环帧的都加进来一起做PGO，避免该帧在Win ba后被选择移除而难以传播
+            const int beforeAddWindowKFnum = allKeyframe.size();
+            for (size_t i = 0; i < window_.size(); ++i) {
+                if (window_[i]->id_ < lastTryLoopNewKf_->id_) {
+                    allKeyframe.emplace_back(window_[i]);
+                }
+            }
             allKeyframe.emplace_back(lastTryLoopNewKf_);
+            const int addKFnumFromWindow =
+                allKeyframe.size() - beforeAddWindowKFnum;
+            cout << fmt::format("LP add KF from window num: {}",
+                                addKFnumFromWindow)
+                 << endl;
+            // 反序，以当前滑动窗口内的尺度为1.0，导致世界系漂移，可能破坏约束一致性，
+            // 使得闭环优化后精度下降
+            // reverse(allKeyframe.begin(), allKeyframe.end());
+
 #if DEBUG_LOOP_CLOSURE_USE_PRIOR
             const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
                              lastTryLoopNewKf_->priorTwc_;
             sT12 = Sim3Pose(T12, 1.0);
 #endif
-            Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1, sT12,
+
+            Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1,
+                                            addKFnumFromWindow, sT12,
                                             allKeyframe);
             chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
             cout << fmt::format("LP PGO spend: {:.1f}ms",
@@ -3010,7 +3034,7 @@ int Optimizer::FindMatchSuperpoint3Dpos(const KeyFrame* kf1,
 void Optimizer::StopRunLoopClosure() {
     int tryCount = 0;
     while (lastTryLoopNewKf_ != nullptr) {
-        usleep(10 * 1e3);
+        usleep(1000 * 1e3);
         cout << fmt::format("try stop loop closure BA count: {}\n", ++tryCount);
     }
     keepRunLoopClosure_ = false;
@@ -3019,8 +3043,8 @@ void Optimizer::StopRunLoopClosure() {
 }
 
 bool Optimizer::Sim3PoseGraphOptimizationCeres2(
-    int fixedIndex, int loopClosureIndex, const Sim3Pose& relativeSim3T12,
-    vector<KeyFrame*>& allKeyframe) {
+    int fixedIndex, int loopClosureIndex, const int addKFnumFromWindow,
+    const Sim3Pose& relativeSim3T12, vector<KeyFrame*>& allKeyframe) {
     // 构建位姿图
     // 1. 选择闭环内的帧
     vector<KeyFrame*> selectKFresult;
@@ -3039,13 +3063,17 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
         DEBUG_LOOP_CLOSURE_USE_PRIOR);
 
     ofstream of;
-    of.open(kBeforeLoopClosurePoseFilePath);
+    static int debugTime = 0;
+    of.open(fmt::format("{}.{}", kBeforeLoopClosurePoseFilePath, debugTime));
     for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
         of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
     }
+    for (size_t i = addKFnumFromWindow; i < window_.size(); ++i) {
+        of << window_[i]->OutputPoseMessage() << endl;
+    }
     of.close();
 
-    of.open(kDebugPGOSim3PoseFilePath);
+    of.open(fmt::format("{}.{}", kDebugPGOSim3PoseFilePath, debugTime));
     of << "#qw, qx, qy, qz, x, y, z, scale\n";
     for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
         const auto& q = loopClosurePoseTwc[i].q_wb_;
@@ -3056,7 +3084,7 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     }
     of.close();
 
-    of.open(kDebugPGOConstraintFilePath);
+    of.open(fmt::format("{}.{}", kDebugPGOConstraintFilePath, debugTime));
     of << "#qw, qx, qy, qz, x, y, z, scale\n";
     for (size_t i = 0; i < sT12Constraint.size(); ++i) {
         const auto& q = sT12Constraint[i].q_wb_;
@@ -3129,11 +3157,137 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
         loopClosurePoseTwc[i].debugTimestamp_ = time;
     }
 
-    of.open(kClosurePoseFilePath);
-    for (size_t i = 0; i < loopClosurePoseTwc.size(); ++i) {
-        // cout << "sTwc[" << i << "]: " << loopClosurePoseTwc[i].QwbString()
-        //      << ", " << loopClosurePoseTwc[i].PwbString() << endl;
+    // 更新滑窗内的KFpose，需考虑如果用于闭环的帧被marg了呢？没关系，我们把滑窗内小于该kf的id的关键帧都加进来
+    const int winKFstartIdx = allKeyframe.size() - addKFnumFromWindow;
+    {
+        lock_guard<mutex> lock(windowKFposeUpdateMutex);
+        unordered_set<KeyFrame*> kfInWin;
+        for (KeyFrame* kf : window_) {
+            kfInWin.insert(kf);
+        }
+
+        // 找到参与了闭环，且在滑窗内最新的一个KF
+        KeyFrame* pivotKf = nullptr;
+        int pivotKfIndexInAllKf = -1;
+        double winScale = 1.0;
+        for (int i = addKFnumFromWindow - 1; i >= 0; ++i) {
+            pivotKfIndexInAllKf = winKFstartIdx + i;
+            pivotKf = allKeyframe[pivotKfIndexInAllKf];
+            if (kfInWin.count(pivotKf)) {
+                break;
+            }
+        }
+        if (!pivotKf) {
+            cout << "LP none KF in sliding window, pivotKf is nullptr" << endl;
+            return false;
+        }
+
+        // 找到pivotKf在滑窗中的位置，并左、右传播更新
+        int pivotIndex = -1;
+        for (int i = 0; i < int(window_.size()); ++i) {
+            if (window_[i]->id_ == pivotKf->id_) {
+                pivotIndex = i;
+                winScale = loopClosurePoseTwc[pivotKfIndexInAllKf].scale_;
+                break;
+            }
+        }
+        cout << fmt::format("LP pivotIndex: {}, winScale: {}", pivotIndex,
+                            winScale)
+             << endl;
+
+        for (size_t i = 0; i < window_.size(); ++i) {
+            // 现将SE3转为Sim3，scale单位化为1
+            // 对于sim3有：
+            // Pw = s * Rwc * Pc + Pwc，此时Pwc=Pwc(SE3) * s
+            // 对于SE3有：
+            // Pw = Rwc * Pc + Pwc，此时Pc=Pc(SE3)/s，Pwc=Pwc(SE3)/s
+            // 在这里呢，我们有闭环帧的sim3 pose，sim3 pose的 Pwc已经乘以scale了，
+            // 所以我们把滑窗内的所有SE3的Pwc以及深度也乘以scale
+            // 也就是，Sim3的地图点和Pwc不能同时转换，只能把scale作用在一个上面
+            // 而，SE3转为scale为1的Sim3才需要同时转换。
+            // 或者应该这么表述：Sim3 pose的scale可以用来矫正sim3的Pwc或者地图点中的一个，以消除s变为SE3
+            // 而SE3的Pwc和地图点必须同时除以或乘以scale以保证Pw=Rwc*Pc+Pwc成立
+            window_[i]->ScaleSE3PoseAndLandmark(winScale);
+        }
+
+        // 更新滑窗内KF的pose
+        // 首先存储去尺度后的相对Pose
+        vector<Pose> srcRelativePose;
+        // 往左<==存储的去尺度的相对变换
+        for (int i = pivotIndex; i > 0; --i) {
+            KeyFrame* kf2 = window_[i];
+            KeyFrame* kf1 = window_[i - 1];
+            Pose T21 = kf2->Tcw_ * kf1->Twc_;
+            // T21.t_wb_ /= winScale;
+            srcRelativePose.emplace_back(T21);
+        }
+        // 往==>存储去尺度的相对变换
+        for (int i = pivotIndex; i < int(window_.size() - 1); ++i) {
+            KeyFrame* kf1 = window_[i];
+            KeyFrame* kf2 = window_[i + 1];
+            Pose T12 = kf1->Tcw_ * kf2->Twc_;
+            // T12.t_wb_ /= winScale;
+            srcRelativePose.emplace_back(T12);
+        }
+
+        const Sim3Pose pivotSim3 = loopClosurePoseTwc[pivotKfIndexInAllKf];
+        Pose pivotPose(
+            pivotSim3.q_wb_,
+            pivotSim3.t_wb_);  // sim3的t_wc已经含有scale，不需要再去一次
+        pivotKf->SetTwc(pivotPose);
+        // 往左<==更新
+        int count = 0;
+        for (int i = pivotIndex; i > 0; --i) {
+            KeyFrame* kf1 = window_[i - 1];
+            // kf1->ScaleSE3PoseAndLandmark(winScale);
+            pivotPose = pivotPose * srcRelativePose[count++];  // 相对位姿传递
+            kf1->SetTwc(pivotPose);
+        }
+        // 往==>更新
+        pivotPose = Pose(pivotSim3.q_wb_, pivotSim3.t_wb_);
+        for (int i = pivotIndex; i < int(window_.size() - 1); ++i) {
+            KeyFrame* kf2 = window_[i + 1];
+            // kf2->ScaleSE3PoseAndLandmark(winScale);
+            pivotPose = pivotPose * srcRelativePose[count++];  // 相对位姿传递
+            kf2->SetTwc(pivotPose);
+        }
+        /*
+        // 破坏尺度一致性，应该先矫正滑窗内的尺度
+        // 往左<==更新
+        Sim3Pose pivotSim3Pose = loopClosurePoseTwc[pivotKfIndexInAllKf];
+        for (int i = pivotIndex; i > 0; --i) {
+            KeyFrame* kf2 = window_[i];
+            KeyFrame* kf1 = window_[i - 1];
+            const Sim3Pose sT21(kf2->Tcw_ * kf1->Twc_, 1.0);
+            pivotSim3Pose = pivotSim3Pose * sT21;  // 相对位姿传递
+            kf1->UpdateSim3Pose(pivotSim3Pose);
+        }
+        // 往==>更新
+        pivotSim3Pose = loopClosurePoseTwc[pivotKfIndexInAllKf];
+        for (int i = pivotIndex; i < int(window_.size() - 1); ++i) {
+            KeyFrame* kf1 = window_[i];
+            KeyFrame* kf2 = window_[i + 1];
+            const Sim3Pose sT12(kf1->Tcw_ * kf2->Twc_, 1.0);
+            pivotSim3Pose = pivotSim3Pose * sT12;  // 相对位姿传递
+            kf2->UpdateSim3Pose(pivotSim3Pose);
+        }
+*/
+        scaleKFinWindow_ = true;  // 前端需要使用KF+PnP跟踪
+        trackPnPTime = 2;
+    }
+
+    // TODO：更新已经边缘化的KF关键帧pose(及深度)
+    for (int i = 0; i < winKFstartIdx; ++i) {
+        vecMargKf_[i]->UpdateSim3Pose(loopClosurePoseTwc[i]);
+    }
+
+    of.open(fmt::format("{}.{}", kClosurePoseFilePath, debugTime++));
+    of << fmt::format("# window KF num: {}", window_.size()) << endl;
+    for (int i = 0; i < winKFstartIdx; ++i) {
         of << loopClosurePoseTwc[i].DebugOutputPoseMessage() << endl;
+    }
+    for (size_t i = 0; i < window_.size(); ++i) {
+        of << window_[i]->OutputPoseMessage() << endl;
     }
     of.close();
 
@@ -3188,6 +3342,92 @@ void Optimizer::UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1,
     cout << "LP ceres2 update sT12, sT12*sT12New.inv:\n"
          << sT12.Inverse() * sT12New << endl;
     sT12 = sT12New;
+}
+
+bool Optimizer::SolveCurrentFramePoseAfterLoopClosureCorrectOpencvPnp(
+    Pose& Twc) {
+    // 使用globalOptFlw寻找地图点后，再使用PnP解算
+    chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
+    auto& trackLandmark = globalOptFlw.trackLandmark_;
+    auto& optFlwObv = globalOptFlw.prevPts_;
+    constexpr int kObvNumType = 3;  // 2, 3, 及3次以上观测地图点
+    vector<vector<cv::Point3f>> Pws(kObvNumType);
+    vector<vector<cv::Point2f>> Obvs(kObvNumType);
+    for (int i = 0; i < kObvNumType; ++i) {
+        Pws[i].reserve(trackLandmark.size());
+        Obvs[i].reserve(trackLandmark.size());
+    }
+    for (size_t i = 0; i < trackLandmark.size(); ++i) {
+        shared_ptr<Landmark> lk = trackLandmark[i];
+        if (lk->initialized_ && !lk->CanBeDelete()) {
+            const auto& p = lk->GetPw();
+            switch (lk->target_.size()) {
+                case 2:
+                    Pws[0].emplace_back(p[0], p[1], p[2]);
+                    Obvs[0].emplace_back(optFlwObv[i]);
+                    break;
+                case 3:
+                    Pws[1].emplace_back(p[0], p[1], p[2]);
+                    Obvs[1].emplace_back(optFlwObv[i]);
+                    break;
+                default:
+                    Pws[2].emplace_back(p[0], p[1], p[2]);
+                    Obvs[2].emplace_back(optFlwObv[i]);
+                    break;
+            }
+        }
+    }
+
+    constexpr int kSelectNum = 10000;
+    vector<cv::Point3f> stablePws(kObvNumType);
+    vector<cv::Point2f> stableObvs(kObvNumType);
+    stablePws.insert(stablePws.end(), Pws[kObvNumType - 1].begin(),
+                     Pws[kObvNumType - 1].end());
+    stableObvs.insert(stableObvs.end(), Obvs[kObvNumType - 1].begin(),
+                      Obvs[kObvNumType - 1].end());
+    for (int i = kObvNumType - 2; i >= 0; --i) {
+        const int needAddNum = kSelectNum - stablePws.size();
+        if (needAddNum <= 0) {
+            break;
+        }
+        const int insertNnum = min(needAddNum, int(Pws[i].size()));
+        stablePws.insert(stablePws.end(), Pws[i].begin(),
+                         Pws[i].begin() + insertNnum);
+        stableObvs.insert(stableObvs.end(), Obvs[i].begin(),
+                          Obvs[i].begin() + insertNnum);
+    }
+    cout << fmt::format("LP solve PnP use {} landmarks and {} obvs!",
+                        stablePws.size(), stableObvs.size())
+         << endl;
+
+    if (stablePws.size() < 30) {
+        return false;
+    }
+
+    cv::Mat rvec, t_cw;
+    cv::solvePnPRansac(stablePws, stableObvs, Eigen2CVmat(cam_->K_[0]), {},
+                       rvec, t_cw);
+    cv::Mat Rcw;
+    cv::Rodrigues(rvec, Rcw);
+
+    const Eigen::Matrix3d Rwc = CVmat2Eigen(Rcw.t());
+    const Eigen::Quaterniond q_wc(Rwc);
+    const Eigen::Vector3d p_wc(CVmat2Eigen(-Rcw.t() * t_cw));
+    Twc = Pose(q_wc, p_wc);
+    // TODO： 使用RANSAC精细化
+    chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+    cout << fmt::format("LP solve PnP spend: {:.1f}ms.",
+                        ChronoMillisecTimeDuration(t0, t1))
+         << endl;
+    return true;
+}
+
+bool Optimizer::GetAndResetScaleKFinWindowFlag() {
+    // bool temp = scaleKFinWindow_;
+    // scaleKFinWindow_ = false;
+    bool temp = trackPnPTime > 0;
+    --trackPnPTime;
+    return temp;
 }
 
 void Optimizer::CalculateLastKFmeanDepth() {

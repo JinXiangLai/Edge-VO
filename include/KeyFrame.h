@@ -52,6 +52,8 @@ class KeyFrame {
     bool IsOutOfRange() const { return outOfRange_; }
     void Update(const Eigen::Vector3d& delta_q, const Eigen::Vector3d& delta_t);
     void SetTwc(const Pose& Twc, const bool printDiff = false);
+    void UpdateSim3Pose(const Sim3Pose& sTwc);
+    void ScaleSE3PoseAndLandmark(const double scale);
 
     void ReleaseMat();
     void GenerateKeyPoint();

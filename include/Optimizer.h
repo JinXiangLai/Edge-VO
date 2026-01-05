@@ -286,6 +286,8 @@ class Optimizer {
     KeyFrame* lastTryLoopNewKf_ = nullptr;  // 避免重复找闭环，由BA线程设置
     std::mutex lastTryLoopNewKfMutex_;
     bool keepRunLoopClosure_ = true;
+    std::atomic_bool scaleKFinWindow_ = false;
+    std::atomic<int> trackPnPTime = 0;
     int FindLoopClosureKF();
     int FindMatchSuperpoint3Dpos(const KeyFrame* kf1, const KeyFrame* kf2,
                                  DynamicPointMatrix& Pc1,
@@ -293,9 +295,15 @@ class Optimizer {
     void RunLoopClosure();
     void StopRunLoopClosure();
     bool Sim3PoseGraphOptimizationCeres2(int fixedIndex, int loopClosureIndex,
+                                         const int addKFnumFromWindow,
                                          const Sim3Pose& relativeSim3T12,
                                          std::vector<KeyFrame*>& allKeyframe);
-    void UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1, const DynamicPointMatrix& Pc2, Sim3Pose& sT12);
+    void UpdateRelativeSim3POSEsT12Ceres2(const DynamicPointMatrix& Pc1,
+                                          const DynamicPointMatrix& Pc2,
+                                          Sim3Pose& sT12);
+    bool SolveCurrentFramePoseAfterLoopClosureCorrectOpencvPnp(Pose& Twc);
+    bool GetAndResetScaleKFinWindowFlag();
+    std::mutex windowKFposeUpdateMutex;
     // 找到闭环后，应该清空经过闭环优化的帧后再检测新闭环
     // 本质上需要使用词袋来快速找候选帧，然后再使用lightglue确认闭环，因lightglue耗时较长
     // 否则只能检验开头的几帧关键帧

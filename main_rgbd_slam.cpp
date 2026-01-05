@@ -225,7 +225,16 @@ int main(int argc, char** argv) {
             win.back()->TrackWithOpticalFlow(curF, findMatchNum);
         chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
         // step1: 优化当前帧pose
-        Pose Ttemp = GetPredictPose(lastF, lastLastF);
+        Pose Ttemp;
+        if (optimizer.GetAndResetScaleKFinWindowFlag() &&
+            optimizer.SolveCurrentFramePoseAfterLoopClosureCorrectOpencvPnp(
+                Ttemp)) {
+            curF.SetTwc(Ttemp, true);
+            // cv::imshow("after LP", curF.debugGrayImg_);
+            // cv::waitKey();
+        } else {
+            Ttemp = GetPredictPose(lastF, lastLastF);
+        }
         curF.SetTwc(Ttemp, true);
         bool trackLocalMapLow = false;
         const bool trackOk = optimizer.TrackLocalMap(
@@ -392,7 +401,6 @@ int main(int argc, char** argv) {
     runLoopClosureThread->join();
     delete runLoopClosureThread;
     cout << "Loop closure BA thread recycled!" << endl;
-
 
     for (const KeyFrame* kf : win) {
         KeyFrame::WritePoseMessage2File(*kf);

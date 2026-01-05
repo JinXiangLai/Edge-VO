@@ -1203,6 +1203,40 @@ void KeyFrame::SetTwc(const Pose& Twc, const bool printDiff) {
     }
 }
 
+void KeyFrame::UpdateSim3Pose(const Sim3Pose& sTwc) {
+    // 根据Sim3表达式 Pw = sTwc * Pc = s*Rwc*Pc + Pwc，只能通过
+    // Pc*s或者是Pwc/s的形式，将Sim3表达式转换为SE3
+    const Eigen::Quaterniond newQwc = sTwc.q_wb_;
+    const double s = sTwc.scale_;
+    const Eigen::Vector3d newPwc =
+        sTwc.t_wb_;  // / s;已经含有scale矫正，只需要矫正地图点
+    SetTwc(Pose(newQwc, newPwc));
+    for (auto& lk : landmark_) {
+        if (!lk || !lk->initialized_ || lk->CanBeDelete() ||
+            lk->host_ != this) {
+            continue;
+        }
+        // z = z*s, invZ = invZ / s
+        lk->SetInvZvalue(lk->invZ_ / s);
+    }
+}
+
+void KeyFrame::ScaleSE3PoseAndLandmark(const double scale) {
+    // 根据SE3表达式 Pw = Twc * Pc = Rwc * Pc + Pwc，只能通过
+    // Pc和Pwc同时乘上或者除以scale的形式来保证Pw放大或缩小，且SE3表达式不变
+    // 这里，与UpdateSim3Pose函数一致，我们同时对Pc和Pwc乘以scale
+    const Eigen::Vector3d newPwc = Twc_.t_wb_ * scale;
+    SetTwc(Pose(Twc_.q_wb_, newPwc));
+    for (auto& lk : landmark_) {
+        if (!lk || !lk->initialized_ || lk->CanBeDelete() ||
+            lk->host_ != this) {
+            continue;
+        }
+        // z = z*s, invZ = s * invZ
+        lk->SetInvZvalue(lk->invZ_ / scale);
+    }
+}
+
 void KeyFrame::ReleaseMat() {
     grayImg_.release();
     debugGrayImg_.release();
