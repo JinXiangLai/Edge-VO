@@ -2421,45 +2421,27 @@ void Optimizer::ConstructRelativePoseConstraint(Eigen::MatrixXd& H,
 }
 
 bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
-    const int margKFid = SelectOneKF2Marginalization(*curKF);
-    const int sampleNum = SampleUsefulLandmark(margKFid);
-    // 在滑窗优化前就把最新KF添加到滑窗之中
-    window_.emplace_back(curKF);
-    if (window_.size() < 2) {
-        optLandmark_.clear();
-        return false;
-    }
-
-    cout << fmt::format(
-                "Begin SlidingWindowOptimize! margKFid: {}, Sample landmark "
-                "num for "
-                "window BA: {}.",
-                margKFid, sampleNum)
-         << endl;
-
-    //if (margKFid >= 0 && margKFid < config->maxKFnumInWindow) {
-    //    // 将待删除的最老帧移到滑窗开头，有可能移除最新帧
-    //    MoveMargKF2FirstPosInWindow(margKFid);
-    //    margKFstatus_ = false;
-    //    if (TransformLandmarkOwnerFromOldestKF(margKFid)) {
-    //        // 只需要保留最老帧的信息即可，或者只固定首帧的pose进行优化在debug阶段也是可取的
-    //        // 其信息已经通过深度点的传播转移到后面的KF中
-    //        if (margKFid < 2 && config->useMarginalization) {
-    //            margKFstatus_ = MarginalizeOldestKeyFrame();
-    //            cout << fmt::format("marg kf succeed: {}\n", margKFstatus_);
-    //        }
-
-    //        // 如果是使用点-点匹配逻辑的话，那么应该先进行边缘化再转移点的控制权
-    //        // 产生的问题是：那些没有host被边缘化，但是没有target的点不造成影响
-    //        // 那些host被边缘化，但是仍有target的点，可能只剩一个target本身的观测
-    //        RemoveOldestKeyFrame(margKFid);
-    //    }
-    //}
-
+    int margKFid = -1;
     chrono::steady_clock::time_point t0 = chrono::steady_clock::now();
     bool winOptSuccess = false;
     {
         lock_guard<mutex> lock(windowKFposeUpdateMutex);
+        margKFid = SelectOneKF2Marginalization(*curKF);
+        const int sampleNum = SampleUsefulLandmark(margKFid);
+        // 在滑窗优化前就把最新KF添加到滑窗之中
+        window_.emplace_back(curKF);
+        if (window_.size() < 2) {
+            optLandmark_.clear();
+            return false;
+        }
+
+        cout
+            << fmt::format(
+                   "Begin SlidingWindowOptimize! margKFid: {}, Sample landmark "
+                   "num for "
+                   "window BA: {}.",
+                   margKFid, sampleNum)
+            << endl;
 #if USE_CERES2
         winOptSuccess = ExecuteWindowOptimizeCeres();
 #else
@@ -3118,13 +3100,13 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
         ceres::CostFunction* cost =
-            new RelativeConstraintResidual(1.5, 1.0, 1.0, sT12Constraint[i]);
+            new RelativeConstraintResidual(1.5, 2.0, 1.0, sT12Constraint[i]);
         problem.AddResidualBlock(cost, loss, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }
     // 最后一帧是闭环约束
     ceres::CostFunction* cost =
-        new RelativeConstraintResidual(1.5, 1.0, 1.10, sT12Constraint.back());
+        new RelativeConstraintResidual(1.5, 2.0, 1.0, sT12Constraint.back());
     problem.AddResidualBlock(cost, loss, vecSim3Pose[0].data(),
                              vecSim3Pose.back().data());
 
@@ -3136,6 +3118,9 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     options.minimizer_type = ceres::TRUST_REGION;
     options.trust_region_strategy_type = ceres::DOGLEG;
     options.num_threads = 1;
+    options.function_tolerance = 1e-12;
+    options.gradient_tolerance = 1e-12;
+    options.parameter_tolerance = 1e-12;
     // options.max_solver_time_in_seconds = 0.5;
 
     // 运行优化
@@ -3290,6 +3275,8 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
         of << window_[i]->OutputPoseMessage() << endl;
     }
     of.close();
+
+    vecMargKf_.clear();
 
     return true;
 }

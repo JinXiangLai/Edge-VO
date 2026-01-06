@@ -302,10 +302,11 @@ int main(int argc, char** argv) {
             Quat2RPY(T12.q_wb_).norm() * kRad2Deg);
 
         // 检验地图点跟踪效果，光流跟踪效果和运行基线
-        if (optimizer.CanAddNewKF() &&
-            ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
-             caseFastInsertKF || trackLocalMapLow || longTimeNoInsertKF ||
-             frequentInsertKf)) {
+        if ((optimizer.CanAddNewKF() &&
+             ((caseOptflowTrackLow && hasHorMove) || caseMoveBaselineLOng ||
+              caseFastInsertKF || trackLocalMapLow || longTimeNoInsertKF ||
+              frequentInsertKf)) ||
+            optimizer.trackPnPTime > 0) {
             cout << fmt::format(
                 "add kf case: trackLocalMapLow: {}, caseOptflowTrackLow: {}, "
                 "caseMoveBaselineLOng: {}, caseFastInsertKF: {}, "
@@ -324,32 +325,28 @@ int main(int argc, char** argv) {
         const double frameTimeGap =
             (curF.timestamp_ - lastF.timestamp_) * 1e3;  // ms
 
-        cout << fmt::format(
-            "TrackWithOpticalFlow spend:{:.3f}ms, TrackLocalMap spend: "
-            "{:.3f}ms\n\n",
-            ChronoMillisecTimeDuration(t1, t2),
-            ChronoMillisecTimeDuration(t2, t3));
         chrono::steady_clock::time_point t4 = chrono::steady_clock::now();
         const double trackSpendTime = ChronoMillisecTimeDuration(t1, t4);
         const double sleepTime = min((frameTimeGap - trackSpendTime), 28.0);
+        cout << fmt::format(
+            "TrackWithOpticalFlow spend:{:.3f}ms, TrackLocalMap spend: "
+            "{:.3f}ms, total: {:.1f}ms, sleepTime: {:.1f}ms.\n\n",
+            ChronoMillisecTimeDuration(t1, t2),
+            ChronoMillisecTimeDuration(t2, t3), trackSpendTime, sleepTime);
         if (sleepTime > 0. &&
             (config->debugShowOnlineResult3D || !config->debugRunSerially)) {
             usleep(sleepTime * 1e3);
         } else {
+            // 可以缓存帧
+            const double forceSleepTime = min(20.0, 30.0 + sleepTime);
             cout << fmt::format(
                 "Error tracking spend too much time! curF.timestamp_: {}s, "
                 "lastF.timestamp_: {}s, frameTimeGap: {:.1f}ms, "
-                "trackSpendTime: {:.1f}ms, sleepTime: {:.1f}.\n",
+                "trackSpendTime: {:.1f}ms, sleepTime: {:.1f}ms, "
+                "forceSleepTime: {:.1f}ms.\n",
                 curF.timestamp_, lastF.timestamp_, frameTimeGap, trackSpendTime,
-                sleepTime);
-        }
-        if (i % 30 == 0) {
-            cout << fmt::format(
-                "Tracking spend time: curF.timestamp_: {}s, "
-                "lastF.timestamp_: {}s, frameTimeGap: {:.1f}ms, "
-                "trackSpendTime: {:.1f}ms, sleepTime: {:.1f}.\n",
-                curF.timestamp_, lastF.timestamp_, frameTimeGap, trackSpendTime,
-                sleepTime);
+                sleepTime, forceSleepTime);
+            usleep(forceSleepTime * 1e3);
         }
 
         KeyFrame::WritePoseMessage2File(curF);
