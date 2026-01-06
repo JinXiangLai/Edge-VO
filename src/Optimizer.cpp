@@ -2850,60 +2850,66 @@ void Optimizer::RunLoopClosure() {
                 continue;
             }
         }
-
-        DynamicPointMatrix Pc1, Pc2;
-        if (FindMatchSuperpoint3Dpos(vecMargKf_[kf1Index], lastTryLoopNewKf_,
-                                     Pc1, Pc2) < 100) {
-            cout << "FindMatchSuperpoint3Dpos num: " << Pc1.cols()
-                 << ", too small!" << endl;
-            lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
-            lastTryLoopNewKf_ = nullptr;
-            continue;
-        }
-
-        // 解闭环相对位姿约束
-        Sim3Pose sT12;
-        const double innerRatio = 0.55;
-        if (CalculateSim3PosesT12RANSAC(Pc1, Pc2, sT12, 3, 0.999, innerRatio)) {
-            cout << "LP Solve sim3Pose sT12 succeed! sT12:\n" << sT12 << endl;
-
-            UpdateRelativeSim3POSEsT12Ceres2(Pc1, Pc2, sT12);
-
-            // 求解位姿图优化
-            vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
-                                          vecMargKf_.end());
-            // 将滑窗内id小于当前闭环帧的都加进来一起做PGO，避免该帧在Win ba后被选择移除而难以传播
-            const int beforeAddWindowKFnum = allKeyframe.size();
-            for (size_t i = 0; i < window_.size(); ++i) {
-                if (window_[i]->id_ < lastTryLoopNewKf_->id_) {
-                    allKeyframe.emplace_back(window_[i]);
-                }
+        
+        {
+            lock_guard<mutex> lock(windowKFposeUpdateMutex);
+            DynamicPointMatrix Pc1, Pc2;
+            if (FindMatchSuperpoint3Dpos(vecMargKf_[kf1Index],
+                                         lastTryLoopNewKf_, Pc1, Pc2) < 100) {
+                cout << "FindMatchSuperpoint3Dpos num: " << Pc1.cols()
+                     << ", too small!" << endl;
+                lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
+                lastTryLoopNewKf_ = nullptr;
+                continue;
             }
-            allKeyframe.emplace_back(lastTryLoopNewKf_);
-            const int addKFnumFromWindow =
-                allKeyframe.size() - beforeAddWindowKFnum;
-            cout << fmt::format("LP add KF from window num: {}",
-                                addKFnumFromWindow)
-                 << endl;
-            // 反序，以当前滑动窗口内的尺度为1.0，导致世界系漂移，可能破坏约束一致性，
-            // 使得闭环优化后精度下降
-            // reverse(allKeyframe.begin(), allKeyframe.end());
+
+            // 解闭环相对位姿约束
+            Sim3Pose sT12;
+            const double innerRatio = 0.55;
+            if (CalculateSim3PosesT12RANSAC(Pc1, Pc2, sT12, 3, 0.999,
+                                            innerRatio)) {
+                cout << "LP Solve sim3Pose sT12 succeed! sT12:\n"
+                     << sT12 << endl;
+
+                UpdateRelativeSim3POSEsT12Ceres2(Pc1, Pc2, sT12);
+
+                // 求解位姿图优化
+                vector<KeyFrame*> allKeyframe(vecMargKf_.begin() + kf1Index,
+                                              vecMargKf_.end());
+                // 将滑窗内id小于当前闭环帧的都加进来一起做PGO，避免该帧在Win ba后被选择移除而难以传播
+                const int beforeAddWindowKFnum = allKeyframe.size();
+                for (size_t i = 0; i < window_.size(); ++i) {
+                    if (window_[i]->id_ < lastTryLoopNewKf_->id_) {
+                        allKeyframe.emplace_back(window_[i]);
+                    }
+                }
+                allKeyframe.emplace_back(lastTryLoopNewKf_);
+                const int addKFnumFromWindow =
+                    allKeyframe.size() - beforeAddWindowKFnum;
+                cout << fmt::format("LP add KF from window num: {}",
+                                    addKFnumFromWindow)
+                     << endl;
+                // 反序，以当前滑动窗口内的尺度为1.0，导致世界系漂移，可能破坏约束一致性，
+                // 使得闭环优化后精度下降
+                // reverse(allKeyframe.begin(), allKeyframe.end());
 
 #if DEBUG_LOOP_CLOSURE_USE_PRIOR
-            const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
-                             lastTryLoopNewKf_->priorTwc_;
-            sT12 = Sim3Pose(T12, 1.0);
+                const Pose T12 = allKeyframe.front()->priorTwc_.Inverse() *
+                                 lastTryLoopNewKf_->priorTwc_;
+                sT12 = Sim3Pose(T12, 1.0);
 #endif
 
-            Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1,
-                                            addKFnumFromWindow, sT12,
-                                            allKeyframe);
-            chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-            cout << fmt::format("LP PGO spend: {:.1f}ms",
-                                ChronoMillisecTimeDuration(t0, t1))
-                 << endl;
-        } else {
-            cout << "Solve sim3Pose sT12 failed!" << endl;
+                Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1,
+                                                addKFnumFromWindow, sT12,
+                                                allKeyframe);
+                chrono::steady_clock::time_point t1 =
+                    chrono::steady_clock::now();
+                cout << fmt::format("LP PGO spend: {:.1f}ms",
+                                    ChronoMillisecTimeDuration(t0, t1))
+                     << endl;
+            } else {
+                cout << "Solve sim3Pose sT12 failed!" << endl;
+            }
         }
 
         lock_guard<mutex> lock(lastTryLoopNewKfMutex_);
@@ -2920,7 +2926,7 @@ int Optimizer::FindLoopClosureKF() {
     // 寻找开头5帧，，不能处理大回环内有小回环的情况
     constexpr int kMaxSearchRange = 5;
     constexpr double kMaxLoopClosureDist =
-        0.5;  // 尺度漂移时只能由lightglue确定
+        0.2;  // 尺度漂移时只能由lightglue确定
     for (size_t i = 0; i < kMaxSearchRange; ++i) {
         const KeyFrame* kf = vecMargKf_[i];
         const double posDiff =
@@ -3100,13 +3106,13 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
         ceres::CostFunction* cost =
-            new RelativeConstraintResidual(1.5, 2.0, 1.0, sT12Constraint[i]);
+            new RelativeConstraintResidual(1.0, 1.0, 1.0, sT12Constraint[i]);
         problem.AddResidualBlock(cost, loss, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }
     // 最后一帧是闭环约束
     ceres::CostFunction* cost =
-        new RelativeConstraintResidual(1.5, 2.0, 1.0, sT12Constraint.back());
+        new RelativeConstraintResidual(0.5, 0.5, 0.5, sT12Constraint.back());
     problem.AddResidualBlock(cost, loss, vecSim3Pose[0].data(),
                              vecSim3Pose.back().data());
 
@@ -3145,7 +3151,7 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     // 更新滑窗内的KFpose，需考虑如果用于闭环的帧被marg了呢？没关系，我们把滑窗内小于该kf的id的关键帧都加进来
     const int winKFstartIdx = allKeyframe.size() - addKFnumFromWindow;
     {
-        lock_guard<mutex> lock(windowKFposeUpdateMutex);
+        // lock_guard<mutex> lock(windowKFposeUpdateMutex);
         unordered_set<KeyFrame*> kfInWin;
         for (KeyFrame* kf : window_) {
             kfInWin.insert(kf);
