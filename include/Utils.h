@@ -46,6 +46,24 @@ enum COLOR { red, orange, yellow, green, blue, purple, pink };
 
 extern std::map<int, cv::Vec3b> Color;
 
+class LockGuard {
+   public:
+    LockGuard(const std::string& funName, const std::string& mutName,
+              std::mutex& mut)
+        : funName_(funName), mutName_(mutName), lock_(mut, std::defer_lock) {
+        std::cout << fmt::format("debug {} waitting {}", funName, mutName)
+                  << std::endl;
+        lock_.lock();
+    }
+
+    ~LockGuard() {
+        std::cout << fmt::format("debug {} release {}", funName_, mutName_)
+                  << std::endl;
+    }
+    std::string funName_, mutName_;
+    std::unique_lock<std::mutex> lock_;
+};
+
 void InitColor();
 // 距离变换是计算前景到背景的距离
 
@@ -399,6 +417,18 @@ inline double CalculateParallax(const Eigen::Vector2d& p1,
 
     return -1.0;
 }
+
+// inline void DebugWaitMutex(const std::string& funName,
+//                            const std::string& mutexName) {
+//     std::cout << fmt::format("debug {} waitting {}", funName, mutexName)
+//               << std::endl;
+// }
+
+// inline void DebugReleaseMutex(const std::string& funName,
+//                               const std::string& mutexName) {
+//     std::cout << fmt::format("debug {} release {}", funName, mutexName)
+//               << std::endl;
+// }
 
 void SaveEigenVectorToTXT(const DynamicPointMatrix& points,
                           const std::string& filename);

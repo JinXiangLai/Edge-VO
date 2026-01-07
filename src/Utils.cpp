@@ -1754,7 +1754,7 @@ void ShowLocalMap(const vector<Pose>& vTwc) {
     unordered_set<shared_ptr<Landmark>> sactivePoints;
     unordered_set<shared_ptr<Landmark>> slocalPoints;
     {
-        lock_guard<mutex> lockPointCloud(interaction->mutPoints);
+        LockGuard lock("ShowLocalMap", "mutPoints1757", interaction->mutPoints);
         sactivePoints = interaction->activePoints;
         slocalPoints = interaction->localPoints;
     }

@@ -4,7 +4,7 @@ project(edge_slam)
 
 set(CMAKE_CXX_STANDARD 17)
 
-#set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+# set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
 set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
 
 # 编译器警告（仅对支持 GCC/Clang 生效）
@@ -19,8 +19,8 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
   #set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wall -O3 -g")
   #set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wall -O3 -g")
 elseif (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -g")
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -g")
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -O2 -g")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -O2 -g")
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")

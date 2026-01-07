@@ -275,7 +275,7 @@ void KeyFrame::ExtractFastPoints() {
     vector<cv::Point2f> pts = ExtractFastPointEachGridImage();
     cv::Mat keypointInCurImg;
     // 锁住全局光流变量，只访问不修改
-    lock_guard<mutex> lock(globalOptFlwMutex);
+    LockGuard lock("ExtractFastPoints", "globalOptFlwMutex278", globalOptFlwMutex);
     // 既然光流跟踪成功，这里就不应该再限制删除跟踪成功的点
     if (0 && !globalOptFlw.prevPts_.empty()) {
         keypointInCurImg = cv::Mat::zeros(grayImg_.size(), CV_8UC1);
@@ -487,7 +487,8 @@ void KeyFrame::ExtractFeaturetPoints() {
 
 int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     if (lastKf == nullptr) {
-        lock_guard<mutex> lock(globalOptFlwMutex);
+        LockGuard lock("LightglueMatchAndRefineTrackResult", "globalOptFlwMutex490",
+                  globalOptFlwMutex);
         // 初始化世界帧
         for (int i = 0; i < kpts_.rows(); ++i) {
             landmark_[i] = make_shared<Landmark>(i, this, cam_, kInitInvDepth);
@@ -625,7 +626,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
         double(newAddLandmarkNum) / glueMatch.totalFeatureCreated_);
 
     {
-        lock_guard<mutex> lock(globalOptFlwMutex);
+        LockGuard lock("LightglueMatchAndRefineTrackResult", "globalOptFlwMutex629", globalOptFlwMutex);
         globalOptFlw = std::move(glueMatch);
         globalOptFlw.prevImg_ = grayImg_;
     }
@@ -637,7 +638,7 @@ int KeyFrame::LightglueMatchAndRefineTrackResult(KeyFrame* lastKf) {
     //把上一关键帧中保留的光流及历史关键帧的光流跟踪结果合并到当前关键帧
     // 移除掉所有无效Landmark*，这里应该在提取当前帧的关键点时就要调用
     {
-        lock_guard<mutex> lock(globalOptFlwMutex);
+        LockGuard lock("LightglueMatchAndRefineTrackResult", "globalOptFlwMutex641", globalOptFlwMutex);
         globalOptFlw.historyLandmarkNum_ = globalOptFlw.prevPts_.size();
         // 历史关键点在当前帧的跟踪结果需要进行相互观测赋值
         int startRow = desc_.rows();
@@ -823,7 +824,7 @@ void KeyFrame::OpticalFlowTrackLandmark(const KeyFrame& f2) {
 }
 
 double KeyFrame::TrackWithOpticalFlow(const KeyFrame& kf2, int& findMatchNum) {
-    lock_guard<mutex> lock(globalOptFlwMutex);
+    LockGuard lock("TrackWithOpticalFlow", "globalOptFlwMutex827", globalOptFlwMutex);
     OpticalFlowTrackLandmark(kf2);
     findMatchNum = globalOptFlw.GetTrackFeatureNum();
     return globalOptFlw.GetTrackFeatureRatio();

@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
             usleep(sleepTime * 1e3);
         } else {
             // 可以缓存帧
-            const double forceSleepTime = min(20.0, 30.0 + sleepTime);
+            const double forceSleepTime = max(20.0, 30.0 + sleepTime);
             cout << fmt::format(
                 "Error tracking spend too much time! curF.timestamp_: {}s, "
                 "lastF.timestamp_: {}s, frameTimeGap: {:.1f}ms, "
@@ -390,14 +390,18 @@ int main(int argc, char** argv) {
 
     // 停止后端优化线程
     optimizer.StopRunBA();
-    runWindowBAthread->join();
-    delete runWindowBAthread;
-    cout << "Window BA thread recycled!" << endl;
+    if (runWindowBAthread && runWindowBAthread->joinable()) {
+        runWindowBAthread->join();
+        delete runWindowBAthread;
+        cout << "Window BA thread recycled!" << endl;
+    }
 
     optimizer.StopRunLoopClosure();
-    runLoopClosureThread->join();
-    delete runLoopClosureThread;
-    cout << "Loop closure BA thread recycled!" << endl;
+    if (runLoopClosureThread && runLoopClosureThread->joinable()) {
+        runLoopClosureThread->join();
+        delete runLoopClosureThread;
+        cout << "Loop closure BA thread recycled!" << endl;
+    }
 
     for (const KeyFrame* kf : win) {
         KeyFrame::WritePoseMessage2File(*kf);
