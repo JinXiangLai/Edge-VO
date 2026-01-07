@@ -1083,7 +1083,7 @@ bool Optimizer::OptimizeCurFrame(Pose& Twc2, const int curFid,
     ResidualInfo lastCost;
     {
         LockGuard lock("OptimizeCurFrame", "globalOptFlwMutex1085",
-                  globalOptFlwMutex);
+                       globalOptFlwMutex);
         PreSelectLandmarkForTracking(preLks, preObvs);
         totalPointNum = preLks.size();
 
@@ -1242,7 +1242,7 @@ bool Optimizer::OptimizeCurFrameCeres(Pose& Twc2, const int curFid,
     ResidualInfo lastCost;
     {
         LockGuard lock("OptimizeCurFrameCeres", "globalOptFlwMutex1244",
-                  globalOptFlwMutex);
+                       globalOptFlwMutex);
         PreSelectLandmarkForTracking(preLks, preObvs);
         totalPointNum = preLks.size();
 
@@ -1353,7 +1353,7 @@ void Optimizer::TriangulateNewLandmark(KeyFrame* kf) {
     unordered_map<KeyFrame*, Pose> kf2T12;
     {
         LockGuard lock("TriangulateNewLandmark", "globalOptFlwMutex1356",
-                  globalOptFlwMutex);
+                       globalOptFlwMutex);
         for (size_t i = 0; i < globalOptFlw.trackLandmark_.size(); ++i) {
             auto lk = globalOptFlw.trackLandmark_[i];
             if (lk == nullptr || lk->initialized_) {
@@ -1588,7 +1588,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
 
     {
         LockGuard lock("RemoveOldestKeyFrame", "globalOptFlwMutex1591",
-                  globalOptFlwMutex);
+                       globalOptFlwMutex);
         RemoveDeleteLandmarkFromOpticalFlow(globalOptFlw.trackLandmark_,
                                             globalOptFlw.prevPts_);
     }
@@ -1596,7 +1596,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
     // 有可能闭环在更新pose
     if (margKFid != config->maxKFnumInWindow) {
         LockGuard lock("RemoveOldestKeyFrame", "vecMargKfMutex_1598",
-                  vecMargKfMutex_);  // 更新耗时可忽略
+                       vecMargKfMutex_);  // 更新耗时可忽略
         // 当前实现只会遍历前几帧，push_back不影响，但要预申请内存，避免扩容导致异常
         vecMargKf_.emplace_back(oldest);
         cout << "vecMargKf_ size: " << vecMargKf_.size() << endl;
@@ -1607,7 +1607,7 @@ void Optimizer::RemoveOldestKeyFrame(const int margKFid) {
 
     if (delayEraseKeyframe_.size() > 1) {
         LockGuard lock("RemoveOldestKeyFrame", "mutexForSyncView3Dstatus1610",
-                  KeyFrame::mutexForSyncView3Dstatus);
+                       KeyFrame::mutexForSyncView3Dstatus);
         if (!KeyFrame::kfOn3Dshow.count(delayEraseKeyframe_[0])) {
             delete delayEraseKeyframe_[0];
             delayEraseKeyframe_[0] = nullptr;
@@ -2432,7 +2432,7 @@ bool Optimizer::SlidingWindowOptimize(KeyFrame* curKF) {
     bool winOptSuccess = false;
     {
         LockGuard lock("SlidingWindowOptimize", "windowKFposeUpdateMutex2435",
-                  windowKFposeUpdateMutex);
+                       windowKFposeUpdateMutex);
         margKFid = SelectOneKF2Marginalization(*curKF);
         const int sampleNum = SampleUsefulLandmark(margKFid);
         // 在滑窗优化前就把最新KF添加到滑窗之中
@@ -2839,7 +2839,8 @@ void Optimizer::RunLoopClosure() {
         int kf1Index = -1;
         {
             // 排序加锁，更新时另外加锁，或者更新放在BA线程后？
-            LockGuard lock("RunLoopClosure", "vecMargKfMutex_2845", vecMargKfMutex_);
+            LockGuard lock("RunLoopClosure", "vecMargKfMutex_2845",
+                           vecMargKfMutex_);
             sort(vecMargKf_.begin(), vecMargKf_.end(),
                  [](const KeyFrame* a, const KeyFrame* b) {
                      return a->id_ < b->id_;
@@ -2848,7 +2849,7 @@ void Optimizer::RunLoopClosure() {
             if (kf1Index < 0) {
                 // 是否可能存在死锁？win ba是串行的，应该不会
                 LockGuard lock("RunLoopClosure", "lastTryLoopNewKfMutex_2851",
-                          lastTryLoopNewKfMutex_);
+                               lastTryLoopNewKfMutex_);
                 lastTryLoopNewKf_ = nullptr;
                 cout << fmt::format(
                             "LP find loop closure kf failed! vecMargKf_ size: "
@@ -2861,14 +2862,14 @@ void Optimizer::RunLoopClosure() {
 
         {
             LockGuard lock("RunLoopClosure", "windowKFposeUpdateMutex2864",
-                      windowKFposeUpdateMutex);
+                           windowKFposeUpdateMutex);
             DynamicPointMatrix Pc1, Pc2;
             if (FindMatchSuperpoint3Dpos(vecMargKf_[kf1Index],
                                          lastTryLoopNewKf_, Pc1, Pc2) < 100) {
                 cout << "FindMatchSuperpoint3Dpos num: " << Pc1.cols()
                      << ", too small!" << endl;
                 LockGuard lock("RunLoopClosure", "lastTryLoopNewKfMutex_2870",
-                          lastTryLoopNewKfMutex_);
+                               lastTryLoopNewKfMutex_);
                 lastTryLoopNewKf_ = nullptr;
                 continue;
             }
@@ -2923,7 +2924,7 @@ void Optimizer::RunLoopClosure() {
         }
 
         LockGuard lock("RunLoopClosure", "lastTryLoopNewKfMutex_2926",
-                  lastTryLoopNewKfMutex_);
+                       lastTryLoopNewKfMutex_);
         lastTryLoopNewKf_ = nullptr;
     }
 }
@@ -3114,10 +3115,14 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
     problem.SetParameterBlockConstant(vecSim3Pose[0].data());
 
     ceres::HuberLoss* loss = new ceres::HuberLoss(1.0);
+    const int constraintNum = int(sT12Constraint.size());
+    constexpr double kPivotWeight = 1.0;
     for (size_t i = 0; i < sT12Constraint.size() - 1; ++i) {
         // 添加帧间相对约束
-        ceres::CostFunction* cost =
-            new RelativeConstraintResidual(1.0, 1.0, 1.0, sT12Constraint[i]);
+        const double relativeWeight = exp(kPivotWeight - i / constraintNum);
+        ceres::CostFunction* cost = new RelativeConstraintResidual(
+            1.0 * relativeWeight, 1.0 * relativeWeight, 1.0 * relativeWeight,
+            sT12Constraint[i]);
         problem.AddResidualBlock(cost, loss, vecSim3Pose[i].data(),
                                  vecSim3Pose[i + 1].data());
     }
@@ -3447,7 +3452,7 @@ void Optimizer::CalculateLastKFmeanDepth() {
     int num = 0;
 
     LockGuard lock("CalculateLastKFmeanDepth", "globalOptFlwMutex3450",
-              globalOptFlwMutex);
+                   globalOptFlwMutex);
     globalOptFlw.RemoveUselessLandmark();
 
     // 只有历史跟踪点才可能三角化成功
@@ -3709,7 +3714,7 @@ void Optimizer::ShowLocalMap() {
     unordered_set<std::shared_ptr<Landmark>> aPoints, lPoints;
     {
         LockGuard lock("ShowLocalMap", "mutexForSyncView3Dstatus3712",
-                  KeyFrame::mutexForSyncView3Dstatus);
+                       KeyFrame::mutexForSyncView3Dstatus);
         KeyFrame::kfOn3Dshow.clear();
         // for (Landmark* p : optLandmark_) {
         //     if (p != nullptr && !aPoints.count(p) && !p->IsOutOfRange() &&
@@ -3734,7 +3739,8 @@ void Optimizer::ShowLocalMap() {
 
     if (!aPoints.empty() || !lPoints.empty()) {
         {
-            LockGuard lock("ShowLocalMap", "mutPoints3738", interaction->mutPoints);
+            LockGuard lock("ShowLocalMap", "mutPoints3738",
+                           interaction->mutPoints);
             interaction->activePoints = aPoints;
             interaction->localPoints = lPoints;
         }

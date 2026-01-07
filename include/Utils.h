@@ -51,14 +51,14 @@ class LockGuard {
     LockGuard(const std::string& funName, const std::string& mutName,
               std::mutex& mut)
         : funName_(funName), mutName_(mutName), lock_(mut, std::defer_lock) {
-        std::cout << fmt::format("debug {} waitting {}", funName, mutName)
-                  << std::endl;
+        // std::cout << fmt::format("debug {} waitting {}", funName, mutName)
+        //           << std::endl;
         lock_.lock();
     }
 
     ~LockGuard() {
-        std::cout << fmt::format("debug {} release {}", funName_, mutName_)
-                  << std::endl;
+        // std::cout << fmt::format("debug {} release {}", funName_, mutName_)
+        //           << std::endl;
     }
     std::string funName_, mutName_;
     std::unique_lock<std::mutex> lock_;
