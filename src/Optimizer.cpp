@@ -2858,6 +2858,8 @@ void Optimizer::RunLoopClosure() {
                      << endl;
                 continue;
             }
+
+            cout << "Find kf1Index in vecMargKF_: " << kf1Index << endl;
         }
 
         {
@@ -2910,9 +2912,9 @@ void Optimizer::RunLoopClosure() {
                 sT12 = Sim3Pose(T12, 1.0);
 #endif
 
-                Sim3PoseGraphOptimizationCeres2(0, allKeyframe.size() - 1,
-                                                addKFnumFromWindow, sT12,
-                                                allKeyframe);
+                Sim3PoseGraphOptimizationCeres2(
+                    kf1Index, 0, allKeyframe.size() - 1, addKFnumFromWindow,
+                    sT12, allKeyframe);
                 chrono::steady_clock::time_point t1 =
                     chrono::steady_clock::now();
                 cout << fmt::format("LP PGO spend: {:.1f}ms",
@@ -3043,8 +3045,9 @@ void Optimizer::StopRunLoopClosure() {
 }
 
 bool Optimizer::Sim3PoseGraphOptimizationCeres2(
-    int fixedIndex, int loopClosureIndex, const int addKFnumFromWindow,
-    const Sim3Pose& relativeSim3T12, vector<KeyFrame*>& allKeyframe) {
+    int fixedKFidxInMargVec, int fixedIndex, int loopClosureIndex,
+    const int addKFnumFromWindow, const Sim3Pose& relativeSim3T12,
+    vector<KeyFrame*>& allKeyframe) {
     // 构建位姿图
     // 1. 选择闭环内的帧
     vector<KeyFrame*> selectKFresult;
@@ -3259,34 +3262,13 @@ bool Optimizer::Sim3PoseGraphOptimizationCeres2(
             pivotPose = pivotPose * srcRelativePose[count++];  // 相对位姿传递
             kf2->SetTwc(pivotPose);
         }
-        /*
-        // 破坏尺度一致性，应该先矫正滑窗内的尺度
-        // 往左<==更新
-        Sim3Pose pivotSim3Pose = loopClosurePoseTwc[pivotKfIndexInAllKf];
-        for (int i = pivotIndex; i > 0; --i) {
-            KeyFrame* kf2 = window_[i];
-            KeyFrame* kf1 = window_[i - 1];
-            const Sim3Pose sT21(kf2->Tcw_ * kf1->Twc_, 1.0);
-            pivotSim3Pose = pivotSim3Pose * sT21;  // 相对位姿传递
-            kf1->UpdateSim3Pose(pivotSim3Pose);
-        }
-        // 往==>更新
-        pivotSim3Pose = loopClosurePoseTwc[pivotKfIndexInAllKf];
-        for (int i = pivotIndex; i < int(window_.size() - 1); ++i) {
-            KeyFrame* kf1 = window_[i];
-            KeyFrame* kf2 = window_[i + 1];
-            const Sim3Pose sT12(kf1->Tcw_ * kf2->Twc_, 1.0);
-            pivotSim3Pose = pivotSim3Pose * sT12;  // 相对位姿传递
-            kf2->UpdateSim3Pose(pivotSim3Pose);
-        }
-*/
         scaleKFinWindow_ = true;  // 前端需要使用KF+PnP跟踪
         trackPnPTime = 2;
     }
 
-    // TODO：更新已经边缘化的KF关键帧pose(及深度)
     for (int i = 0; i < winKFstartIdx; ++i) {
-        vecMargKf_[i]->UpdateSim3Pose(loopClosurePoseTwc[i]);
+        vecMargKf_[i + fixedKFidxInMargVec]->UpdateSim3Pose(
+            loopClosurePoseTwc[i]);
     }
 
     of.open(fmt::format("{}.{}", kClosurePoseFilePath, debugTime++));

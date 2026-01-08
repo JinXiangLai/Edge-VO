@@ -294,7 +294,8 @@ class Optimizer {
                                  DynamicPointMatrix& Pc2);
     void RunLoopClosure();
     void StopRunLoopClosure();
-    bool Sim3PoseGraphOptimizationCeres2(int fixedIndex, int loopClosureIndex,
+    bool Sim3PoseGraphOptimizationCeres2(int fixedKFidxInMargVec,
+                                         int fixedIndex, int loopClosureIndex,
                                          const int addKFnumFromWindow,
                                          const Sim3Pose& relativeSim3T12,
                                          std::vector<KeyFrame*>& allKeyframe);
