@@ -217,3 +217,17 @@ class Sim3TransformResidual : public ceres::SizedCostFunction<3, 8> {
     Eigen::Vector3d pc1_;
     Eigen::Vector3d pc2_;
 };
+
+class PriorPoseConstraintResidual : public ceres::SizedCostFunction<6, 7> {
+   public:
+    PriorPoseConstraintResidual(const double rotWeight,
+                                const double transWeight,
+                                const Pose& priorTc2w);
+    virtual bool Evaluate(double const* const* parameters, double* residuals,
+                          double** jacobians) const override;
+
+   private:
+    double rotWeight_ = 0.0;
+    double transWeight_ = 1e3;
+    Pose priorTc2w_;
+};

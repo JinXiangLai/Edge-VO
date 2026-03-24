@@ -935,10 +935,13 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     }
     problem.SetParameterBlockConstant(vecTwc[window_[0]].data());
     const bool canFixSecondKF =
-        window_.size() >
-        static_cast<size_t>(config->maxKFnumInWindow / 2.0 + 0.5);
+        window_.size() > static_cast<size_t>(config->maxKFnumInWindow - 2);
     if (canFixSecondKF) {
-        problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
+        // problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
+        ceres::CostFunction* costFunction =
+            new PriorPoseConstraintResidual(0.0, 1e3, window_[1]->Tcw_);
+        problem.AddResidualBlock(costFunction, nullptr,
+                                 vecTwc[window_[1]].data());
     }
 
     vector<double> vecInvZ1(optLandmark_.size());

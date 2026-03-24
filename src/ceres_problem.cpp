@@ -286,7 +286,7 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
             A2.setZero();
             // ΔR w.r.t Pw2, s2 = 0
             // ΔR w.r.t Rw2
-            A2.block<3, 3>(0, 0) = invJr * dR.transpose() * rotWeight_;
+            A2.block<3, 3>(0, 0) = invJr * rotWeight_;
 
             // ΔP w.r.t Rw2 = 0
             // ΔP w.r.t s2 = 0
@@ -336,6 +336,61 @@ bool Sim3TransformResidual::Evaluate(double const* const* parameters,
             J_res_sT12.block<3, 3>(0, 3).setIdentity();
             // res w.r.t s12
             J_res_sT12.block<3, 1>(0, 6) = rotPc2;
+        }
+    }
+
+    return true;
+}
+
+PriorPoseConstraintResidual::PriorPoseConstraintResidual(
+    const double rotWeight, const double transWeight, const Pose& priorTc2w)
+    : rotWeight_(rotWeight), transWeight_(transWeight), priorTc2w_(priorTc2w) {}
+
+bool PriorPoseConstraintResidual::Evaluate(double const* const* parameters,
+                                           double* residuals,
+                                           double** jacobians) const {
+    const double* q1 = parameters[0];
+    const double* p1 = parameters[0] + 4;
+    const Eigen::Quaterniond Qwc1(q1[0], q1[1], q1[2], q1[3]);
+    const Eigen::Matrix3d Rwc1 = Qwc1.toRotationMatrix();
+    const Eigen::Vector3d Pwc1(p1[0], p1[1], p1[2]);
+
+    const Eigen::Quaterniond Qc1w = priorTc2w_.q_wb_;
+    const Eigen::Matrix3d Rc1w = Qc1w.toRotationMatrix();
+    const Eigen::Vector3d Pc1w = priorTc2w_.t_wb_;
+
+    const Eigen::Matrix3d dR = (Qwc1 * Qc1w).toRotationMatrix();
+    const Eigen::Vector3d dr = LogSO3(dR);
+    const Eigen::Vector3d dp = (Rwc1 * Pc1w + Pwc1);
+    residuals[0] = dr[0] * rotWeight_;
+    residuals[1] = dr[1] * rotWeight_;
+    residuals[2] = dr[2] * rotWeight_;
+    residuals[3] = dp[0] * transWeight_;
+    residuals[4] = dp[1] * transWeight_;
+    residuals[5] = dp[2] * transWeight_;
+
+    if (jacobians) {
+        if (jacobians[0]) {
+            // 使用"BCH近似"之前，需要通过"伴随性质"将扰动量换到右边
+            // dLogSO3(R1*R) ---> 微分扰动
+            // = LogSO3(R1*exp(ε1^)*R2) ---> 使用伴随: Exp(ε1)*R = R * Exp(R.T * ε1)
+            // = LogSO3(R1*R * Exp(R.T*ε1)) ---> Exp{小量}，使用BCH近似
+            // = [Jr(R1*R).inv * R.T*ε1] + LogSo3(dR*R1.T*R2)
+            const Eigen::Matrix3d invJr = InverseRightJacobianSO3(dr);
+            Eigen::Map<Eigen::Matrix<double, 6, 7, Eigen::RowMajor>> A1(
+                jacobians[0]);
+            A1.setZero();
+
+            // dr w.r.t Rwc1
+            A1.block<3, 3>(0, 0) = invJr * Rc1w.transpose() * rotWeight_;
+
+            // dp w.r.t Rwc1
+            // R1 * exp(ε1) * p + P1
+            // = R1 * (I + ε1^) * p + P1
+            // = R1 * ε1^ * p + (R1 * p + P1)
+            // = -R1 * p^ * ε1 + (R1 * p + P1)
+            A1.block<3, 3>(3, 0) = -Rwc1 * SkewSymmetric(Pc1w) * rotWeight_;
+            A1.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * transWeight_;
         }
     }
 
