@@ -294,7 +294,7 @@ bool RelativeConstraintResidual::Evaluate(double const* const* parameters,
             A2.block<3, 3>(3, 3) = invS1 * Rwc1.transpose() * transWeight_;
 
             // Δs w.r.t s2
-            A2(6, 6) = s1 * scaleWeight_;
+            A2(6, 6) = invS1 * scaleWeight_;
         }
     }
 

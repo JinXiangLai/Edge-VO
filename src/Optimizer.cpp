@@ -935,7 +935,7 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     }
     problem.SetParameterBlockConstant(vecTwc[window_[0]].data());
     const bool canFixSecondKF =
-        window_.size() > static_cast<size_t>(config->maxKFnumInWindow - 2);
+        window_.size() > static_cast<size_t>(5);
     if (canFixSecondKF) {
         // problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
         ceres::CostFunction* costFunction =
