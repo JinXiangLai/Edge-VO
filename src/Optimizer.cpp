@@ -927,21 +927,24 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     ceres::Manifold* se3Parameterization = new SE3Parameterization;
     // qw, qx, qy, qz, qw
     unordered_map<KeyFrame*, array<double, 7>> vecTwc;
+    auto ordering = make_shared<ceres::ParameterBlockOrdering>();
     for (KeyFrame* kf : window_) {
         const Eigen::Quaterniond& q = kf->Twc_.q_wb_;
         const Eigen::Vector3d& p = kf->Twc_.t_wb_;
         vecTwc.insert({kf, {q.w(), q.x(), q.y(), q.z(), p.x(), p.y(), p.z()}});
         problem.AddParameterBlock(vecTwc[kf].data(), 7, se3Parameterization);
+        ordering->AddElementToGroup(vecTwc[kf].data(), 1);
     }
     problem.SetParameterBlockConstant(vecTwc[window_[0]].data());
-    const bool canFixSecondKF =
-        window_.size() > static_cast<size_t>(5);
+    const bool canFixSecondKF = window_.size() > static_cast<size_t>(5);
     if (canFixSecondKF) {
-        // problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
-        ceres::CostFunction* costFunction =
-            new PriorPoseConstraintResidual(0.0, 1e3, window_[1]->Tcw_);
-        problem.AddResidualBlock(costFunction, nullptr,
-                                 vecTwc[window_[1]].data());
+         problem.SetParameterBlockConstant(vecTwc[window_[1]].data());
+        // 使用更鲁棒的核函数
+        //ceres::LossFunction* cauchy_loss = new ceres::CauchyLoss(1.0);
+        //ceres::CostFunction* costFunction =
+        //    new PriorPoseConstraintResidual(0., 1e3, window_[1]->Tcw_);
+        //problem.AddResidualBlock(costFunction, cauchy_loss,
+        //                         vecTwc[window_[1]].data());
     }
 
     vector<double> vecInvZ1(optLandmark_.size());
@@ -969,6 +972,7 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
             if (!depthParameterAdd) {
                 depthParameterAdd = true;
                 problem.AddParameterBlock(&vecInvZ1[i], 1);
+                ordering->AddElementToGroup(&vecInvZ1[i], 0);
             }
             problem.AddResidualBlock(costFunction, huberLoss,
                                      vecTwc[host].data(), vecTwc[target].data(),
@@ -980,8 +984,8 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     ceres::Solver::Options options;
     options.minimizer_progress_to_stdout = true;
     options.max_num_iterations = 50;
-    options.linear_solver_type = ceres::SPARSE_SCHUR;
-    //options.linear_solver_type = ceres::DENSE_SCHUR;
+    //options.linear_solver_type = ceres::SPARSE_SCHUR;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.linear_solver_type = ceres::ITERATIVE_SCHUR;
     options.preconditioner_type = ceres::SCHUR_JACOBI;
 
@@ -992,6 +996,7 @@ bool Optimizer::ExecuteWindowOptimizeCeres() {
     // options.gradient_tolerance = 1e-16;
     // options.parameter_tolerance = 1e-12;
 
+    options.linear_solver_ordering = ordering;
     options.use_explicit_schur_complement = true;
 
     options.num_threads = 4;
